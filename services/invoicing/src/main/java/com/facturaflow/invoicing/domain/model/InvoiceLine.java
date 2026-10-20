@@ -1,22 +1,30 @@
 package com.facturaflow.invoicing.domain.model;
 
 import com.facturaflow.invoicing.domain.exception.InvalidInvoiceLineException;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Objects;
+import java.util.Set;
 
 /**
- * Línea de factura. {@code unitPrice} NO incluye impuestos.
+ * Línea de factura. {@code unitPrice} NO incluye impuestos ni descuentos.
  *
  * <p>Cálculo (redondeo por línea, ADR 0004):
  * <pre>
  *   bruto     = cantidad x precio unitario        (redondeado)
  *   descuento = bruto x %descuento                (redondeado)
  *   base      = bruto - descuento
- *   impuesto  = base x %impuesto, o 0 si excluida (redondeado)
+ *   impuesto  = Σ (base x %tarifa) de cada impuesto, cada uno redondeado por separado
  *   total     = base + impuesto
  * </pre>
- * El descuento se aplica antes del impuesto: el IVA se calcula sobre el valor descontado.
+ * El descuento se aplica antes del impuesto: los impuestos se calculan sobre el valor descontado.
+ *
+ * <p>{@code taxes} no repite tipos y puede estar vacía. {@code excluded} significa
+ * "excluida de IVA": una línea excluida no puede tener un impuesto de tipo IVA
+ * (sí otros, como INC).
  */
 public record InvoiceLine(String code, String name, Quantity quantity, Money unitPrice,
-                          DiscountRate discountRate, TaxRate taxRate, UnitOfMeasure unit, boolean excluded) {
+                          DiscountRate discountRate, List<LineTax> taxes, UnitOfMeasure unit, boolean excluded) {
 
     public static final int MAX_CODE_LENGTH = 50;
     public static final int MAX_NAME_LENGTH = 300;
@@ -36,15 +44,10 @@ public record InvoiceLine(String code, String name, Quantity quantity, Money uni
         if (discountRate == null) {
             throw InvalidInvoiceLineException.missing("un porcentaje de descuento (use DiscountRate.NONE)");
         }
-        if (taxRate == null) {
-            throw InvalidInvoiceLineException.missing("una tarifa de impuesto (use TaxRate.ZERO)");
-        }
         if (unit == null) {
             throw InvalidInvoiceLineException.missing("una unidad de medida");
         }
-        if (excluded && !taxRate.isZero()) {
-            throw InvalidInvoiceLineException.excludedWithTax(code, taxRate.percent());
-        }
+        taxes = validateTaxes(code, taxes, excluded);
     }
 
     public Money grossAmount() {
@@ -60,12 +63,40 @@ public record InvoiceLine(String code, String name, Quantity quantity, Money uni
         return grossAmount().minus(discountAmount());
     }
 
+    /** Suma de todos los impuestos de la línea, cada uno redondeado por separado. */
     public Money taxAmount() {
-        return excluded ? Money.ZERO : taxableAmount().percentage(taxRate.percent());
+        Money base = taxableAmount();
+        return taxes.stream().map(tax -> tax.amountOn(base)).reduce(Money.ZERO, Money::plus);
+    }
+
+    /** Valor del impuesto de un tipo; cero si la línea no lo tiene. */
+    public Money taxAmount(TaxType type) {
+        Money base = taxableAmount();
+        return taxes.stream().filter(tax -> tax.type() == type).findFirst()
+                .map(tax -> tax.amountOn(base)).orElse(Money.ZERO);
     }
 
     public Money total() {
         return taxableAmount().plus(taxAmount());
+    }
+
+    private static List<LineTax> validateTaxes(String code, List<LineTax> taxes, boolean excluded) {
+        if (taxes == null) {
+            throw InvalidInvoiceLineException.missing("una lista de impuestos (vacía si no aplica ninguno)");
+        }
+        if (taxes.stream().anyMatch(Objects::isNull)) {
+            throw InvalidInvoiceLineException.missing("impuestos no nulos");
+        }
+        Set<TaxType> seen = new HashSet<>();
+        for (LineTax tax : taxes) {
+            if (!seen.add(tax.type())) {
+                throw InvalidInvoiceLineException.duplicateTax(code, tax.type().name());
+            }
+        }
+        if (excluded && seen.contains(TaxType.IVA)) {
+            throw InvalidInvoiceLineException.excludedWithIva(code);
+        }
+        return List.copyOf(taxes);
     }
 
     private static String requireText(String value, String missingDescription, String field, int maxLength) {

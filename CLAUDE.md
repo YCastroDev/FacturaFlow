@@ -53,7 +53,8 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 - Conceptos propios (enums, value objects); **nunca** IDs de catálogos de Factus en `domain/`. La traducción va en el adaptador.
 - El dominio no llama a `LocalDate.now()`, `Instant.now()` ni al reloj: las fechas entran como parámetro.
 - Las excepciones de `domain.exception` reciben solo valores simples (String, UUID, números), nunca objetos de `domain.model`.
-- Montos con `Money` (COP, 2 decimales, `HALF_UP`), redondeo por línea; `unitPrice` sin IVA.
+- Montos con `Money` (COP, 2 decimales, `HALF_UP`), redondeo por línea; `unitPrice` sin impuestos ni descuentos.
+- Impuestos por línea como `List<LineTax>` (`TaxType` + `TaxRate`), sin tipos repetidos, cada uno redondeado por separado. `excluded` = "excluida de IVA" (no admite `LineTax` de tipo IVA).
 - Value objects como records que se validan en su constructor; el aggregate `Invoice` sin setters.
 - Tests de dominio: JUnit 5 + AssertJ puros (sin Spring), con `@DisplayName` en español como frase de negocio.
 

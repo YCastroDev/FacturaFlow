@@ -157,6 +157,19 @@ class InvoiceTest {
         }
 
         @Test
+        @DisplayName("el impuesto total se desglosa por tipo y el desglose suma el total")
+        void breaksDownTaxByType() {
+            Invoice invoice = invoiceWith(List.of(
+                    line("2", "50000.00", "10", LineTax.of(TaxType.IVA, "19"), LineTax.of(TaxType.INC, "8")),
+                    line("1", "1000.00", "0", "5"),
+                    excludedLine("1", "20000.00")));
+
+            assertThat(invoice.totalTax(TaxType.IVA)).isEqualTo(Money.of("17150.00"));   // 17.100 + 50
+            assertThat(invoice.totalTax(TaxType.INC)).isEqualTo(Money.of("7200.00"));
+            assertThat(invoice.totalTax()).isEqualTo(Money.of("24350.00"));
+        }
+
+        @Test
         @DisplayName("el total de la factura es exactamente la suma de los totales de sus líneas")
         void totalEqualsSumOfLineTotals() {
             Invoice invoice = invoiceWith(List.of(line("0.33", "0.33", "7", "19"), line("1.5", "333.33", "3", "5")));

@@ -22,14 +22,20 @@ final class InvoiceFixtures {
                 "facturacion@cliente.example");
     }
 
+    /** Línea con un solo impuesto: {@code tax} es la tarifa de IVA. */
     static InvoiceLine line(String quantity, String unitPrice, String discount, String tax) {
-        return new InvoiceLine("SKU-1", "Producto", Quantity.of(quantity), Money.of(unitPrice),
-                DiscountRate.of(discount), TaxRate.of(tax), UnitOfMeasure.UNIT, false);
+        return line(quantity, unitPrice, discount, LineTax.of(TaxType.IVA, tax));
     }
 
+    static InvoiceLine line(String quantity, String unitPrice, String discount, LineTax... taxes) {
+        return new InvoiceLine("SKU-1", "Producto", Quantity.of(quantity), Money.of(unitPrice),
+                DiscountRate.of(discount), List.of(taxes), UnitOfMeasure.UNIT, false);
+    }
+
+    /** Línea excluida de IVA y sin otros impuestos. */
     static InvoiceLine excludedLine(String quantity, String unitPrice) {
         return new InvoiceLine("SKU-EXC", "Producto excluido", Quantity.of(quantity), Money.of(unitPrice),
-                DiscountRate.NONE, TaxRate.ZERO, UnitOfMeasure.UNIT, true);
+                DiscountRate.NONE, List.of(), UnitOfMeasure.UNIT, true);
     }
 
     static Invoice invoiceWith(List<InvoiceLine> lines) {

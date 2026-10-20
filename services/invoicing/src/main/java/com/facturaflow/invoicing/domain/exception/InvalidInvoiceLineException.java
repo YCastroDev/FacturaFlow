@@ -22,8 +22,13 @@ public final class InvalidInvoiceLineException extends DomainException {
                 + "' debe ser mayor que cero: " + unitPrice.toPlainString() + ".");
     }
 
-    public static InvalidInvoiceLineException excludedWithTax(String code, BigDecimal taxRate) {
-        return new InvalidInvoiceLineException("La línea '" + code + "' está excluida de IVA pero tiene tarifa "
-                + taxRate.toPlainString() + "%. Una línea excluida debe tener tarifa 0.");
+    public static InvalidInvoiceLineException excludedWithIva(String code) {
+        return new InvalidInvoiceLineException("La línea '" + code
+                + "' está excluida de IVA y no puede tener un impuesto de tipo IVA.");
+    }
+
+    public static InvalidInvoiceLineException duplicateTax(String code, String taxType) {
+        return new InvalidInvoiceLineException("La línea '" + code + "' tiene el impuesto " + taxType
+                + " más de una vez.");
     }
 }

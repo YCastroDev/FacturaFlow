@@ -88,6 +88,14 @@ public final class Invoice {
         return sum(InvoiceLine::taxAmount);
     }
 
+    /** Desglose de impuestos por tipo (p. ej. total de IVA y total de INC). */
+    public Money totalTax(TaxType type) {
+        if (type == null) {
+            throw InvalidInvoiceException.missing("un tipo de impuesto para el desglose");
+        }
+        return sum(line -> line.taxAmount(type));
+    }
+
     /** subtotal - descuentos + impuestos. Las retenciones, cuando existan, no modifican este valor. */
     public Money total() {
         return subtotal().minus(totalDiscount()).plus(totalTax());
