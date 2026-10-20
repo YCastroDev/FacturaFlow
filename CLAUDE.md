@@ -35,7 +35,7 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 - **Nada de anotaciones ni imports de Spring, JPA o Jackson en `domain/`.** El dominio es Java puro.
 - Las dependencias apuntan hacia adentro: `infrastructure → application → domain`. `application` no conoce adaptadores concretos.
 - `application/` también es Java puro: sin `@Service`, `@Transactional` ni nada de Spring. Los casos de uso se registran como beans en `infrastructure/config`.
-- Las clases en `application/port/in` y `application/port/out` son interfaces.
+- En `application/port/in` y `application/port/out` solo hay interfaces (puertos) y records (comandos/resultados).
 - `infrastructure/adapter/in` nunca usa `infrastructure/adapter/out`: siempre pasa por un puerto de entrada.
 - Sin ciclos entre paquetes.
 - **Prohibido** importar código de otro servicio o acceder a la base de datos de otro servicio (ADR 0001, ADR 0003). La comunicación entre servicios es solo por HTTP o eventos.
@@ -47,6 +47,15 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 - `.env` (raíz, ignorado por Git) contiene los valores reales. Claude **puede generar o modificar `.env` para desarrollo local**, pero **nunca mostrar su contenido** (ni con `cat`, `grep`, logs, `docker compose config`, etc.) **ni copiar sus valores a otros archivos**. Para saber qué variables existen, leer `.env.example`.
 - Al agregar o renombrar una variable, actualizar `.env.example` (con valor `CAMBIAME`) en el mismo cambio.
 - No desactivar ni saltarse el hook de gitleaks (`--no-verify`).
+
+## Reglas del dominio (ADR 0004)
+
+- Conceptos propios (enums, value objects); **nunca** IDs de catálogos de Factus en `domain/`. La traducción va en el adaptador.
+- El dominio no llama a `LocalDate.now()`, `Instant.now()` ni al reloj: las fechas entran como parámetro.
+- Las excepciones de `domain.exception` reciben solo valores simples (String, UUID, números), nunca objetos de `domain.model`.
+- Montos con `Money` (COP, 2 decimales, `HALF_UP`), redondeo por línea; `unitPrice` sin IVA.
+- Value objects como records que se validan en su constructor; el aggregate `Invoice` sin setters.
+- Tests de dominio: JUnit 5 + AssertJ puros (sin Spring), con `@DisplayName` en español como frase de negocio.
 
 ## Convenciones
 

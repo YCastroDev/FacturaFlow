@@ -72,14 +72,16 @@ class HexagonalArchitectureTest {
                     + "dependencias de Spring o de otros frameworks; se registran como beans y se les "
                     + "agrega transaccionalidad desde infrastructure.config (ADR 0002)");
 
-    // Regla 5: los puertos son contratos.
+    // Regla 5: los puertos son contratos (interfaces) y sus datos de entrada/salida (records).
     @ArchTest
-    static final ArchRule ports_are_interfaces = classes()
+    static final ArchRule ports_are_interfaces_or_records = classes()
             .that().resideInAnyPackage(BASE + ".application.port.in..", BASE + ".application.port.out..")
             .should().beInterfaces()
+            .orShould().beRecords()
             .allowEmptyShould(true)
-            .because("un puerto es un contrato: las implementaciones van en application.service "
-                    + "(puertos de entrada) o en infrastructure.adapter.out (puertos de salida)");
+            .because("en los puertos solo van contratos (interfaces) y sus comandos/resultados inmutables "
+                    + "(records); las implementaciones van en application.service (puertos de entrada) "
+                    + "o en infrastructure.adapter.out (puertos de salida)");
 
     // Regla 6: los adaptadores de entrada pasan siempre por los casos de uso.
     @ArchTest
