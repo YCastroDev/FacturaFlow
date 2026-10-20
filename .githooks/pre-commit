@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Pre-commit: bloquea el commit si los cambios en stage contienen secretos.
+# Usa gitleaks vía Docker (no requiere instalación local).
+# Activación (una vez tras clonar):  git config core.hooksPath .githooks
+set -euo pipefail
+
+GITLEAKS_IMAGE="zricethezav/gitleaks:v8.30.1"
+repo_root="$(git rev-parse --show-toplevel)"
+
+# 1) Barrera por nombre: ningún archivo .env (salvo .env.example) puede entrar,
+#    contenga lo que contenga.
+blocked_files="$(git diff --cached --name-only --diff-filter=ACMR \
+  | grep -E '(^|/)\.env(\..+)?$|\.env$' \
+  | grep -vE '\.env\.example$' || true)"
+if [[ -n "$blocked_files" ]]; then
+  echo "pre-commit: BLOQUEADO. Archivos de entorno en stage:" >&2
+  echo "$blocked_files" | sed 's/^/  - /' >&2
+  echo "Quítalos del stage con: git rm --cached <archivo>" >&2
+  exit 1
+fi
+
+# 2) Barrera por contenido: gitleaks sobre lo que está en stage.
+if ! docker info >/dev/null 2>&1; then
+  echo "pre-commit: BLOQUEADO. Docker no responde y no se puede ejecutar gitleaks." >&2
+  echo "Arranca Docker (sudo service docker start) y vuelve a intentar." >&2
+  exit 1
+fi
+
+if ! docker run --rm \
+      -v "$repo_root:/repo" -w /repo \
+      "$GITLEAKS_IMAGE" \
+      git --staged --redact --no-banner --config /repo/.gitleaks.toml /repo; then
+  echo "pre-commit: BLOQUEADO. gitleaks detectó posibles secretos (ver arriba)." >&2
+  echo "Mueve el valor a una variable de entorno y usa .env (no versionado)." >&2
+  exit 1
+fi

@@ -1,0 +1,50 @@
+# Entorno local de FacturaFlow.
+# Ejecutar desde la raíz del repo:
+#   docker compose --env-file .env -f infra/docker-compose.yml up --build
+# Todas las credenciales salen del .env de la raíz (no versionado).
+name: facturaflow
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_SUPERUSER:?Define POSTGRES_SUPERUSER en .env}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?Define POSTGRES_SUPERUSER_PASSWORD en .env}
+      POSTGRES_DB: postgres
+      # Contraseñas de los usuarios de cada servicio (las usa el script de init)
+      INVOICING_DB_PASSWORD: ${INVOICING_DB_PASSWORD:?Define INVOICING_DB_PASSWORD en .env}
+    volumes:
+      # PostgreSQL 18+: el volumen se monta en /var/lib/postgresql
+      - postgres-data:/var/lib/postgresql
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+    # Sin "ports": PostgreSQL solo es accesible dentro de la red de Docker.
+
+  invoicing:
+    build:
+      context: ../services/invoicing
+    environment:
+      INVOICING_DB_URL: jdbc:postgresql://postgres:5432/invoicing_db
+      INVOICING_DB_USER: invoicing_user
+      INVOICING_DB_PASSWORD: ${INVOICING_DB_PASSWORD:?Define INVOICING_DB_PASSWORD en .env}
+    ports:
+      - "127.0.0.1:8081:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q UP"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    restart: unless-stopped
+
+volumes:
+  postgres-data:

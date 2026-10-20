@@ -1,0 +1,11 @@
+# Architecture Decision Records (ADR)
+
+Un ADR es un documento corto que registra una decisión técnica importante, su contexto y sus consecuencias, para que en el futuro se entienda *por qué* el sistema es como es.
+
+| # | Decisión | Estado |
+|---|----------|--------|
+| [0001](0001-monorepo.md) | Monorepo para todos los servicios | Aceptado |
+| [0002](0002-arquitectura-hexagonal.md) | Arquitectura hexagonal en cada servicio | Aceptado |
+| [0003](0003-base-de-datos-por-servicio.md) | Base de datos por servicio (un PostgreSQL, una base y un usuario por servicio) | Aceptado |
+
+Para una nueva decisión: copia el formato de un ADR existente, usa el siguiente número y agrégalo a esta tabla. Un ADR aceptado no se edita: si la decisión cambia, se crea uno nuevo que lo reemplaza.

@@ -1,0 +1,66 @@
+# ---------------------------------------------------------------
+# Secretos y configuración local (NUNCA se versionan)
+# ---------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.env
+!*.env.example
+
+# Llaves, certificados y almacenes de claves
+*.pem
+*.key
+*.crt
+*.cer
+*.der
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.truststore
+id_rsa*
+id_ed25519*
+secrets/
+credentials*.json
+
+# ---------------------------------------------------------------
+# Build (Maven / Java)
+# ---------------------------------------------------------------
+target/
+!.mvn/wrapper/maven-wrapper.properties
+*.class
+hs_err_pid*
+replay_pid*
+
+# ---------------------------------------------------------------
+# Logs y temporales
+# ---------------------------------------------------------------
+logs/
+*.log
+*.tmp
+*.swp
+*~
+
+# ---------------------------------------------------------------
+# IDEs y sistema operativo
+# ---------------------------------------------------------------
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.project
+.classpath
+.settings/
+.factorypath
+# Salidas de compilación de IDEs (ancladas: no deben atrapar paquetes como port/out)
+services/*/bin/
+services/*/out/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ---------------------------------------------------------------
+# Claude Code (ajustes locales)
+# ---------------------------------------------------------------
+.claude/settings.local.json

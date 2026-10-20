@@ -1,0 +1,30 @@
+# La conexión a la base se lee SOLO desde variables de entorno (sin valores por defecto).
+spring:
+  application:
+    name: invoicing
+  datasource:
+    url: ${INVOICING_DB_URL}
+    username: ${INVOICING_DB_USER}
+    password: ${INVOICING_DB_PASSWORD}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate   # El esquema lo gestiona Flyway; Hibernate solo valida.
+  flyway:
+    locations: classpath:db/migration
+
+server:
+  port: 8080
+  error:
+    include-message: never
+    include-stacktrace: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+      show-components: never

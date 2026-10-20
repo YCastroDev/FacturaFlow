@@ -1,0 +1,17 @@
+# Normaliza finales de línea en el repo
+* text=auto
+
+# Scripts y archivos que se ejecutan dentro de contenedores Linux: siempre LF
+*.sh          text eol=lf
+*.sql         text eol=lf
+Dockerfile    text eol=lf
+mvnw          text eol=lf
+.githooks/*   text eol=lf
+
+# Scripts de Windows: CRLF
+*.cmd         text eol=crlf
+
+# Binarios
+*.jar         binary
+*.png         binary
+*.jpg         binary

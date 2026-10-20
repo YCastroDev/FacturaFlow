@@ -1,0 +1,7 @@
+# Configuración de gitleaks.
+# Usa todas las reglas por defecto. Si algún día aparece un falso positivo,
+# se documenta y se agrega aquí un [allowlist] lo más específico posible.
+title = "FacturaFlow gitleaks config"
+
+[extend]
+useDefault = true
