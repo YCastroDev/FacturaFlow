@@ -17,6 +17,7 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 | PostgreSQL | 18 (`postgres:18-alpine`) |
 | Migraciones | Flyway |
 | Tests de integración | Testcontainers 2.x |
+| Tests de arquitectura | ArchUnit 1.5.1 |
 | Escaneo de secretos | gitleaks v8.30.1 (vía Docker) |
 
 ## Estructura
@@ -33,7 +34,12 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
   `domain/{model,exception}`, `application/{port/in,port/out,service}`, `infrastructure/{adapter/in/...,adapter/out/...,config}`.
 - **Nada de anotaciones ni imports de Spring, JPA o Jackson en `domain/`.** El dominio es Java puro.
 - Las dependencias apuntan hacia adentro: `infrastructure → application → domain`. `application` no conoce adaptadores concretos.
+- `application/` también es Java puro: sin `@Service`, `@Transactional` ni nada de Spring. Los casos de uso se registran como beans en `infrastructure/config`.
+- Las clases en `application/port/in` y `application/port/out` son interfaces.
+- `infrastructure/adapter/in` nunca usa `infrastructure/adapter/out`: siempre pasa por un puerto de entrada.
+- Sin ciclos entre paquetes.
 - **Prohibido** importar código de otro servicio o acceder a la base de datos de otro servicio (ADR 0001, ADR 0003). La comunicación entre servicios es solo por HTTP o eventos.
+- **Estas reglas se validan automáticamente** con ArchUnit (`src/test/java/.../architecture/HexagonalArchitectureTest.java`) y corren con `./scripts/mvn.sh <servicio> test`. Si un test de arquitectura falla, se corrige el código, no la regla; cambiar una regla requiere preguntar (y, si es una decisión nueva, un ADR).
 
 ## Reglas de seguridad
 
@@ -53,6 +59,12 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 ```bash
 # Tests de un servicio (Maven en contenedor, Testcontainers incluido)
 ./scripts/mvn.sh invoicing test
+
+# Solo los tests de arquitectura (ArchUnit, ~2 s)
+./scripts/mvn.sh invoicing test -Dtest=HexagonalArchitectureTest
+
+# Tras borrar o mover clases, limpiar target/ para no evaluar .class viejos
+./scripts/mvn.sh invoicing clean test
 
 # Cualquier otro goal de Maven
 ./scripts/mvn.sh invoicing -B package -DskipTests
