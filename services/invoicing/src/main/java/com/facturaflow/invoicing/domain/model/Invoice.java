@@ -16,6 +16,10 @@ import java.util.function.Function;
  * <p>Los totales se calculan sumando los valores ya redondeados de cada línea
  * (ADR 0004). Al emitirse, se guarda además el total oficial devuelto por el
  * proveedor, que es el que tiene validez legal.
+ *
+ * <p>{@link #version()} es un token de concurrencia opaco (ADR 0005): el dominio no lo
+ * interpreta, solo lo transporta para que la persistencia detecte modificaciones
+ * concurrentes. Vacío en una factura nueva; lo asigna el repositorio al guardar.
  */
 public final class Invoice {
 
@@ -30,12 +34,15 @@ public final class Invoice {
     private final LocalDate issueDate;
     private final String observation;
 
+    private final Long version;
+
     private InvoiceStatus status;
     private ElectronicDocument electronicDocument;
     private String rejectionReason;
 
     private Invoice(InvoiceId id, ReferenceCode referenceCode, CustomerSnapshot customer, List<InvoiceLine> lines,
-                    PaymentMethod paymentMethod, PaymentTerms paymentTerms, LocalDate issueDate, String observation) {
+                    PaymentMethod paymentMethod, PaymentTerms paymentTerms, LocalDate issueDate, String observation,
+                    InvoiceStatus status, ElectronicDocument electronicDocument, String rejectionReason, Long version) {
         this.id = id;
         this.referenceCode = referenceCode;
         this.customer = customer;
@@ -44,7 +51,10 @@ public final class Invoice {
         this.paymentTerms = paymentTerms;
         this.issueDate = issueDate;
         this.observation = observation;
-        this.status = InvoiceStatus.PENDING;
+        this.status = status;
+        this.electronicDocument = electronicDocument;
+        this.rejectionReason = rejectionReason;
+        this.version = version;
     }
 
     /**
@@ -56,21 +66,33 @@ public final class Invoice {
     public static Invoice create(InvoiceId id, ReferenceCode referenceCode, CustomerSnapshot customer,
                                  List<InvoiceLine> lines, PaymentMethod paymentMethod, PaymentTerms paymentTerms,
                                  LocalDate issueDate, String observation) {
-        requirePresent(id, "un identificador");
-        requirePresent(referenceCode, "un código de referencia");
-        requirePresent(customer, "un cliente");
-        requirePresent(paymentMethod, "un medio de pago");
-        requirePresent(paymentTerms, "una forma de pago");
-        requirePresent(issueDate, "una fecha de emisión");
-        if (lines == null || lines.isEmpty()) {
-            throw InvalidInvoiceException.noLines();
-        }
-        if (lines.stream().anyMatch(Objects::isNull)) {
-            throw InvalidInvoiceException.missing("líneas no nulas");
-        }
-        validatePaymentTerms(paymentTerms, issueDate);
+        validateContent(id, referenceCode, customer, lines, paymentMethod, paymentTerms, issueDate);
         return new Invoice(id, referenceCode, customer, List.copyOf(lines), paymentMethod, paymentTerms, issueDate,
-                normalizeObservation(observation));
+                normalizeObservation(observation), InvoiceStatus.PENDING, null, null, null);
+    }
+
+    /**
+     * Reconstruye una factura ya existente (p. ej. desde la base de datos) con su estado
+     * completo. Aplica las mismas reglas que {@link #create} y además exige que el estado
+     * sea coherente: PENDING sin documento ni motivo; ISSUED con documento electrónico;
+     * REJECTED con motivo de rechazo.
+     *
+     * @param version token de concurrencia opaco asignado por la persistencia (ADR 0005)
+     */
+    public static Invoice reconstitute(InvoiceId id, ReferenceCode referenceCode, CustomerSnapshot customer,
+                                       List<InvoiceLine> lines, PaymentMethod paymentMethod,
+                                       PaymentTerms paymentTerms, LocalDate issueDate, String observation,
+                                       InvoiceStatus status, ElectronicDocument electronicDocument,
+                                       String rejectionReason, long version) {
+        validateContent(id, referenceCode, customer, lines, paymentMethod, paymentTerms, issueDate);
+        requirePresent(status, "un estado");
+        String reason = rejectionReason == null || rejectionReason.isBlank() ? null : rejectionReason.strip();
+        validateStateCoherence(status, electronicDocument, reason);
+        if (version < 0) {
+            throw InvalidInvoiceException.invalidVersion(version);
+        }
+        return new Invoice(id, referenceCode, customer, List.copyOf(lines), paymentMethod, paymentTerms, issueDate,
+                normalizeObservation(observation), status, electronicDocument, reason, version);
     }
 
     // ----- Totales (suma de valores ya redondeados por línea) -----
@@ -176,6 +198,11 @@ public final class Invoice {
         return Optional.ofNullable(rejectionReason);
     }
 
+    /** Token de concurrencia opaco; vacío si la factura nunca se ha guardado. */
+    public Optional<Long> version() {
+        return Optional.ofNullable(version);
+    }
+
     // ----- Identidad -----
 
     @Override
@@ -203,6 +230,53 @@ public final class Invoice {
 
     private Money sum(Function<InvoiceLine, Money> amount) {
         return lines.stream().map(amount).reduce(Money.ZERO, Money::plus);
+    }
+
+    private static void validateContent(InvoiceId id, ReferenceCode referenceCode, CustomerSnapshot customer,
+                                        List<InvoiceLine> lines, PaymentMethod paymentMethod,
+                                        PaymentTerms paymentTerms, LocalDate issueDate) {
+        requirePresent(id, "un identificador");
+        requirePresent(referenceCode, "un código de referencia");
+        requirePresent(customer, "un cliente");
+        requirePresent(paymentMethod, "un medio de pago");
+        requirePresent(paymentTerms, "una forma de pago");
+        requirePresent(issueDate, "una fecha de emisión");
+        if (lines == null || lines.isEmpty()) {
+            throw InvalidInvoiceException.noLines();
+        }
+        if (lines.stream().anyMatch(Objects::isNull)) {
+            throw InvalidInvoiceException.missing("líneas no nulas");
+        }
+        validatePaymentTerms(paymentTerms, issueDate);
+    }
+
+    private static void validateStateCoherence(InvoiceStatus status, ElectronicDocument document, String reason) {
+        switch (status) {
+            case PENDING -> {
+                if (document != null) {
+                    throw InvalidInvoiceException.inconsistentState("PENDING", "no puede tener documento electrónico");
+                }
+                if (reason != null) {
+                    throw InvalidInvoiceException.inconsistentState("PENDING", "no puede tener motivo de rechazo");
+                }
+            }
+            case ISSUED -> {
+                if (document == null) {
+                    throw InvalidInvoiceException.inconsistentState("ISSUED", "requiere documento electrónico");
+                }
+                if (reason != null) {
+                    throw InvalidInvoiceException.inconsistentState("ISSUED", "no puede tener motivo de rechazo");
+                }
+            }
+            case REJECTED -> {
+                if (reason == null) {
+                    throw InvalidInvoiceException.inconsistentState("REJECTED", "requiere motivo de rechazo");
+                }
+                if (document != null) {
+                    throw InvalidInvoiceException.inconsistentState("REJECTED", "no puede tener documento electrónico");
+                }
+            }
+        }
     }
 
     private static void validatePaymentTerms(PaymentTerms paymentTerms, LocalDate issueDate) {

@@ -6,7 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.facturaflow.invoicing.domain.exception.InvalidElectronicDocumentException;
 import java.net.URI;
-import java.time.OffsetDateTime;
+import java.time.Instant;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -15,7 +15,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 class ElectronicDocumentTest {
 
     private static final URI PDF = URI.create("https://sandbox.example/invoice.pdf");
-    private static final OffsetDateTime VALIDATED_AT = OffsetDateTime.parse("2026-10-20T10:30:00-05:00");
+    private static final Instant VALIDATED_AT = Instant.parse("2026-10-20T15:30:00Z");
 
     @Test
     @DisplayName("el CUFE se guarda normalizado en minúsculas")

@@ -12,7 +12,7 @@ import org.testcontainers.utility.DockerImageName;
  * variables de entorno de application.yml.
  */
 @TestConfiguration(proxyBeanMethods = false)
-class TestcontainersConfiguration {
+public class TestcontainersConfiguration {
 
     @Bean
     @ServiceConnection

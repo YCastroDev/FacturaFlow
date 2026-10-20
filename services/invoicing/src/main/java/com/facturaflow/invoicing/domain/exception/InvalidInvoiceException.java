@@ -19,6 +19,14 @@ public final class InvalidInvoiceException extends DomainException {
                 + length + ").");
     }
 
+    public static InvalidInvoiceException inconsistentState(String status, String detail) {
+        return new InvalidInvoiceException("Estado incoherente: una factura " + status + " " + detail + ".");
+    }
+
+    public static InvalidInvoiceException invalidVersion(long version) {
+        return new InvalidInvoiceException("La versión de una factura no puede ser negativa: " + version + ".");
+    }
+
     public static InvalidInvoiceException missingRejectionReason() {
         return new InvalidInvoiceException("El rechazo de una factura requiere un motivo.");
     }

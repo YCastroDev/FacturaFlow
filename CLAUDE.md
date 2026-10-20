@@ -35,7 +35,7 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 - **Nada de anotaciones ni imports de Spring, JPA o Jackson en `domain/`.** El dominio es Java puro.
 - Las dependencias apuntan hacia adentro: `infrastructure → application → domain`. `application` no conoce adaptadores concretos.
 - `application/` también es Java puro: sin `@Service`, `@Transactional` ni nada de Spring. Los casos de uso se registran como beans en `infrastructure/config`.
-- En `application/port/in` y `application/port/out` solo hay interfaces (puertos) y records (comandos/resultados).
+- En `application/port/in` y `application/port/out` solo hay interfaces (puertos) y records (comandos/resultados). Las excepciones del contrato de los puertos van en `application/exception`.
 - `infrastructure/adapter/in` nunca usa `infrastructure/adapter/out`: siempre pasa por un puerto de entrada.
 - Sin ciclos entre paquetes.
 - **Prohibido** importar código de otro servicio o acceder a la base de datos de otro servicio (ADR 0001, ADR 0003). La comunicación entre servicios es solo por HTTP o eventos.
@@ -57,6 +57,15 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 - Impuestos por línea como `List<LineTax>` (`TaxType` + `TaxRate`), sin tipos repetidos, cada uno redondeado por separado. `excluded` = "excluida de IVA" (no admite `LineTax` de tipo IVA).
 - Value objects como records que se validan en su constructor; el aggregate `Invoice` sin setters.
 - Tests de dominio: JUnit 5 + AssertJ puros (sin Spring), con `@DisplayName` en español como frase de negocio.
+
+## Reglas de persistencia (ADR 0005)
+
+- Entidades JPA solo en `infrastructure/adapter/out/persistence`, package-private, separadas del dominio; mapeo a mano en `InvoicePersistenceMapper`.
+- El dominio se reconstruye con `Invoice.reconstitute(...)`, nunca saltándose sus validaciones.
+- `Invoice.version()` es un token opaco: no se interpreta ni se modifica fuera del adaptador. `save` devuelve una instancia nueva; usar siempre la devuelta.
+- Los adaptadores no dejan escapar excepciones de Spring/Hibernate: se traducen a las de `application.exception`. Hacer `flush()` dentro del `try` para poder traducirlas.
+- Cargar agregados con entity graph (sin N+1); colecciones como listas indexadas (`@OrderColumn`). Los tests verifican el número de sentencias con `Statistics`.
+- Cada valor nuevo de un enum persistido exige migración (CHECK). Columnas: sin palabras reservadas; `VARCHAR(n)` solo si el dominio impone ese límite.
 
 ## Convenciones
 

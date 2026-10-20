@@ -2,15 +2,16 @@ package com.facturaflow.invoicing.domain.model;
 
 import com.facturaflow.invoicing.domain.exception.InvalidElectronicDocumentException;
 import java.net.URI;
-import java.time.OffsetDateTime;
+import java.time.Instant;
 import java.util.Locale;
 import java.util.regex.Pattern;
 
 /**
  * Resultado de la emisión ante la DIAN (vía Factus). {@code officialTotal} es el total
  * con validez legal; puede diferir del calculado por el dominio (ADR 0004, decisión B).
+ * {@code validatedAt} es un instante: la zona horaria es asunto de presentación (ADR 0005).
  */
-public record ElectronicDocument(String number, String cufe, URI pdfUrl, OffsetDateTime validatedAt,
+public record ElectronicDocument(String number, String cufe, URI pdfUrl, Instant validatedAt,
                                  Money officialTotal) {
 
     private static final Pattern CUFE = Pattern.compile("[0-9a-f]{96}");
