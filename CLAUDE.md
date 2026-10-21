@@ -18,6 +18,7 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 | Migraciones | Flyway |
 | Tests de integración | Testcontainers 2.x |
 | Tests de arquitectura | ArchUnit 1.5.1 |
+| Documentación de la API | springdoc-openapi 3.1.1 (Swagger UI) |
 | Escaneo de secretos | gitleaks v8.30.1 (vía Docker) |
 
 ## Estructura
@@ -62,10 +63,21 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 
 - Entidades JPA solo en `infrastructure/adapter/out/persistence`, package-private, separadas del dominio; mapeo a mano en `InvoicePersistenceMapper`.
 - El dominio se reconstruye con `Invoice.reconstitute(...)`, nunca saltándose sus validaciones.
-- `Invoice.version()` es un token opaco: no se interpreta ni se modifica fuera del adaptador. `save` devuelve una instancia nueva; usar siempre la devuelta.
+- `Invoice.version()` es un token opaco: no se interpreta ni se modifica fuera del adaptador. `saveNew` (insertar, con la huella de la petición) y `save` (actualizar) devuelven una instancia nueva; usar siempre la devuelta.
 - Los adaptadores no dejan escapar excepciones de Spring/Hibernate: se traducen a las de `application.exception`. Hacer `flush()` dentro del `try` para poder traducirlas.
 - Cargar agregados con entity graph (sin N+1); colecciones como listas indexadas (`@OrderColumn`). Los tests verifican el número de sentencias con `Statistics`.
 - Cada valor nuevo de un enum persistido exige migración (CHECK). Columnas: sin palabras reservadas; `VARCHAR(n)` solo si el dominio impone ese límite.
+
+## Reglas de casos de uso y API REST (ADR 0006)
+
+- Casos de uso: interfaz en `port/in` + implementación en `application/service` registrada en `UseCaseConfiguration`. Reciben comandos con tipos simples y construyen los value objects ellos mismos. La fecha sale del `Clock` inyectado (zona `invoicing.time-zone`).
+- **Transacciones solo en `infrastructure/adapter/out/persistence`** (regla de ArchUnit). Nunca envolver un caso de uso en una transacción: las llamadas a sistemas externos (proveedor de facturación) van fuera de la base.
+- Idempotencia de creación por `referenceCode` + huella SHA-256 de la petición normalizada (`InvoiceRequestHasher`). Si se agrega un campo a la factura, agregarlo también a la huella y a su test parametrizado.
+- Emisión: respuestas de negocio como `IssuanceResult` sellado (`Issued` | `Rejected`); fallas técnicas como `ElectronicInvoiceProviderUnavailableException`. Un adaptador de proveedor nunca devuelve un `Rejected` por un timeout.
+- Proveedor activo según `invoicing.provider` (`fake` por defecto). El falso se controla con `SIMULAR_RECHAZO` y `SIMULAR_CAIDA` en la observación.
+- REST: DTOs y enums propios en `adapter/in/rest/dto`, con `switch` exhaustivos hacia y desde el dominio. El controlador lee el agregado, nunca lo serializa. Bean Validation solo para forma (presencia, tipos, topes anti-abuso); las reglas de negocio no se duplican (responden 422 desde el dominio).
+- Errores: siempre Problem Details desde `ProblemDetailsHandler`, con `type` `urn:facturaflow:problem:<slug>`. Nunca exponer mensajes de Spring, Jackson o Hibernate ni trazas. Una excepción nueva de `application.exception` necesita su fila en la tabla del ADR 0006 y su test en `InvoiceControllerTest`.
+- Tests: casos de uso con `InMemoryInvoiceRepository` y `StubElectronicInvoiceProvider` (sin Spring); web con `@WebMvcTest` + `MockMvcTester`; punta a punta con `RestTestClient` + Testcontainers.
 
 ## Convenciones
 
@@ -99,6 +111,9 @@ docker compose --env-file .env -f infra/docker-compose.yml down -v    # BORRA da
 
 # Health de invoicing
 curl -s http://localhost:8081/actuator/health
+
+# Swagger UI (API documentada con ejemplos)
+# http://localhost:8081/swagger-ui.html
 
 # Escaneo de secretos de todo el repo
 ./scripts/check-secrets.sh

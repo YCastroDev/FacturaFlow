@@ -12,6 +12,23 @@ spring:
       ddl-auto: validate   # El esquema lo gestiona Flyway; Hibernate solo valida.
   flyway:
     locations: classpath:db/migration
+  jackson:
+    deserialization:
+      # Un campo mal escrito (p. ej. "observacion") da 400 en vez de ignorarse sin aviso (ADR 0006).
+      fail-on-unknown-properties: true
+
+invoicing:
+  # Proveedor de facturación electrónica: "fake" (simulado, ADR 0006). Se puede sobrescribir con
+  # la variable INVOICING_PROVIDER. Un valor sin implementación hace fallar el arranque.
+  provider: fake
+  # Zona de la fecha de emisión (la fecha legal es la de Colombia, no la del servidor).
+  time-zone: America/Bogota
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+  api-docs:
+    path: /v3/api-docs
 
 server:
   port: 8080

@@ -7,6 +7,7 @@ import static com.facturaflow.invoicing.domain.model.InvoiceFixtures.excludedLin
 import static com.facturaflow.invoicing.domain.model.InvoiceFixtures.line;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.facturaflow.invoicing.application.port.out.RequestHash;
 import com.facturaflow.invoicing.domain.model.CustomerSnapshot;
 import com.facturaflow.invoicing.domain.model.DocumentType;
 import com.facturaflow.invoicing.domain.model.IdentificationDocument;
@@ -24,6 +25,8 @@ import org.junit.jupiter.api.Test;
 /** Tests unitarios del mapeo a mano: sin Spring ni base de datos. */
 class InvoicePersistenceMapperTest {
 
+    private static final RequestHash HASH = new RequestHash("c".repeat(64));
+
     private final InvoicePersistenceMapper mapper = new InvoicePersistenceMapper();
 
     private static Invoice invoice(CustomerSnapshot customer, PaymentTerms terms, String observation) {
@@ -36,9 +39,19 @@ class InvoicePersistenceMapperTest {
 
     /** Simula lo que hace JPA al persistir: asignar la versión inicial. */
     private Invoice roundTrip(Invoice invoice) {
-        InvoiceEntity entity = mapper.toNewEntity(invoice);
+        InvoiceEntity entity = mapper.toNewEntity(invoice, HASH);
         entity.version = 0L;
         return mapper.toDomain(entity);
+    }
+
+    @Test
+    @DisplayName("la huella de la petición viaja en la entidad y vuelve junto a la factura")
+    void mapsRequestHash() {
+        InvoiceEntity entity = mapper.toNewEntity(invoice(customer(), PaymentTerms.cash(), null), HASH);
+        entity.version = 0L;
+
+        assertThat(entity.requestHash).isEqualTo(HASH.value());
+        assertThat(mapper.toStored(entity).requestHash()).isEqualTo(HASH);
     }
 
     @Test
@@ -57,7 +70,7 @@ class InvoicePersistenceMapperTest {
     void creditInvoiceMapsPaymentTypeAndDueDate() {
         Invoice original = invoice(customer(), PaymentTerms.credit(ISSUE_DATE.plusDays(30)), null);
 
-        InvoiceEntity entity = mapper.toNewEntity(original);
+        InvoiceEntity entity = mapper.toNewEntity(original, HASH);
 
         assertThat(entity.paymentType).isEqualTo("CREDIT");
         assertThat(entity.dueDate).isEqualTo(ISSUE_DATE.plusDays(30));
@@ -68,7 +81,7 @@ class InvoicePersistenceMapperTest {
     @Test
     @DisplayName("el orden de las líneas y de sus impuestos se conserva")
     void keepsOrderOfLinesAndTaxes() {
-        InvoiceEntity entity = mapper.toNewEntity(invoice(customer(), PaymentTerms.cash(), null));
+        InvoiceEntity entity = mapper.toNewEntity(invoice(customer(), PaymentTerms.cash(), null), HASH);
 
         assertThat(entity.lines).extracting(l -> l.code).containsExactly("SKU-1", "SKU-EXC", "SKU-1");
         assertThat(entity.lines.getFirst().taxes).extracting(t -> t.taxType).containsExactly("IVA", "INC");
@@ -82,7 +95,7 @@ class InvoicePersistenceMapperTest {
                 IdentificationDocument.of(DocumentType.CITIZENSHIP_CARD, "1020304050"), "Ana Pérez", null);
         Invoice original = invoice(person, PaymentTerms.cash(), null);
 
-        InvoiceEntity entity = mapper.toNewEntity(original);
+        InvoiceEntity entity = mapper.toNewEntity(original, HASH);
 
         assertThat(entity.customerCheckDigit).isNull();
         assertThat(entity.customerCompanyName).isNull();
@@ -107,7 +120,7 @@ class InvoicePersistenceMapperTest {
         Invoice original = invoice(customer(), PaymentTerms.cash(), null);
         original.markAsRejected("Regla FAD06");
 
-        InvoiceEntity entity = mapper.toNewEntity(original);
+        InvoiceEntity entity = mapper.toNewEntity(original, HASH);
 
         assertThat(entity.status).isEqualTo("REJECTED");
         assertThat(entity.edocNumber).isNull();
@@ -119,7 +132,7 @@ class InvoicePersistenceMapperTest {
     @DisplayName("solo el estado, el documento y el motivo se copian al actualizar una entidad existente")
     void applyMutableStateOnlyTouchesMutableColumns() {
         Invoice original = invoice(customer(), PaymentTerms.cash(), null);
-        InvoiceEntity entity = mapper.toNewEntity(original);
+        InvoiceEntity entity = mapper.toNewEntity(original, HASH);
         var linesBefore = entity.lines;
         original.markAsIssued(electronicDocument("133084.97"));
 

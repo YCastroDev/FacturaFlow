@@ -1,6 +1,7 @@
 package com.facturaflow.invoicing.infrastructure.adapter.out.persistence;
 
 import static com.facturaflow.invoicing.domain.model.InvoiceFixtures.ISSUE_DATE;
+import static com.facturaflow.invoicing.domain.model.InvoiceFixtures.VALID_CUFE;
 import static com.facturaflow.invoicing.domain.model.InvoiceFixtures.customer;
 import static com.facturaflow.invoicing.domain.model.InvoiceFixtures.electronicDocument;
 import static com.facturaflow.invoicing.domain.model.InvoiceFixtures.excludedLine;
@@ -12,8 +13,11 @@ import com.facturaflow.invoicing.TestcontainersConfiguration;
 import com.facturaflow.invoicing.application.exception.DuplicateReferenceCodeException;
 import com.facturaflow.invoicing.application.exception.InvoiceConcurrentModificationException;
 import com.facturaflow.invoicing.application.port.out.InvoiceRepository;
+import com.facturaflow.invoicing.application.port.out.RequestHash;
+import com.facturaflow.invoicing.application.port.out.StoredInvoice;
 import com.facturaflow.invoicing.domain.model.CustomerSnapshot;
 import com.facturaflow.invoicing.domain.model.DocumentType;
+import com.facturaflow.invoicing.domain.model.ElectronicDocument;
 import com.facturaflow.invoicing.domain.model.IdentificationDocument;
 import com.facturaflow.invoicing.domain.model.Invoice;
 import com.facturaflow.invoicing.domain.model.InvoiceId;
@@ -29,6 +33,8 @@ import com.facturaflow.invoicing.domain.model.TaxType;
 import com.facturaflow.invoicing.domain.model.UnitOfMeasure;
 import com.facturaflow.invoicing.domain.model.DiscountRate;
 import jakarta.persistence.EntityManagerFactory;
+import java.net.URI;
+import java.time.Instant;
 import java.util.List;
 import java.util.stream.Stream;
 import org.hibernate.SessionFactory;
@@ -45,7 +51,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
 /**
- * Integración contra un PostgreSQL real (Testcontainers) con la migración V2 aplicada.
+ * Integración contra un PostgreSQL real (Testcontainers) con las migraciones aplicadas.
  * Sin @Transactional en el test: cada save hace commit de verdad, como en producción.
  * El SQL se registra en el log (org.hibernate.SQL) para poder inspeccionar las consultas.
  */
@@ -57,6 +63,9 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 })
 @Import(TestcontainersConfiguration.class)
 class JpaInvoiceRepositoryAdapterTest {
+
+    private static final RequestHash HASH = new RequestHash("a".repeat(64));
+    private static final RequestHash OTHER_HASH = new RequestHash("b".repeat(64));
 
     @Autowired
     private InvoiceRepository repository;
@@ -90,7 +99,7 @@ class JpaInvoiceRepositoryAdapterTest {
     void savesAndLoadsPendingInvoice() {
         Invoice original = newInvoice("SALE-1", PaymentTerms.cash());
 
-        Invoice saved = repository.save(original);
+        Invoice saved = repository.saveNew(original, HASH);
         Invoice loaded = repository.findById(original.id()).orElseThrow();
 
         assertThat(loaded).usingRecursiveComparison().ignoringFields("version").isEqualTo(original);
@@ -104,7 +113,7 @@ class JpaInvoiceRepositoryAdapterTest {
     @Test
     @DisplayName("al emitir y volver a guardar se conservan el documento electrónico y el total oficial")
     void savesIssuedInvoice() {
-        Invoice saved = repository.save(newInvoice("SALE-1", PaymentTerms.cash()));
+        Invoice saved = repository.saveNew(newInvoice("SALE-1", PaymentTerms.cash()), HASH);
         saved.markAsIssued(electronicDocument("140285.00"));
 
         Invoice issued = repository.save(saved);
@@ -118,9 +127,24 @@ class JpaInvoiceRepositoryAdapterTest {
     }
 
     @Test
+    @DisplayName("la factura que devuelve save es idéntica a la que se relee, aunque el instante traiga nanosegundos")
+    void savedInstanceMatchesReloadedOne() {
+        Invoice saved = repository.saveNew(newInvoice("SALE-1", PaymentTerms.cash()), HASH);
+        saved.markAsIssued(new ElectronicDocument("SETP1", VALID_CUFE, URI.create("https://sandbox.example/a.pdf"),
+                Instant.parse("2026-10-20T15:30:00.123456789Z"), Money.of("140284.97")));
+
+        Invoice issued = repository.save(saved);
+
+        assertThat(issued.electronicDocument().orElseThrow().validatedAt())
+                .isEqualTo(Instant.parse("2026-10-20T15:30:00.123456Z"));
+        assertThat(repository.findById(saved.id()).orElseThrow().electronicDocument())
+                .isEqualTo(issued.electronicDocument());
+    }
+
+    @Test
     @DisplayName("una factura rechazada conserva su motivo")
     void savesRejectedInvoice() {
-        Invoice saved = repository.save(newInvoice("SALE-1", PaymentTerms.cash()));
+        Invoice saved = repository.saveNew(newInvoice("SALE-1", PaymentTerms.cash()), HASH);
         saved.markAsRejected("Regla FAD06: NIT inválido");
 
         repository.save(saved);
@@ -132,7 +156,7 @@ class JpaInvoiceRepositoryAdapterTest {
     @Test
     @DisplayName("una factura se encuentra por el código de referencia de su venta")
     void findsByReferenceCode() {
-        Invoice original = repository.save(newInvoice("SALE-42", PaymentTerms.cash()));
+        Invoice original = repository.saveNew(newInvoice("SALE-42", PaymentTerms.cash()), HASH);
 
         assertThat(repository.findByReferenceCode(new ReferenceCode("SALE-42")))
                 .get().extracting(Invoice::id).isEqualTo(original.id());
@@ -143,10 +167,10 @@ class JpaInvoiceRepositoryAdapterTest {
     @Test
     @DisplayName("una segunda factura para la misma venta se rechaza con una excepción propia")
     void rejectsDuplicateReferenceCode() {
-        repository.save(newInvoice("SALE-1", PaymentTerms.cash()));
+        repository.saveNew(newInvoice("SALE-1", PaymentTerms.cash()), HASH);
         Invoice duplicate = newInvoice("SALE-1", PaymentTerms.cash());
 
-        assertThatThrownBy(() -> repository.save(duplicate))
+        assertThatThrownBy(() -> repository.saveNew(duplicate, OTHER_HASH))
                 .isInstanceOf(DuplicateReferenceCodeException.class)
                 .hasMessageContaining("SALE-1");
         assertThat(jdbc.sql("SELECT count(*) FROM invoices").query(Long.class).single()).isEqualTo(1L);
@@ -156,7 +180,7 @@ class JpaInvoiceRepositoryAdapterTest {
     @Test
     @DisplayName("si dos copias de una factura se modifican en paralelo, la segunda en guardarse falla")
     void optimisticLocking() {
-        Invoice saved = repository.save(newInvoice("SALE-1", PaymentTerms.cash()));
+        Invoice saved = repository.saveNew(newInvoice("SALE-1", PaymentTerms.cash()), HASH);
         Invoice copyA = repository.findById(saved.id()).orElseThrow();
         Invoice copyB = repository.findById(saved.id()).orElseThrow();
 
@@ -179,7 +203,7 @@ class JpaInvoiceRepositoryAdapterTest {
     @MethodSource("paymentTerms")
     @DisplayName("la forma de pago se reconstruye correctamente")
     void rebuildsPaymentTerms(String description, PaymentTerms terms) {
-        Invoice saved = repository.save(newInvoice("SALE-1", terms));
+        Invoice saved = repository.saveNew(newInvoice("SALE-1", terms), HASH);
 
         assertThat(repository.findById(saved.id()).orElseThrow().paymentTerms()).isEqualTo(terms);
     }
@@ -187,7 +211,7 @@ class JpaInvoiceRepositoryAdapterTest {
     @Test
     @DisplayName("cargar una factura con varias líneas e impuestos ejecuta una sola consulta (sin N+1)")
     void loadsAggregateWithSingleQuery() {
-        Invoice saved = repository.save(newInvoice("SALE-1", PaymentTerms.cash()));
+        Invoice saved = repository.saveNew(newInvoice("SALE-1", PaymentTerms.cash()), HASH);
         Statistics statistics = entityManagerFactory.unwrap(SessionFactory.class).getStatistics();
         statistics.clear();
 
@@ -201,7 +225,7 @@ class JpaInvoiceRepositoryAdapterTest {
     @Test
     @DisplayName("guardar un cambio de estado ejecuta solo una lectura y una actualización (sin N+1)")
     void updatesAggregateWithTwoStatements() {
-        Invoice saved = repository.save(newInvoice("SALE-1", PaymentTerms.cash()));
+        Invoice saved = repository.saveNew(newInvoice("SALE-1", PaymentTerms.cash()), HASH);
         saved.markAsIssued(electronicDocument("140284.97"));
         Statistics statistics = entityManagerFactory.unwrap(SessionFactory.class).getStatistics();
         statistics.clear();
@@ -213,6 +237,44 @@ class JpaInvoiceRepositoryAdapterTest {
     }
 
     @Test
+    @DisplayName("la huella de la petición se guarda con la factura y se recupera junto a ella en una sola consulta")
+    void storesRequestHash() {
+        Invoice saved = repository.saveNew(newInvoice("SALE-1", PaymentTerms.cash()), HASH);
+        saved.markAsIssued(electronicDocument("140284.97"));
+        repository.save(saved);   // un cambio de estado no toca la huella
+        Statistics statistics = entityManagerFactory.unwrap(SessionFactory.class).getStatistics();
+        statistics.clear();
+
+        StoredInvoice stored = repository.findStoredByReferenceCode(new ReferenceCode("SALE-1")).orElseThrow();
+
+        assertThat(stored.requestHash()).isEqualTo(HASH);
+        assertThat(stored.invoice().id()).isEqualTo(saved.id());
+        assertThat(stored.invoice().lines()).hasSize(3);
+        assertThat(statistics.getPrepareStatementCount()).as("sentencias SQL preparadas").isEqualTo(1);
+        assertThat(repository.findStoredByReferenceCode(new ReferenceCode("SALE-404"))).isEmpty();
+    }
+
+    @Test
+    @DisplayName("la base rechaza una huella que no tenga el formato SHA-256 hexadecimal")
+    void databaseRejectsMalformedHash() {
+        Invoice saved = repository.saveNew(newInvoice("SALE-1", PaymentTerms.cash()), HASH);
+
+        assertThatThrownBy(() -> jdbc.sql("UPDATE invoices SET request_hash = 'XYZ' WHERE id = ?")
+                .param(saved.id().value()).update())
+                .hasMessageContaining("ck_invoices_request_hash");
+    }
+
+    @Test
+    @DisplayName("crear y actualizar no se confunden: saveNew exige una factura nueva y save una ya guardada")
+    void saveNewAndSaveAreNotInterchangeable() {
+        Invoice fresh = newInvoice("SALE-1", PaymentTerms.cash());
+        assertThatThrownBy(() -> repository.save(fresh)).isInstanceOf(IllegalArgumentException.class);
+
+        Invoice saved = repository.saveNew(fresh, HASH);
+        assertThatThrownBy(() -> repository.saveNew(saved, HASH)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     @DisplayName("todos los valores de los enums del dominio son aceptados por los CHECK de la base")
     void everyDomainEnumValueIsAcceptedByTheDatabase() {
         int sequence = 0;
@@ -220,21 +282,21 @@ class JpaInvoiceRepositoryAdapterTest {
             IdentificationDocument document = type == DocumentType.NIT
                     ? IdentificationDocument.nit("890903938", 8)
                     : IdentificationDocument.of(type, "1020304050");
-            repository.save(newInvoice("DOC-" + sequence++, PaymentTerms.cash(),
-                    CustomerSnapshot.person(document, "Ana", null), List.of(line("1", "1000", "0", "19"))));
+            repository.saveNew(newInvoice("DOC-" + sequence++, PaymentTerms.cash(),
+                    CustomerSnapshot.person(document, "Ana", null), List.of(line("1", "1000", "0", "19"))), HASH);
         }
         for (UnitOfMeasure unit : UnitOfMeasure.values()) {
             InvoiceLine line = new InvoiceLine("SKU-1", "Producto", Quantity.of("1"), Money.of("1000"),
                     DiscountRate.NONE, List.of(LineTax.of(TaxType.IVA, "19")), unit, false);
-            repository.save(newInvoice("UNIT-" + sequence++, PaymentTerms.cash(), customer(), List.of(line)));
+            repository.saveNew(newInvoice("UNIT-" + sequence++, PaymentTerms.cash(), customer(), List.of(line)), HASH);
         }
         for (PaymentMethod method : PaymentMethod.values()) {
-            repository.save(Invoice.create(InvoiceId.generate(), new ReferenceCode("PM-" + sequence++), customer(),
+            repository.saveNew(Invoice.create(InvoiceId.generate(), new ReferenceCode("PM-" + sequence++), customer(),
                     List.of(line("1", "1000", "0", LineTax.of(TaxType.INC, "8"))), method, PaymentTerms.cash(),
-                    ISSUE_DATE, null));
+                    ISSUE_DATE, null), HASH);
         }
         for (InvoiceStatus status : List.of(InvoiceStatus.ISSUED, InvoiceStatus.REJECTED)) {
-            Invoice invoice = repository.save(newInvoice("ST-" + sequence++, PaymentTerms.cash()));
+            Invoice invoice = repository.saveNew(newInvoice("ST-" + sequence++, PaymentTerms.cash()), HASH);
             if (status == InvoiceStatus.ISSUED) {
                 invoice.markAsIssued(electronicDocument("1.00"));
             } else {

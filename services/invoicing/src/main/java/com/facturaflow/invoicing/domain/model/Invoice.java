@@ -68,7 +68,7 @@ public final class Invoice {
                                  LocalDate issueDate, String observation) {
         validateContent(id, referenceCode, customer, lines, paymentMethod, paymentTerms, issueDate);
         return new Invoice(id, referenceCode, customer, List.copyOf(lines), paymentMethod, paymentTerms, issueDate,
-                normalizeObservation(observation), InvoiceStatus.PENDING, null, null, null);
+                normalizedObservation(observation), InvoiceStatus.PENDING, null, null, null);
     }
 
     /**
@@ -92,7 +92,7 @@ public final class Invoice {
             throw InvalidInvoiceException.invalidVersion(version);
         }
         return new Invoice(id, referenceCode, customer, List.copyOf(lines), paymentMethod, paymentTerms, issueDate,
-                normalizeObservation(observation), status, electronicDocument, reason, version);
+                normalizedObservation(observation), status, electronicDocument, reason, version);
     }
 
     // ----- Totales (suma de valores ya redondeados por línea) -----
@@ -292,7 +292,14 @@ public final class Invoice {
         }
     }
 
-    private static String normalizeObservation(String observation) {
+    /**
+     * Observación tal como la guardaría la factura: sin espacios en los extremos y
+     * {@code null} si está vacía. Pública para que quien compare peticiones (idempotencia,
+     * ADR 0006) normalice con la misma regla que el dominio.
+     *
+     * @throws InvalidInvoiceException si supera {@value #MAX_OBSERVATION_LENGTH} caracteres
+     */
+    public static String normalizedObservation(String observation) {
         if (observation == null || observation.isBlank()) {
             return null;
         }

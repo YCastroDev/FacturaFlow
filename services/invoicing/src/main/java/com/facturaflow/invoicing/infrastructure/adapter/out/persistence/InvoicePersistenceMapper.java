@@ -1,5 +1,7 @@
 package com.facturaflow.invoicing.infrastructure.adapter.out.persistence;
 
+import com.facturaflow.invoicing.application.port.out.RequestHash;
+import com.facturaflow.invoicing.application.port.out.StoredInvoice;
 import com.facturaflow.invoicing.domain.model.CustomerSnapshot;
 import com.facturaflow.invoicing.domain.model.DiscountRate;
 import com.facturaflow.invoicing.domain.model.DocumentType;
@@ -19,6 +21,7 @@ import com.facturaflow.invoicing.domain.model.TaxRate;
 import com.facturaflow.invoicing.domain.model.TaxType;
 import com.facturaflow.invoicing.domain.model.UnitOfMeasure;
 import java.net.URI;
+import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 import org.springframework.stereotype.Component;
 
@@ -33,9 +36,10 @@ class InvoicePersistenceMapper {
     private static final String CREDIT = "CREDIT";
 
     /** Entidad para una factura que aún no existe en la base (versión vacía: JPA la inicializa). */
-    InvoiceEntity toNewEntity(Invoice invoice) {
+    InvoiceEntity toNewEntity(Invoice invoice, RequestHash requestHash) {
         InvoiceEntity entity = new InvoiceEntity();
         entity.id = invoice.id().value();
+        entity.requestHash = requestHash.value();
         entity.referenceCode = invoice.referenceCode().value();
         entity.issueDate = invoice.issueDate();
         entity.paymentMethod = invoice.paymentMethod().name();
@@ -74,9 +78,15 @@ class InvoicePersistenceMapper {
         entity.edocNumber = document == null ? null : document.number();
         entity.edocCufe = document == null ? null : document.cufe();
         entity.edocPdfUrl = document == null ? null : document.pdfUrl().toString();
-        entity.edocValidatedAt = document == null ? null : document.validatedAt();
+        // TIMESTAMPTZ guarda microsegundos: se trunca aquí para que la factura que devuelve save
+        // sea idéntica a la que se relee después (si no, la primera respuesta traería nanosegundos).
+        entity.edocValidatedAt = document == null ? null : document.validatedAt().truncatedTo(ChronoUnit.MICROS);
         entity.edocOfficialTotal = document == null ? null : document.officialTotal().amount();
         entity.rejectionReason = invoice.rejectionReason().orElse(null);
+    }
+
+    StoredInvoice toStored(InvoiceEntity entity) {
+        return new StoredInvoice(toDomain(entity), new RequestHash(entity.requestHash));
     }
 
     /** Reconstruye el agregado; {@link Invoice#reconstitute} rechaza cualquier estado incoherente. */

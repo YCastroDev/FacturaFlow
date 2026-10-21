@@ -87,6 +87,10 @@ class InvoiceEntity {
     @Column(name = "rejection_reason")
     String rejectionReason;
 
+    /** Huella de la petición que creó la factura (idempotencia, ADR 0006). Nunca cambia. */
+    @Column(name = "request_hash", nullable = false, updatable = false)
+    String requestHash;
+
     /**
      * Lista indexada por {@code line_number} (no un "bag"): conserva el orden y permite
      * traer líneas e impuestos en una sola consulta sin MultipleBagFetchException (ADR 0005).

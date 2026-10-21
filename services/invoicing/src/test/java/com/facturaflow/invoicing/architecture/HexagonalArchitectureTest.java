@@ -93,6 +93,18 @@ class HexagonalArchitectureTest {
                     + "si usa un repositorio o un cliente externo directamente, se salta los casos de uso "
                     + "y las reglas de negocio");
 
+    // Regla 8: las transacciones solo existen en el adaptador de persistencia (ADR 0006).
+    @ArchTest
+    static final ArchRule transactions_only_in_persistence_adapter = noClasses()
+            .that().resideOutsideOfPackage(BASE + ".infrastructure.adapter.out.persistence..")
+            .should().dependOnClassesThat().resideInAnyPackage(
+                    "org.springframework.transaction..", "jakarta.transaction..")
+            .allowEmptyShould(true)
+            .because("cada operación del repositorio es su propia transacción corta; si un caso de uso, "
+                    + "un controlador o la configuración abrieran una (@Transactional, TransactionTemplate), "
+                    + "la llamada al proveedor de facturación quedaría dentro y retendría conexión y bloqueos "
+                    + "mientras espera a un sistema externo");
+
     // Regla 7: sin ciclos entre ningún par de paquetes.
     @ArchTest
     static final ArchRule no_package_cycles = slices()
