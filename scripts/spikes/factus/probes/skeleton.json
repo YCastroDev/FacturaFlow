@@ -1,0 +1,5 @@
+{
+  "customer": { "identification": "x", "responsibilities": [ "x" ], "x": 1 },
+  "items": [ { "x": 1 } ],
+  "payment_details": [ { "x": 1 } ]
+}

@@ -64,3 +64,6 @@ Desktop.ini
 # Claude Code (ajustes locales)
 # ---------------------------------------------------------------
 .claude/settings.local.json
+
+# Salidas del spike de Factus (respuestas del sandbox, PDFs)
+scripts/spikes/output/

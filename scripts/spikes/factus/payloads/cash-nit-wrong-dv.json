@@ -1,0 +1,31 @@
+{
+  "reference_code": "{{REFERENCE_CODE}}",
+  "observation": "Spike FacturaFlow: contado con IVA",
+  "customer": {
+    "identification_document_code": "31",
+    "identification": "890903938",
+    "dv": "1",
+    "company": "Cliente Ejemplo S.A.S.",
+    "legal_organization_code": "1",
+    "municipality_code": "11001",
+    "address": "Calle 1 # 2-3",
+    "email": "facturacion@cliente.example",
+    "phone": "3001234567",
+    "responsibilities": [ "R-99-PN" ]
+  },
+  "items": [
+    {
+      "code_reference": "SKU-001",
+      "name": "Teclado inalámbrico",
+      "quantity": 2,
+      "price": 85000.00,
+      "discount_rate": 10,
+      "unit_measure_code": "94",
+      "standard_code": "999",
+      "taxes": [ { "code": "01", "rate": 19 } ]
+    }
+  ],
+  "payment_details": [
+    { "payment_form": "1", "payment_method_code": "10", "amount": 182070.00 }
+  ]
+}

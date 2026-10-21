@@ -1,0 +1,17 @@
+{
+  "customer": {
+    "identification_document_code": "31", "identification": "890903938", "dv": "8", "company": "Cliente",
+    "legal_organization_id": "ZZ", "legal_organization": "ZZ", "legal_organization_code": "ZZ",
+    "organization_type_code": "ZZ", "person_type": "ZZ", "type_organization_code": "ZZ",
+    "tribute_id": "ZZ", "tribute": "ZZ", "tributes": [ "ZZ" ], "tax_code": "ZZ", "tax_scheme": "ZZ",
+    "tax_regime": "ZZ", "tax_level_code": "ZZ", "tribute_code": "ZZ",
+    "municipality_id": "ZZ", "responsibilities": [ "R-99-PN" ], "dv_x": 1
+  },
+  "items": [ { "code_reference": "SKU-1", "name": "P", "quantity": 1, "price": 1000, "unit_measure_code": "94",
+               "standard_code": "999", "is_excluded": "ZZ", "discount_rate": "ZZ", "tribute_code": "ZZ",
+               "taxes": [ { "code": "01", "rate": "ZZ" } ], "withholding_taxes": [ { "code": "ZZ", "rate": "ZZ" } ] } ],
+  "payment_details": [ { "payment_form": "2", "payment_method_code": "10", "amount": 1190, "payment_due_date": "x" } ],
+  "observation": 12345,
+  "operation_type": "ZZ",
+  "send_email": "ZZ"
+}

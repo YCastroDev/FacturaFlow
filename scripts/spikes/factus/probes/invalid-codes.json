@@ -1,0 +1,14 @@
+{
+  "numbering_range_id": 999999,
+  "customer": {
+    "identification_document_code": "ZZ", "identification": "890903938", "dv": "8",
+    "company": "Cliente Ejemplo S.A.S.", "legal_organization_code": "ZZ", "tribute_code": "ZZ",
+    "municipality_code": "00000", "email": "facturacion@cliente.example", "responsibilities": [ "R-99-PN" ]
+  },
+  "items": [ {
+    "code_reference": "SKU-1", "name": "Producto", "quantity": 1, "price": 1000, "discount_rate": 0,
+    "unit_measure_code": "ZZ", "standard_code": "ZZ", "is_excluded": 0,
+    "taxes": [ { "code": "ZZ", "rate": 19 } ]
+  } ],
+  "payment_details": [ { "payment_form": "9", "payment_method_code": "ZZ", "amount": 1190, "payment_due_date": "x" } ]
+}
