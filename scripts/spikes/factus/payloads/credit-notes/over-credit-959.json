@@ -1,0 +1,47 @@
+{
+  "correction_concept_code": "1",
+  "customization_id": "20",
+  "bill_number": "SETP990028959",
+  "numbering_range_id": 390,
+  "observation": "Spike FacturaFlow: 3 unidades de SKU-RND cuando ya se acreditó 1 (acumulado 4 de 3)",
+  "customer": {
+    "identification_document_code": "13",
+    "identification": "1020304050",
+    "names": "Ana María Gómez",
+    "legal_organization_code": "2",
+    "municipality_code": "05001",
+    "email": "ana.gomez@correo.example",
+    "responsibilities": [
+      "R-99-PN"
+    ]
+  },
+  "items": [
+    {
+      "code_reference": "SKU-RND",
+      "name": "Producto con centavos",
+      "quantity": "3.00",
+      "price": "33333.33",
+      "discount_rate": "7.50",
+      "unit_measure_code": "94",
+      "standard_code": "999",
+      "taxes": [
+        {
+          "code": "01",
+          "rate": "19.00"
+        },
+        {
+          "code": "04",
+          "rate": "8.00"
+        }
+      ]
+    }
+  ],
+  "payment_details": [
+    {
+      "payment_form": "1",
+      "payment_method_code": "47",
+      "amount": "117474.99"
+    }
+  ],
+  "reference_code": "{{REFERENCE_CODE}}"
+}

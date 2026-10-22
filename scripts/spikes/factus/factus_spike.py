@@ -1,4 +1,4 @@
-"""Spike contra el sandbox de Factus (ver docs/spikes/0001-factus-sandbox.md).
+"""Spike contra el sandbox de Factus (ver docs/spikes/0001-factus-sandbox.md y 0002-factus-credit-notes.md).
 
 Solo biblioteca estándar. Reglas de seguridad incorporadas:
   * Credenciales solo desde variables de entorno FACTUS_*; nunca se imprimen.
@@ -6,8 +6,9 @@ Solo biblioteca estándar. Reglas de seguridad incorporadas:
     tokens obtenidos se reemplazan por una máscara.
   * Solo GET y POST: este script NO puede borrar nada en Factus.
   * reference_code debe empezar por SPIKE-, send_email se fuerza a false y hay un tope de
-    facturas creadas (MAX_BILLS), contado en /out/bills.log.
-  * Pausa mínima entre peticiones y parada inmediata ante un 429 (límite: 80/min).
+    envíos por tipo de documento (MAX_BILLS facturas en /out/bills.log, MAX_CREDIT_NOTES notas
+    crédito en /out/credit-notes.log).
+  * Pausa mínima entre peticiones y parada inmediata ante un 429 (límite real: 120/min).
 """
 
 import base64
@@ -22,6 +23,7 @@ import urllib.request
 
 OUT = "/out"
 MAX_BILLS = 10
+MAX_CREDIT_NOTES = 8
 MIN_INTERVAL_SECONDS = 1.0
 TIMEOUT_SECONDS = 60
 SECRET_ENV = ("FACTUS_CLIENT_ID", "FACTUS_CLIENT_SECRET", "FACTUS_USERNAME", "FACTUS_PASSWORD")
@@ -244,35 +246,47 @@ def load_payload(file, reference_code):
     return payload
 
 
-def count_bills():
-    path = os.path.join(OUT, "bills.log")
+def count_sent(log):
+    path = os.path.join(OUT, log)
     if not os.path.exists(path):
         return 0
     with open(path, encoding="utf-8") as f:
         return sum(1 for line in f if line.strip())
 
 
-def step_bill(args):
-    """bill <payload.json> [reference_code] [ruta]: envía una factura al endpoint de validación."""
+def send_document(args, usage, default_path, log, limit, folder):
+    """Envía un documento (factura o nota crédito) a su endpoint de validación, con las reglas del spike."""
     if not args:
-        sys.exit("Uso: bill <payload.json> [reference_code] [ruta]")
+        sys.exit(usage)
     file = args[0]
     reference_code = args[1] if len(args) > 1 else "SPIKE-" + datetime.datetime.now().strftime("%m%d%H%M%S")
-    path = args[2] if len(args) > 2 else "/v2/bills/validate"
+    path = args[2] if len(args) > 2 else default_path
     if not reference_code.startswith("SPIKE-"):
         sys.exit("Regla del spike: el reference_code debe empezar por SPIKE-")
-    if count_bills() >= MAX_BILLS:
-        sys.exit(f"Tope del spike alcanzado ({MAX_BILLS} envíos). Revisa /out/bills.log.")
+    if count_sent(log) >= limit:
+        sys.exit(f"Tope del spike alcanzado ({limit} envíos). Revisa /out/{log}.")
     payload = load_payload(file, reference_code)
 
     access_token = token()
-    with open(os.path.join(OUT, "bills.log"), "a", encoding="utf-8") as f:
+    with open(os.path.join(OUT, log), "a", encoding="utf-8") as f:
         f.write(f"{datetime.datetime.now().isoformat()} {reference_code} {file} {path}\n")
-    sent = count_bills()   # ya incluye este envío: cada archivo es único aunque se repita el código
-    name = f"bills/{sent:02d}-{reference_code}-{os.path.basename(file).removesuffix('.json')}"
+    sent = count_sent(log)   # ya incluye este envío: cada archivo es único aunque se repita el código
+    name = f"{folder}/{sent:02d}-{reference_code}-{os.path.basename(file).removesuffix('.json')}"
     status, headers, body, elapsed = request("POST", path, token=access_token, json_body=payload,
                                              record=f"{name}.json")
     show(f"POST {path} [{reference_code}] → HTTP {status} ({elapsed} ms)", {"headers": headers, "body": body})
+
+
+def step_bill(args):
+    """bill <payload.json> [reference_code] [ruta]: envía una factura al endpoint de validación."""
+    send_document(args, "Uso: bill <payload.json> [reference_code] [ruta]", "/v2/bills/validate",
+                  "bills.log", MAX_BILLS, "bills")
+
+
+def step_note(args):
+    """note <payload.json> [reference_code] [ruta]: envía una nota crédito al endpoint de validación."""
+    send_document(args, "Uso: note <payload.json> [reference_code] [ruta]", "/v2/credit-notes/validate",
+                  "credit-notes.log", MAX_CREDIT_NOTES, "credit-notes")
 
 
 def step_probe(args):
@@ -292,9 +306,9 @@ def step_probe(args):
 
 
 def step_pdf(args):
-    """pdf <número>: descarga el PDF (Base64) y lo guarda decodificado en /out/pdf/."""
+    """pdf <número> [ruta]: descarga el PDF (Base64) y lo guarda decodificado en /out/pdf/."""
     if not args:
-        sys.exit("Uso: pdf <número de factura>")
+        sys.exit("Uso: pdf <número del documento> [ruta]")
     number = args[0]
     path = args[1] if len(args) > 1 else f"/v2/bills/{number}/download-pdf"
     status, headers, body, elapsed = request("GET", path, token=token(), record=f"pdf/{number}.json")
@@ -375,11 +389,35 @@ def step_codes(args):
     show("Códigos aceptados por la validación de Factus", results)
 
 
+def step_note_codes(args):
+    """note-codes <esqueleto.json> <c1,c2,...>: qué correction_concept_code acepta (sin reference_code: no crea notas)."""
+    if len(args) < 2:
+        sys.exit("Uso: note-codes <esqueleto.json> <c1,c2,...>")
+    with open(os.path.join("/spike", args[0]), encoding="utf-8") as f:
+        skeleton = json.load(f)
+    skeleton.pop("reference_code", None)
+    access_token = token()
+    results = {}
+    for code in args[1].split(","):
+        body_in = json.loads(json.dumps(skeleton))
+        body_in["correction_concept_code"] = code
+        status, _, body, _ = request("POST", "/v2/credit-notes/validate", token=access_token, json_body=body_in)
+        errors = (body or {}).get("data", {}).get("errors", {}) if isinstance(body, dict) else {}
+        field_errors = errors.get("correction_concept_code")
+        others = sorted(set(errors) - {"reference_code", "correction_concept_code"})
+        results[code] = {"status": status, "acepta": not field_errors, "errores_del_campo": field_errors,
+                         "otros_errores": {k: errors[k] for k in others}}
+    save("credit-notes/codes-correction_concept_code.json", results)
+    show("correction_concept_code aceptados por la validación de notas crédito", results)
+
+
 STEPS = {
     "auth": step_auth,
     "get": step_get,
     "probe": step_probe,
     "bill": step_bill,
+    "note": step_note,
+    "note-codes": step_note_codes,
     "pdf": step_pdf,
     "unauthorized": step_unauthorized,
     "codes": step_codes,
