@@ -1,0 +1,99 @@
+package com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus;
+
+import com.facturaflow.invoicing.domain.model.CustomerSnapshot;
+import com.facturaflow.invoicing.domain.model.DiscountRate;
+import com.facturaflow.invoicing.domain.model.DocumentType;
+import com.facturaflow.invoicing.domain.model.FiscalProfile;
+import com.facturaflow.invoicing.domain.model.IdentificationDocument;
+import com.facturaflow.invoicing.domain.model.Invoice;
+import com.facturaflow.invoicing.domain.model.InvoiceId;
+import com.facturaflow.invoicing.domain.model.InvoiceLine;
+import com.facturaflow.invoicing.domain.model.LineTax;
+import com.facturaflow.invoicing.domain.model.Money;
+import com.facturaflow.invoicing.domain.model.Municipality;
+import com.facturaflow.invoicing.domain.model.PaymentMethod;
+import com.facturaflow.invoicing.domain.model.PaymentTerms;
+import com.facturaflow.invoicing.domain.model.PhoneNumber;
+import com.facturaflow.invoicing.domain.model.Quantity;
+import com.facturaflow.invoicing.domain.model.ReferenceCode;
+import com.facturaflow.invoicing.domain.model.TaxType;
+import com.facturaflow.invoicing.domain.model.UnitOfMeasure;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.UUID;
+
+/** Facturas del dominio equivalentes a las que Factus aceptó en el spike 0001, y sus respuestas reales. */
+final class FactusTestData {
+
+    static final LocalDate ISSUE_DATE = LocalDate.of(2026, 10, 21);
+    static final String CLIENT_SECRET = "client-secret-de-prueba-123";
+    static final String PASSWORD = "password-de-prueba-456";
+
+    private FactusTestData() {
+    }
+
+    /** Contado con IVA: 2 x 85.000 con 10 % de descuento e IVA 19 % = 182.070,00 (payload cash-nit-iva). */
+    static Invoice cashInvoice(UUID id) {
+        CustomerSnapshot customer = CustomerSnapshot.company(IdentificationDocument.nit("890903938", 8),
+                        "Cliente Ejemplo S.A.S.", FiscalProfile.notResponsible(), "facturacion@cliente.example")
+                .withLocation(new Municipality("11001"), "Calle 1 # 2-3", new PhoneNumber("3001234567"));
+        InvoiceLine line = new InvoiceLine("SKU-001", "Teclado inalámbrico", Quantity.of("2"), Money.of("85000.00"),
+                DiscountRate.of("10"), List.of(LineTax.of(TaxType.IVA, "19")), UnitOfMeasure.UNIT, false);
+        return Invoice.create(new InvoiceId(id), new ReferenceCode("VENTA-CASH-1"), customer, List.of(line),
+                PaymentMethod.CASH, PaymentTerms.cash(), ISSUE_DATE, "Spike FacturaFlow: contado con IVA");
+    }
+
+    /**
+     * Crédito: persona natural, una línea con descuento, IVA + INC y otra excluida de IVA = 147.475,01
+     * (payload credit-cc-discount-iva-inc-excluded).
+     */
+    static Invoice creditInvoice(UUID id) {
+        CustomerSnapshot customer = CustomerSnapshot.person(
+                        IdentificationDocument.of(DocumentType.CITIZENSHIP_CARD, "1020304050"), "Ana María Gómez",
+                        FiscalProfile.notResponsible(),
+                        "ana.gomez@correo.example")
+                .withLocation(new Municipality("05001"), null, null);
+        InvoiceLine rounding = new InvoiceLine("SKU-RND", "Producto con centavos", Quantity.of("3"),
+                Money.of("33333.33"), DiscountRate.of("7.5"),
+                List.of(LineTax.of(TaxType.IVA, "19"), LineTax.of(TaxType.INC, "8")), UnitOfMeasure.UNIT, false);
+        InvoiceLine excluded = new InvoiceLine("SKU-EXC", "Producto excluido de IVA", Quantity.of("1.5"),
+                Money.of("20000.01"), DiscountRate.NONE, List.of(), UnitOfMeasure.UNIT, true);
+        return Invoice.create(new InvoiceId(id), new ReferenceCode("VENTA-CRED-1"), customer,
+                List.of(rounding, excluded), PaymentMethod.BANK_TRANSFER,
+                PaymentTerms.credit(LocalDate.of(2026, 11, 20)), ISSUE_DATE,
+                "Spike FacturaFlow: crédito, descuento, IVA + INC y línea excluida");
+    }
+
+    static FactusProperties properties(String baseUrl) {
+        return properties(baseUrl, false, null, Duration.ofSeconds(2));
+    }
+
+    static FactusProperties properties(String baseUrl, boolean sendEmail, Integer numberingRangeId,
+                                       Duration readTimeout) {
+        return new FactusProperties(URI.create(baseUrl), "client-id-de-prueba", CLIENT_SECRET,
+                "usuario@empresa.example", PASSWORD, sendEmail, numberingRangeId, Duration.ofSeconds(2), readTimeout,
+                Duration.ofSeconds(60), "FacturaFlow-Test/1.0");
+    }
+
+    /** Un archivo de {@code src/test/resources/factus/} con {@code {{REFERENCE_CODE}}} reemplazado. */
+    static String fixture(String name, UUID referenceCode) {
+        return fixture(name).replace("{{REFERENCE_CODE}}", referenceCode.toString());
+    }
+
+    static String fixture(String name) {
+        try (InputStream in = FactusTestData.class.getResourceAsStream("/factus/" + name)) {
+            if (in == null) {
+                throw new IllegalArgumentException("No existe el fixture " + name);
+            }
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+}

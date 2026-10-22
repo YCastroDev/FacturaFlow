@@ -20,6 +20,7 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 | Tests de arquitectura | ArchUnit 1.5.1 |
 | Documentación de la API | springdoc-openapi 3.1.1 (Swagger UI) |
 | Escaneo de secretos | gitleaks v8.30.1 (vía Docker) |
+| Mock HTTP (tests del adaptador de Factus) | WireMock 3.13.1 (`wiremock-standalone`) |
 
 ## Estructura
 
@@ -77,10 +78,20 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 - **Transacciones solo en `infrastructure/adapter/out/persistence`** (regla de ArchUnit). Nunca envolver un caso de uso en una transacción: las llamadas a sistemas externos (proveedor de facturación) van fuera de la base.
 - Idempotencia de creación por `referenceCode` + huella SHA-256 de la petición normalizada (`InvoiceRequestHasher`, formato v2). Si se agrega un campo a la factura, agregarlo también a la huella y a su test parametrizado (la huella no se versiona: ADR 0007, decisión 6).
 - Emisión: respuestas de negocio como `IssuanceResult` sellado (`Issued` | `Rejected`); fallas técnicas como `ElectronicInvoiceProviderUnavailableException`. Un adaptador de proveedor nunca devuelve un `Rejected` por un timeout.
-- Proveedor activo según `invoicing.provider` (`fake` por defecto). El falso se controla con `SIMULAR_RECHAZO` y `SIMULAR_CAIDA` en la observación.
+- Proveedor activo según `invoicing.provider` (`fake` por defecto, `factus` para el sandbox real). El falso se controla con `SIMULAR_RECHAZO` y `SIMULAR_CAIDA` en la observación.
 - REST: DTOs y enums propios en `adapter/in/rest/dto`, con `switch` exhaustivos hacia y desde el dominio. El controlador lee el agregado, nunca lo serializa. Bean Validation solo para forma (presencia, tipos, topes anti-abuso); las reglas de negocio no se duplican (responden 422 desde el dominio).
 - Errores: siempre Problem Details desde `ProblemDetailsHandler`, con `type` `urn:facturaflow:problem:<slug>`. Nunca exponer mensajes de Spring, Jackson o Hibernate ni trazas. Una excepción nueva de `application.exception` necesita su fila en la tabla del ADR 0006 y su test en `InvoiceControllerTest`.
 - Tests: casos de uso con `InMemoryInvoiceRepository` y `StubElectronicInvoiceProvider` (sin Spring); web con `@WebMvcTest` + `MockMvcTester`; punta a punta con `RestTestClient` + Testcontainers.
+
+## Reglas del adaptador de Factus (ADR 0008)
+
+- Anti-Corruption Layer en `infrastructure/adapter/out/provider/factus`, todo package-private. **Ningún DTO, código ni cliente de Factus sale de ese paquete** (regla 9 de ArchUnit); se usa solo a través de `ElectronicInvoiceProvider`.
+- Códigos de catálogo solo en `FactusCodes` (`switch` exhaustivos) y cada uno con su fila en `FactusCodesTest`. Un código nuevo exige verificarlo contra el sandbox.
+- `reference_code` = `InvoiceId` (UUID). Una respuesta con otro `reference_code` o con otra identificación del cliente es otra factura: falla técnica y log ERROR, nunca `Issued`. Si solo difiere el total: `Issued` con el total oficial y log WARN.
+- Resultados según la tabla del ADR 0008: solo un 422 por los datos de la factura es `Rejected`; todo lo demás (incluido `is_validated: false`, 409, 429, 5xx, timeouts y un 422 de configuración) es falla técnica. `data.errors` con `is_validated: true` son notificaciones, no errores.
+- Nunca borrar nada en Factus. Sin reintentos ni limitador propios (salvo el reintento único ante un 401): la resiliencia llega con Resilience4j.
+- **Nunca registrar** tokens, `client_secret`, contraseñas ni `public_url` (enlace-capacidad); los `toString` de propiedades y tokens enmascaran. Los mensajes de error solo llevan el estado HTTP, nunca el cuerpo.
+- Tests con WireMock y las respuestas reales del spike (`src/test/resources/factus/`, con los casos no observados marcados como NO VERIFICADOS). Los de sandbox real llevan `@Tag("sandbox")` y no corren por defecto; crean facturas reales: con moderación y `send_email=false`.
 
 ## Convenciones
 
@@ -117,6 +128,13 @@ curl -s http://localhost:8081/actuator/health
 
 # Swagger UI (API documentada con ejemplos)
 # http://localhost:8081/swagger-ui.html
+
+# Tests contra el sandbox REAL de Factus (excluidos por defecto; crean una factura por ejecución).
+# Docker inyecta el .env con --env-file; nadie lo lee ni lo muestra.
+MVN_ENV_FILE=.env ./scripts/mvn.sh invoicing test -Dgroups=sandbox -DexcludedGroups=none
+
+# Levantar con Factus en vez del proveedor falso (o INVOICING_PROVIDER=factus en .env)
+INVOICING_PROVIDER=factus docker compose --env-file .env -f infra/docker-compose.yml up --build -d
 
 # Escaneo de secretos de todo el repo
 ./scripts/check-secrets.sh

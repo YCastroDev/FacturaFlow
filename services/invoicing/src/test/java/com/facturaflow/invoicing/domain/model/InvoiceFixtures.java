@@ -62,7 +62,7 @@ public final class InvoiceFixtures {
     }
 
     public static ElectronicDocument electronicDocument(String officialTotal) {
-        return new ElectronicDocument("SETP990000001", VALID_CUFE, URI.create("https://sandbox.example/invoice.pdf"),
-                Instant.parse("2026-10-20T15:30:00Z"), Money.of(officialTotal));
+        return new ElectronicDocument("SETP990000001", VALID_CUFE, URI.create("https://dian.example/qr?key=1"),
+                URI.create("https://sandbox.example/documents/1"), Instant.parse("2026-10-20T15:30:00Z"), Money.of(officialTotal));
     }
 }

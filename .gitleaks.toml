@@ -5,3 +5,11 @@ title = "FacturaFlow gitleaks config"
 
 [extend]
 useDefault = true
+
+# Falso positivo (ADR 0008): el enlace de consulta de la DIAN lleva el CUFE como "documentkey".
+# El CUFE es público (es lo que codifica el QR impreso en la factura), no un secreto. Solo se
+# permite esa URL exacta de la DIAN con un CUFE de 96 caracteres hexadecimales.
+[[allowlists]]
+description = "Enlace QR de la DIAN con el CUFE (público)"
+regexTarget = "line"
+regexes = ['''https://catalogo-vpfe(-hab)?\.dian\.gov\.co/document/searchqr\?documentkey=[0-9a-f]{96}"''']

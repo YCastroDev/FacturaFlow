@@ -5,6 +5,7 @@ import com.facturaflow.invoicing.application.exception.ElectronicInvoiceProvider
 import com.facturaflow.invoicing.application.exception.InvoiceAlreadyRejectedException;
 import com.facturaflow.invoicing.application.exception.InvoiceConcurrentModificationException;
 import com.facturaflow.invoicing.application.exception.InvoiceNotFoundException;
+import com.facturaflow.invoicing.application.exception.InvoiceNotIssuedException;
 import com.facturaflow.invoicing.application.exception.ReferenceCodeConflictException;
 import com.facturaflow.invoicing.domain.exception.DomainException;
 import com.facturaflow.invoicing.domain.exception.InvalidInvoiceStateTransitionException;
@@ -122,6 +123,11 @@ class ProblemDetailsHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(InvoiceAlreadyRejectedException.class)
     ProblemDetail alreadyRejected(InvoiceAlreadyRejectedException ex) {
         return problem(HttpStatus.CONFLICT, "invoice-already-rejected", "Factura rechazada", ex.getMessage());
+    }
+
+    @ExceptionHandler(InvoiceNotIssuedException.class)
+    ProblemDetail notIssued(InvoiceNotIssuedException ex) {
+        return problem(HttpStatus.CONFLICT, "invoice-not-issued", "Factura no emitida", ex.getMessage());
     }
 
     @ExceptionHandler(InvoiceConcurrentModificationException.class)

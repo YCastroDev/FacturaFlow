@@ -92,7 +92,8 @@ class InvoicePersistenceMapper {
         ElectronicDocument document = invoice.electronicDocument().orElse(null);
         entity.edocNumber = document == null ? null : document.number();
         entity.edocCufe = document == null ? null : document.cufe();
-        entity.edocPdfUrl = document == null ? null : document.pdfUrl().toString();
+        entity.edocQrUrl = document == null ? null : document.qrUrl().toString();
+        entity.edocPublicUrl = document == null ? null : document.publicUrl().toString();
         // TIMESTAMPTZ guarda microsegundos: se trunca aquí para que la factura que devuelve save
         // sea idéntica a la que se relee después (si no, la primera respuesta traería nanosegundos).
         entity.edocValidatedAt = document == null ? null : document.validatedAt().truncatedTo(ChronoUnit.MICROS);
@@ -124,7 +125,8 @@ class InvoicePersistenceMapper {
             default -> throw new IllegalStateException("payment_type desconocido: " + entity.paymentType);
         };
         ElectronicDocument document = entity.edocNumber == null ? null : new ElectronicDocument(
-                entity.edocNumber, entity.edocCufe, URI.create(entity.edocPdfUrl), entity.edocValidatedAt,
+                entity.edocNumber, entity.edocCufe, URI.create(entity.edocQrUrl), URI.create(entity.edocPublicUrl),
+                entity.edocValidatedAt,
                 Money.of(entity.edocOfficialTotal));
 
         return Invoice.reconstitute(

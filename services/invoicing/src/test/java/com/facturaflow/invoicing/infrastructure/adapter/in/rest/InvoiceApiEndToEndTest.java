@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.facturaflow.invoicing.TestcontainersConfiguration;
 import com.jayway.jsonpath.JsonPath;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
@@ -115,6 +116,30 @@ class InvoiceApiEndToEndTest {
         assertThat((String) issuedAgain.json("$.electronicDocument.validatedAt"))
                 .isEqualTo(issued.json("$.electronicDocument.validatedAt"));
         assertThat((String) get(location).json("$.status")).isEqualTo("ISSUED");
+    }
+
+    @Test
+    @DisplayName("el PDF de una factura emitida se descarga; el de una PENDING responde 409")
+    void downloadsPdfOnlyWhenIssued() {
+        String id = create(cashRequest("VENTA-PDF", "Con PDF")).json("$.id");
+
+        Response pending = get(URL + "/" + id + "/pdf");
+        assertThat(pending.status()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat((String) pending.json("$.type")).isEqualTo("urn:facturaflow:problem:invoice-not-issued");
+
+        Response issued = issue(id);
+        assertThat((String) issued.json("$.electronicDocument.qrUrl"))
+                .isEqualTo("https://fake-provider.invalid/qr/FAKE-VENTA-PDF");
+        assertThat((String) issued.json("$.electronicDocument.publicUrl"))
+                .isEqualTo("https://fake-provider.invalid/invoices/FAKE-VENTA-PDF");
+
+        EntityExchangeResult<byte[]> pdf = client.get().uri(URL + "/{id}/pdf", id).exchange()
+                .expectBody(byte[].class).returnResult();
+        assertThat(pdf.getStatus().value()).isEqualTo(200);
+        assertThat(pdf.getResponseHeaders().getContentType()).isEqualTo(MediaType.APPLICATION_PDF);
+        assertThat(pdf.getResponseHeaders().getContentDisposition().getFilename()).isEqualTo("FAKE-VENTA-PDF.pdf");
+        assertThat(new String(pdf.getResponseBody(), StandardCharsets.US_ASCII))
+                .startsWith("%PDF-").contains("DOCUMENTO FALSO");
     }
 
     @Test

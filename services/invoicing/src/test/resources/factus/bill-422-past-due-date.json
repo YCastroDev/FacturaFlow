@@ -1,0 +1,12 @@
+{
+  "status": "Validation error",
+  "message": "Error de validación",
+  "data": {
+    "message": "Error de validación",
+    "errors": {
+      "payment_details.0.due_date": [
+        "El campo fecha de vencimiento debe ser una fecha posterior o igual a today."
+      ]
+    }
+  }
+}

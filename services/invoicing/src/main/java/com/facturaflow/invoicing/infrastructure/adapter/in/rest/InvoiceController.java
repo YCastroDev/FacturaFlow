@@ -2,9 +2,11 @@ package com.facturaflow.invoicing.infrastructure.adapter.in.rest;
 
 import com.facturaflow.invoicing.application.port.in.CreateInvoiceResult;
 import com.facturaflow.invoicing.application.port.in.CreateInvoiceUseCase;
+import com.facturaflow.invoicing.application.port.in.GetInvoicePdfUseCase;
 import com.facturaflow.invoicing.application.port.in.GetInvoiceUseCase;
 import com.facturaflow.invoicing.application.port.in.IssueInvoiceCommand;
 import com.facturaflow.invoicing.application.port.in.IssueInvoiceUseCase;
+import com.facturaflow.invoicing.application.port.out.InvoicePdf;
 import com.facturaflow.invoicing.infrastructure.adapter.in.rest.dto.CreateInvoiceRequest;
 import com.facturaflow.invoicing.infrastructure.adapter.in.rest.dto.InvoiceResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -17,6 +19,8 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.net.URI;
 import java.util.UUID;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
@@ -42,12 +46,14 @@ class InvoiceController {
     private final CreateInvoiceUseCase createInvoice;
     private final GetInvoiceUseCase getInvoice;
     private final IssueInvoiceUseCase issueInvoice;
+    private final GetInvoicePdfUseCase getInvoicePdf;
 
     InvoiceController(CreateInvoiceUseCase createInvoice, GetInvoiceUseCase getInvoice,
-                      IssueInvoiceUseCase issueInvoice) {
+                      IssueInvoiceUseCase issueInvoice, GetInvoicePdfUseCase getInvoicePdf) {
         this.createInvoice = createInvoice;
         this.getInvoice = getInvoice;
         this.issueInvoice = issueInvoice;
+        this.getInvoicePdf = getInvoicePdf;
     }
 
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -132,5 +138,30 @@ class InvoiceController {
                     schema = @Schema(implementation = ProblemDetail.class)))
     InvoiceResponse issue(@PathVariable UUID id) {
         return InvoiceRestMapper.toResponse(issueInvoice.issue(new IssueInvoiceCommand(id)));
+    }
+
+    @GetMapping(value = "/{id}/pdf", produces = MediaType.APPLICATION_PDF_VALUE)
+    @Operation(summary = "Descargar la representación gráfica (PDF) de una factura emitida",
+            description = "El PDF se pide al proveedor en cada descarga (no se guarda). Con el proveedor falso es "
+                    + "un PDF mínimo marcado como DOCUMENTO FALSO.")
+    @ApiResponse(responseCode = "200", description = "El PDF, como archivo adjunto",
+            content = @Content(mediaType = MediaType.APPLICATION_PDF_VALUE,
+                    schema = @Schema(type = "string", format = "binary")))
+    @ApiResponse(responseCode = "404", description = "No existe",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "409", description = "La factura no está ISSUED",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "503", description = "Proveedor no disponible; reintentar (header Retry-After)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    ResponseEntity<byte[]> pdf(@PathVariable UUID id) {
+        InvoicePdf pdf = getInvoicePdf.pdf(id);
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_PDF)
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.attachment().filename(pdf.fileName()).build().toString())
+                .body(pdf.content());
     }
 }

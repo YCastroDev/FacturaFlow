@@ -111,7 +111,8 @@ final class InvoiceRestMapper {
                         .map(document -> new InvoiceResponse.ElectronicDocument(
                                 document.number(),
                                 document.cufe(),
-                                document.pdfUrl().toString(),
+                                document.qrUrl().toString(),
+                                document.publicUrl().toString(),
                                 document.validatedAt(),
                                 amount(document.officialTotal()),
                                 invoice.hasOfficialTotalDiscrepancy()))

@@ -1,16 +1,20 @@
 package com.facturaflow.invoicing.infrastructure.adapter.in.rest;
 
+import static com.facturaflow.invoicing.domain.model.InvoiceFixtures.electronicDocument;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.facturaflow.invoicing.TestcontainersConfiguration;
 import com.facturaflow.invoicing.application.port.in.CreateInvoiceCommand;
 import com.facturaflow.invoicing.application.port.in.CreateInvoiceUseCase;
+import com.facturaflow.invoicing.application.port.in.GetInvoicePdfUseCase;
 import com.facturaflow.invoicing.application.port.in.IssueInvoiceCommand;
 import com.facturaflow.invoicing.application.port.in.IssueInvoiceUseCase;
 import com.facturaflow.invoicing.application.port.out.ElectronicInvoiceProvider;
+import com.facturaflow.invoicing.application.port.out.InvoicePdf;
 import com.facturaflow.invoicing.application.port.out.IssuanceResult;
 import com.facturaflow.invoicing.domain.model.DocumentType;
 import com.facturaflow.invoicing.domain.model.FiscalResponsibility;
+import com.facturaflow.invoicing.domain.model.Invoice;
 import com.facturaflow.invoicing.domain.model.InvoiceStatus;
 import com.facturaflow.invoicing.domain.model.PaymentMethod;
 import com.facturaflow.invoicing.domain.model.PersonType;
@@ -49,6 +53,9 @@ class ProviderCalledOutsideTransactionTest {
     private IssueInvoiceUseCase issueInvoice;
 
     @Autowired
+    private GetInvoicePdfUseCase getInvoicePdf;
+
+    @Autowired
     private RecordingProvider provider;
 
     @Autowired
@@ -64,7 +71,7 @@ class ProviderCalledOutsideTransactionTest {
     }
 
     @Test
-    @DisplayName("al emitir, el proveedor se llama sin ninguna transacción de base de datos abierta")
+    @DisplayName("al emitir y al descargar el PDF, el proveedor se llama sin ninguna transacción de base de datos abierta")
     void providerIsCalledOutsideTransaction() {
         var invoice = createInvoice.create(new CreateInvoiceCommand("SALE-TX",
                 new CreateInvoiceCommand.Customer(DocumentType.NIT, "890903938", 8, PersonType.LEGAL_ENTITY, "Cliente",
@@ -75,8 +82,10 @@ class ProviderCalledOutsideTransactionTest {
 
         var issued = issueInvoice.issue(new IssueInvoiceCommand(invoice.id().value()));
 
-        assertThat(issued.status()).isEqualTo(InvoiceStatus.REJECTED);
-        assertThat(provider.transactionActiveOnCall).containsExactly(false);
+        getInvoicePdf.pdf(invoice.id().value());
+
+        assertThat(issued.status()).isEqualTo(InvoiceStatus.ISSUED);
+        assertThat(provider.transactionActiveOnCall).containsExactly(false, false);
     }
 
     @Test
@@ -92,9 +101,15 @@ class ProviderCalledOutsideTransactionTest {
         final List<Boolean> transactionActiveOnCall = new ArrayList<>();
 
         @Override
-        public IssuanceResult issue(com.facturaflow.invoicing.domain.model.Invoice invoice) {
+        public IssuanceResult issue(Invoice invoice) {
             transactionActiveOnCall.add(TransactionSynchronizationManager.isActualTransactionActive());
-            return new IssuanceResult.Rejected("respuesta del proveedor de prueba");
+            return new IssuanceResult.Issued(electronicDocument("1190.00"));
+        }
+
+        @Override
+        public InvoicePdf downloadPdf(Invoice issuedInvoice) {
+            transactionActiveOnCall.add(TransactionSynchronizationManager.isActualTransactionActive());
+            return new InvoicePdf("prueba", new byte[] {'%'});
         }
     }
 

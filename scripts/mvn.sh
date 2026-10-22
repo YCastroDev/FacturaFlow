@@ -2,6 +2,9 @@
 # Ejecuta el Maven Wrapper de un servicio dentro de un contenedor (sin Java local).
 # Uso: ./scripts/mvn.sh <servicio> [argumentos de maven...]
 #   ej: ./scripts/mvn.sh invoicing test
+# Variables opcionales:
+#   MVN_ENV_FILE=<archivo>  pasa ese archivo a Docker (--env-file) para los tests que necesitan
+#                           credenciales (p. ej. los del sandbox de Factus). Docker lo lee; el script no.
 set -euo pipefail
 
 MAVEN_IMAGE="maven:3.9.16-eclipse-temurin-25"
@@ -34,6 +37,15 @@ docker run --rm -v "$M2_VOLUME:/home/maven" "$MAVEN_IMAGE" \
 tty_flags=()
 [[ -t 0 && -t 1 ]] && tty_flags=(-it)
 
+env_file_flags=()
+if [[ -n "${MVN_ENV_FILE:-}" ]]; then
+  if [[ ! -f "$MVN_ENV_FILE" ]]; then
+    echo "No existe el archivo MVN_ENV_FILE=$MVN_ENV_FILE" >&2
+    exit 1
+  fi
+  env_file_flags=(--env-file "$MVN_ENV_FILE")
+fi
+
 # --user              : los archivos generados (target/) quedan a tu nombre, no de root.
 # --group-add         : permite usar docker.sock (Testcontainers) sin ser root.
 # --network host      : el contenedor comparte la red del host, así ve en localhost
@@ -41,7 +53,8 @@ tty_flags=()
 # HOME / user.home    : ~/.m2 (dependencias y distribución del wrapper) vive en el volumen.
 #                       Java toma user.home de /etc/passwd, no de HOME, por eso se fuerzan ambos.
 # MAVEN_CONFIG vacío  : la imagen oficial la define y mvnw la pasaría como argumento.
-exec docker run --rm "${tty_flags[@]}" \
+# --env-file          : solo si se definió MVN_ENV_FILE (credenciales para tests que las piden).
+exec docker run --rm "${tty_flags[@]}" "${env_file_flags[@]}" \
   --user "$uid:$gid" \
   --group-add "$sock_gid" \
   --network host \

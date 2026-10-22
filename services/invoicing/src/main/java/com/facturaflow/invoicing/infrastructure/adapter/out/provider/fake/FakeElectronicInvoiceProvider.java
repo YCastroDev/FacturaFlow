@@ -2,6 +2,7 @@ package com.facturaflow.invoicing.infrastructure.adapter.out.provider.fake;
 
 import com.facturaflow.invoicing.application.exception.ElectronicInvoiceProviderUnavailableException;
 import com.facturaflow.invoicing.application.port.out.ElectronicInvoiceProvider;
+import com.facturaflow.invoicing.application.port.out.InvoicePdf;
 import com.facturaflow.invoicing.application.port.out.IssuanceResult;
 import com.facturaflow.invoicing.domain.model.ElectronicDocument;
 import com.facturaflow.invoicing.domain.model.Invoice;
@@ -26,7 +27,10 @@ import org.springframework.stereotype.Component;
  * </ul>
  * Los datos de una emisión falsa no tienen validez: el número empieza con {@code FAKE-}, el CUFE
  * con {@value #FAKE_CUFE_MARK} (el dominio solo admite hexadecimal, así que la marca son ceros) y
- * la URL del PDF usa el dominio reservado {@code .invalid} (RFC 2606), que nunca resuelve.
+ * los enlaces usan el dominio reservado {@code .invalid} (RFC 2606), que nunca resuelve.
+ *
+ * <p>El PDF es un documento mínimo válido, armado a mano, que dice "DOCUMENTO FALSO - SIN VALIDEZ".
+ * {@value #SIMULATE_OUTAGE} también hace fallar su descarga.
  */
 @Component
 @ConditionalOnProperty(name = "invoicing.provider", havingValue = "fake")
@@ -36,7 +40,8 @@ class FakeElectronicInvoiceProvider implements ElectronicInvoiceProvider {
     static final String SIMULATE_OUTAGE = "SIMULAR_CAIDA";
     static final String FAKE_CUFE_MARK = "0000000000000000";
     static final String NUMBER_PREFIX = "FAKE-";
-    static final String PDF_BASE_URL = "https://fake-provider.invalid/invoices/";
+    static final String QR_BASE_URL = "https://fake-provider.invalid/qr/";
+    static final String PUBLIC_BASE_URL = "https://fake-provider.invalid/invoices/";
 
     private static final Logger LOG = LoggerFactory.getLogger(FakeElectronicInvoiceProvider.class);
 
@@ -51,10 +56,7 @@ class FakeElectronicInvoiceProvider implements ElectronicInvoiceProvider {
     @Override
     public IssuanceResult issue(Invoice invoice) {
         String observation = invoice.observation().orElse("");
-        if (observation.contains(SIMULATE_OUTAGE)) {
-            throw new ElectronicInvoiceProviderUnavailableException(invoice.id().value(),
-                    "caída simulada por el proveedor falso (" + SIMULATE_OUTAGE + ")", null);
-        }
+        failIfOutageSimulated(invoice);
         if (observation.contains(SIMULATE_REJECTION)) {
             return new IssuanceResult.Rejected("Rechazo simulado por el proveedor falso (" + SIMULATE_REJECTION
                     + "): la DIAN no validó el documento.");
@@ -63,9 +65,26 @@ class FakeElectronicInvoiceProvider implements ElectronicInvoiceProvider {
         return new IssuanceResult.Issued(new ElectronicDocument(
                 number,
                 fakeCufe(invoice),
-                URI.create(PDF_BASE_URL + number + ".pdf"),
+                URI.create(QR_BASE_URL + number),
+                URI.create(PUBLIC_BASE_URL + number),
                 clock.instant(),
                 invoice.total()));
+    }
+
+    @Override
+    public InvoicePdf downloadPdf(Invoice issuedInvoice) {
+        failIfOutageSimulated(issuedInvoice);
+        String number = issuedInvoice.electronicDocument().map(ElectronicDocument::number)
+                .orElseThrow(() -> new IllegalStateException("La factura " + issuedInvoice.id() + " no está emitida"));
+        return new InvoicePdf(number, FakePdf.render("DOCUMENTO FALSO - SIN VALIDEZ", "Factura " + number,
+                "Generado por el proveedor falso de FacturaFlow (invoicing.provider=fake)."));
+    }
+
+    private static void failIfOutageSimulated(Invoice invoice) {
+        if (invoice.observation().orElse("").contains(SIMULATE_OUTAGE)) {
+            throw new ElectronicInvoiceProviderUnavailableException(invoice.id().value(),
+                    "caída simulada por el proveedor falso (" + SIMULATE_OUTAGE + ")", null);
+        }
     }
 
     /** 96 caracteres hexadecimales, como un CUFE real: la marca de ceros y 80 caracteres derivados del id. */

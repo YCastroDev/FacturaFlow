@@ -16,13 +16,16 @@ import com.facturaflow.invoicing.application.exception.ElectronicInvoiceProvider
 import com.facturaflow.invoicing.application.exception.InvoiceAlreadyRejectedException;
 import com.facturaflow.invoicing.application.exception.InvoiceConcurrentModificationException;
 import com.facturaflow.invoicing.application.exception.InvoiceNotFoundException;
+import com.facturaflow.invoicing.application.exception.InvoiceNotIssuedException;
 import com.facturaflow.invoicing.application.exception.ReferenceCodeConflictException;
 import com.facturaflow.invoicing.application.port.in.CreateInvoiceCommand;
 import com.facturaflow.invoicing.application.port.in.CreateInvoiceResult;
 import com.facturaflow.invoicing.application.port.in.CreateInvoiceUseCase;
+import com.facturaflow.invoicing.application.port.in.GetInvoicePdfUseCase;
 import com.facturaflow.invoicing.application.port.in.GetInvoiceUseCase;
 import com.facturaflow.invoicing.application.port.in.IssueInvoiceCommand;
 import com.facturaflow.invoicing.application.port.in.IssueInvoiceUseCase;
+import com.facturaflow.invoicing.application.port.out.InvoicePdf;
 import com.facturaflow.invoicing.domain.exception.InvalidIdentificationException;
 import com.facturaflow.invoicing.domain.exception.InvalidInvoiceStateTransitionException;
 import com.facturaflow.invoicing.domain.model.DocumentType;
@@ -38,6 +41,7 @@ import com.facturaflow.invoicing.domain.model.TaxScheme;
 import com.facturaflow.invoicing.domain.model.TaxType;
 import com.facturaflow.invoicing.domain.model.UnitOfMeasure;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
@@ -92,6 +96,9 @@ class InvoiceControllerTest {
 
     @MockitoBean
     private IssueInvoiceUseCase issueInvoice;
+
+    @MockitoBean
+    private GetInvoicePdfUseCase getInvoicePdf;
 
     /** Factura de dos líneas: (2 x 50.000 - 10 %) con IVA 19 % + INC 8 %, y una excluida de 20.000. */
     private static Invoice invoice() {
@@ -337,6 +344,11 @@ class InvoiceControllerTest {
         assertThat(result).hasStatus(HttpStatus.OK);
         assertThat(result).bodyJson().extractingPath("$.status").isEqualTo("ISSUED");
         assertThat(result).bodyJson().extractingPath("$.electronicDocument.number").isEqualTo("SETP990000001");
+        assertThat(result).bodyJson().extractingPath("$.electronicDocument.qrUrl")
+                .isEqualTo("https://dian.example/qr?key=1");
+        assertThat(result).bodyJson().extractingPath("$.electronicDocument.publicUrl")
+                .isEqualTo("https://sandbox.example/documents/1");
+        assertThat(result).bodyJson().extractingPath("$.electronicDocument").asMap().doesNotContainKey("pdfUrl");
         assertThat(result).bodyJson().extractingPath("$.electronicDocument.validatedAt")
                 .isEqualTo("2026-10-20T15:30:00Z");
         assertThat(result).bodyJson().extractingPath("$.electronicDocument.officialTotalDiscrepancy").isEqualTo(true);
@@ -452,5 +464,56 @@ class InvoiceControllerTest {
 
         assertProblem(result, HttpStatus.INTERNAL_SERVER_ERROR, "internal-error");
         assertThat(result).bodyText().doesNotContain("SQL secreto", "IllegalStateException");
+    }
+
+    // ----- PDF -----
+
+    @Test
+    @DisplayName("el PDF de una factura emitida se descarga como application/pdf adjunto, con su nombre de archivo")
+    void downloadsPdf() {
+        UUID id = UUID.randomUUID();
+        byte[] content = "%PDF-1.4 contenido".getBytes(StandardCharsets.US_ASCII);
+        given(getInvoicePdf.pdf(id)).willReturn(new InvoicePdf("fv10007890020002600029353", content));
+
+        MvcTestResult result = mvc.get().uri(URL + "/" + id + "/pdf").exchange();
+
+        assertThat(result).hasStatus(HttpStatus.OK).hasContentType(MediaType.APPLICATION_PDF);
+        assertThat(result).hasHeader("Content-Disposition",
+                "attachment; filename=\"fv10007890020002600029353.pdf\"");
+        assertThat(result.getResponse().getContentAsByteArray()).isEqualTo(content);
+    }
+
+    @Test
+    @DisplayName("pedir el PDF de una factura inexistente responde 404 en Problem Details")
+    void pdfOfUnknownInvoiceReturns404() {
+        UUID id = UUID.randomUUID();
+        given(getInvoicePdf.pdf(id)).willThrow(InvoiceNotFoundException.byId(id));
+
+        assertProblem(mvc.get().uri(URL + "/" + id + "/pdf").exchange(), HttpStatus.NOT_FOUND, "invoice-not-found");
+    }
+
+    @Test
+    @DisplayName("pedir el PDF de una factura que no está emitida responde 409, aunque el cliente pida application/pdf")
+    void pdfOfNotIssuedInvoiceReturns409() {
+        UUID id = UUID.randomUUID();
+        given(getInvoicePdf.pdf(id)).willThrow(new InvoiceNotIssuedException(id, "PENDING"));
+
+        MvcTestResult result = mvc.get().uri(URL + "/" + id + "/pdf").accept(MediaType.APPLICATION_PDF).exchange();
+
+        assertProblem(result, HttpStatus.CONFLICT, "invoice-not-issued");
+        assertThat(result).bodyJson().extractingPath("$.detail").asString().contains("PENDING");
+    }
+
+    @Test
+    @DisplayName("si el proveedor no responde al pedir el PDF, responde 503 con Retry-After")
+    void pdfWithProviderUnavailableReturns503() {
+        UUID id = UUID.randomUUID();
+        given(getInvoicePdf.pdf(id)).willThrow(new ElectronicInvoiceProviderUnavailableException(id,
+                "Read timed out", null));
+
+        MvcTestResult result = mvc.get().uri(URL + "/" + id + "/pdf").exchange();
+
+        assertProblem(result, HttpStatus.SERVICE_UNAVAILABLE, "provider-unavailable");
+        assertThat(result).hasHeader("Retry-After", "30");
     }
 }

@@ -4,6 +4,10 @@
 
 Aceptado — 2026-10-21
 
+> **Notas posteriores:**
+> - Huella v2 (ADR 0007).
+> - **ADR 0008:** adaptador real de Factus, endpoint `GET /api/v1/invoices/{id}/pdf` con su fila `invoice-not-issued` en la tabla de la decisión 8, y `electronicDocument.pdfUrl` reemplazado por `qrUrl` y `publicUrl` (también en el proveedor falso). Las decisiones de este ADR no cambian.
+
 ## Contexto
 
 El servicio ya tiene dominio (ADR 0004) y persistencia (ADR 0005), pero nadie puede usarlo: falta exponer por HTTP la creación, la consulta y la emisión de facturas. Esto plantea cinco problemas:
@@ -189,6 +193,7 @@ Las reglas de negocio (longitudes exactas, formato del código, DV del NIT, posi
 | `InvoiceNotFoundException` | 404 | `invoice-not-found` |
 | `ReferenceCodeConflictException` / `DuplicateReferenceCodeException` | 409 | `reference-code-conflict` |
 | `InvoiceAlreadyRejectedException` | 409 | `invoice-already-rejected` |
+| `InvoiceNotIssuedException` (PDF de una factura no emitida, ADR 0008) | 409 | `invoice-not-issued` |
 | `InvoiceConcurrentModificationException` | 409 | `concurrent-modification` |
 | `InvalidInvoiceStateTransitionException` | 409 | `invalid-state-transition` |
 | Otra `DomainException` | 422 | `business-rule-violation` |

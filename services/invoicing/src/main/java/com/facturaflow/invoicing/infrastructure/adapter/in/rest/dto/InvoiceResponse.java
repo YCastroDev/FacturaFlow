@@ -73,11 +73,15 @@ public record InvoiceResponse(
     public record TaxTotal(ApiTaxType type, BigDecimal amount) {
     }
 
-    @Schema(description = "Documento electrónico validado. Con el proveedor falso, todos sus datos son falsos.")
+    @Schema(description = "Documento electrónico validado. Con el proveedor falso, todos sus datos son falsos. "
+            + "El PDF se descarga con GET /api/v1/invoices/{id}/pdf.")
     public record ElectronicDocument(
             String number,
             String cufe,
-            String pdfUrl,
+            @Schema(description = "Consulta del documento en el catálogo de la DIAN (lo que codifica el QR)")
+            String qrUrl,
+            @Schema(description = "Vista pública del documento en el proveedor; quien tenga el enlace ve la factura")
+            String publicUrl,
             Instant validatedAt,
             @Schema(description = "Total con validez legal, informado por el proveedor") BigDecimal officialTotal,
             @Schema(description = "true si el total oficial difiere del calculado; debe investigarse")

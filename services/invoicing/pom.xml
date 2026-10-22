@@ -23,6 +23,11 @@
         <archunit.version>1.5.1</archunit.version>
         <!-- No la gestiona Spring Boot; la línea 3.x es la de Boot 4 (3.1.1 se construye sobre Boot 4.1.0) -->
         <springdoc.version>3.1.1</springdoc.version>
+        <!-- No la gestiona Spring Boot; el "standalone" trae Jetty y Jackson sombreados (sin choques) -->
+        <wiremock.version>3.13.1</wiremock.version>
+        <!-- Los tests contra el sandbox real de Factus no corren por defecto (ADR 0008). Para correrlos:
+             -Dgroups=sandbox -DexcludedGroups=none -->
+        <excludedGroups>sandbox</excludedGroups>
     </properties>
 
     <dependencies>
@@ -92,6 +97,13 @@
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>testcontainers-postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Servidor HTTP falso para probar el adaptador de Factus con sus respuestas reales -->
+        <dependency>
+            <groupId>org.wiremock</groupId>
+            <artifactId>wiremock-standalone</artifactId>
+            <version>${wiremock.version}</version>
             <scope>test</scope>
         </dependency>
         <!-- Tests de arquitectura (hacen cumplir el ADR 0002) -->

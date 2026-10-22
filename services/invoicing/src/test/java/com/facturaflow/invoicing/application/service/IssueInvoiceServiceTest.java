@@ -26,7 +26,8 @@ class IssueInvoiceServiceTest {
 
     private static final ElectronicDocument DOCUMENT = electronicDocument("119000.00");
     private static final ElectronicDocument OTHER_DOCUMENT = new ElectronicDocument("SETP990000002", VALID_CUFE,
-            URI.create("https://sandbox.example/other.pdf"), Instant.parse("2026-10-20T15:31:00Z"),
+            URI.create("https://dian.example/qr?key=2"), URI.create("https://sandbox.example/documents/2"),
+            Instant.parse("2026-10-20T15:31:00Z"),
             Money.of("119000.00"));
 
     private final InMemoryInvoiceRepository repository = new InMemoryInvoiceRepository();

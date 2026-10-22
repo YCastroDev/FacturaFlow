@@ -18,11 +18,31 @@ spring:
       fail-on-unknown-properties: true
 
 invoicing:
-  # Proveedor de facturación electrónica: "fake" (simulado, ADR 0006). Se puede sobrescribir con
-  # la variable INVOICING_PROVIDER. Un valor sin implementación hace fallar el arranque.
+  # Proveedor de facturación electrónica: "fake" (simulado, ADR 0006) o "factus" (sandbox real,
+  # ADR 0008). Se sobrescribe con la variable INVOICING_PROVIDER. Un valor sin implementación hace
+  # fallar el arranque.
   provider: fake
   # Zona de la fecha de emisión (la fecha legal es la de Colombia, no la del servidor).
   time-zone: America/Bogota
+  # Solo se usan (y se validan al arrancar) con provider=factus. Las credenciales salen SOLO de
+  # variables de entorno: los valores por defecto vacíos hacen fallar el arranque si faltan.
+  factus:
+    base-url: ${FACTUS_BASE_URL:https://api-sandbox.factus.com.co}
+    client-id: ${FACTUS_CLIENT_ID:}
+    client-secret: ${FACTUS_CLIENT_SECRET:}
+    username: ${FACTUS_USERNAME:}
+    password: ${FACTUS_PASSWORD:}
+    # Factus envía la factura al correo del cliente si es true. En el sandbox, siempre false.
+    send-email: ${FACTUS_SEND_EMAIL:false}
+    # Vacío: Factus usa su rango de facturación por defecto.
+    numbering-range-id: ${FACTUS_NUMBERING_RANGE_ID:}
+    connect-timeout: 5s
+    # La validación ante la DIAN tardó ~2,3 s en el spike; el resto, menos de 1 s.
+    read-timeout: 30s
+    # El token se renueva este tiempo antes de su vencimiento (expires_in).
+    token-refresh-margin: 60s
+    # Cloudflare, delante de Factus, bloquea algunos User-Agent genéricos (spike 0001).
+    user-agent: FacturaFlow-Invoicing/0.0.1
 
 springdoc:
   swagger-ui:

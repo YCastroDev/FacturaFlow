@@ -105,6 +105,16 @@ class HexagonalArchitectureTest {
                     + "la llamada al proveedor de facturación quedaría dentro y retendría conexión y bloqueos "
                     + "mientras espera a un sistema externo");
 
+    // Regla 9: Anti-Corruption Layer de Factus (ADR 0008).
+    @ArchTest
+    static final ArchRule factus_stays_inside_its_adapter = noClasses()
+            .that().resideOutsideOfPackage(BASE + ".infrastructure.adapter.out.provider.factus..")
+            .should().dependOnClassesThat().resideInAPackage(BASE + ".infrastructure.adapter.out.provider.factus..")
+            .allowEmptyShould(true)
+            .because("los DTOs, los códigos de catálogo y el cliente HTTP de Factus son detalles del proveedor: "
+                    + "si otra clase los usara, el modelo de Factus se filtraría al resto del servicio; todo pasa "
+                    + "por el puerto ElectronicInvoiceProvider (ADR 0008)");
+
     // Regla 7: sin ciclos entre ningún par de paquetes.
     @ArchTest
     static final ArchRule no_package_cycles = slices()

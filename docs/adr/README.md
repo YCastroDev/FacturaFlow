@@ -11,5 +11,6 @@ Un ADR es un documento corto que registra una decisión técnica importante, su 
 | [0005](0005-persistencia-del-agregado.md) | Persistencia del agregado: JPA con entidades separadas, reconstitute, versión opaca y bloqueo optimista | Aceptado |
 | [0006](0006-casos-de-uso-y-api-rest.md) | Casos de uso y API REST: idempotencia con huella, emisión con resultado sellado fuera de transacción, proveedor falso, Problem Details y springdoc | Aceptado |
 | [0007](0007-datos-fiscales-del-cliente.md) | Datos fiscales del cliente (tipo de persona, situación tributaria, municipio DIVIPOLA) y unidades de medida emitibles | Aceptado (reemplaza parcialmente al 0004) |
+| [0008](0008-integracion-con-factus.md) | Integración con Factus: Anti-Corruption Layer, token en memoria, mapeo de respuestas, verificación de identidad y PDF | Aceptado (completa el 0006) |
 
 Para una nueva decisión: copia el formato de un ADR existente, usa el siguiente número y agrégalo a esta tabla. Un ADR aceptado no cambia su decisión: si la decisión cambia, se crea uno nuevo que lo reemplaza. Sí se pueden agregar notas que no la alteren (p. ej. cómo se verifica).

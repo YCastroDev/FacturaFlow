@@ -2,6 +2,7 @@ package com.facturaflow.invoicing.application.service;
 
 import com.facturaflow.invoicing.application.exception.ElectronicInvoiceProviderUnavailableException;
 import com.facturaflow.invoicing.application.port.out.ElectronicInvoiceProvider;
+import com.facturaflow.invoicing.application.port.out.InvoicePdf;
 import com.facturaflow.invoicing.application.port.out.IssuanceResult;
 import com.facturaflow.invoicing.domain.model.ElectronicDocument;
 import com.facturaflow.invoicing.domain.model.Invoice;
@@ -12,6 +13,9 @@ final class StubElectronicInvoiceProvider implements ElectronicInvoiceProvider {
 
     private Function<Invoice, IssuanceResult> behavior = invoice -> {
         throw new AssertionError("El test no programó la respuesta del proveedor");
+    };
+    private Function<Invoice, InvoicePdf> pdfBehavior = invoice -> {
+        throw new AssertionError("El test no programó el PDF del proveedor");
     };
     private Runnable duringCall = () -> { };
     private int calls;
@@ -26,6 +30,16 @@ final class StubElectronicInvoiceProvider implements ElectronicInvoiceProvider {
 
     void willBeUnavailable() {
         behavior = invoice -> {
+            throw new ElectronicInvoiceProviderUnavailableException(invoice.id().value(), "timeout de prueba", null);
+        };
+    }
+
+    void willReturnPdf(InvoicePdf pdf) {
+        pdfBehavior = invoice -> pdf;
+    }
+
+    void pdfWillBeUnavailable() {
+        pdfBehavior = invoice -> {
             throw new ElectronicInvoiceProviderUnavailableException(invoice.id().value(), "timeout de prueba", null);
         };
     }
@@ -46,5 +60,11 @@ final class StubElectronicInvoiceProvider implements ElectronicInvoiceProvider {
         duringCall = () -> { };
         action.run();
         return behavior.apply(invoice);
+    }
+
+    @Override
+    public InvoicePdf downloadPdf(Invoice issuedInvoice) {
+        calls++;
+        return pdfBehavior.apply(issuedInvoice);
     }
 }

@@ -1,0 +1,12 @@
+{
+  "status": "Validation error",
+  "message": "Error de validación",
+  "data": {
+    "message": "Error de validación",
+    "errors": {
+      "customer.dv": [
+        "El campo dígito de verificación no es valido"
+      ]
+    }
+  }
+}

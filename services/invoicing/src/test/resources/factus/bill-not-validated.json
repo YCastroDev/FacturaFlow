@@ -1,0 +1,173 @@
+{
+  "status": "Created",
+  "message": "Documento con el código de referencia {{REFERENCE_CODE}} registrado",
+  "data": {
+    "reference_code": "{{REFERENCE_CODE}}",
+    "number": "SETP990028958",
+    "document_type": {
+      "code": "01",
+      "name": "Factura electrónica de Venta"
+    },
+    "operation_type": {
+      "code": "10",
+      "name": "Estándar"
+    },
+    "order_reference": null,
+    "billing_period": null,
+    "payment_details": [
+      {
+        "payment_form": {
+          "code": "1",
+          "name": "Pago de contado"
+        },
+        "payment_method": {
+          "code": "10",
+          "name": "Efectivo"
+        },
+        "reference_code": null,
+        "amount": "182070.00",
+        "due_date": null
+      }
+    ],
+    "send_email": false,
+    "has_claim": false,
+    "is_negotiable_instrument": false,
+    "is_validated": false,
+    "validated_at": null,
+    "errors": [],
+    "observation": "Spike FacturaFlow: contado con IVA",
+    "created_at": "21-10-2026 01:35:10 PM",
+    "numbering_range": {
+      "prefix": "SETP",
+      "from": 990000000,
+      "to": 995000000,
+      "resolution_number": "18760000001",
+      "start_date": "19-01-2019",
+      "end_date": "19-01-2030",
+      "months": 132
+    },
+    "health": null,
+    "beneficiary": null,
+    "customer": {
+      "identification_document": {
+        "code": "31",
+        "name": "NIT"
+      },
+      "identification": "890903938",
+      "dv": "8",
+      "graphic_representation_name": "Cliente Ejemplo S.A.S.",
+      "trade_name": null,
+      "company": "Cliente Ejemplo S.A.S.",
+      "names": null,
+      "address": "Calle 1 # 2-3",
+      "email": "facturacion@cliente.example",
+      "phone": "3001234567",
+      "legal_organization": {
+        "code": "1",
+        "name": "Persona Jurídica"
+      },
+      "tribute": {
+        "code": "ZZ",
+        "name": "No aplica"
+      },
+      "responsibilities": [
+        {
+          "code": "R-99-PN",
+          "name": "No responsable"
+        }
+      ],
+      "country": {
+        "code": "CO",
+        "name": "Colombia"
+      },
+      "municipality": {
+        "code": "11001",
+        "name": "Bogotá, D.c.",
+        "department": {
+          "code": "11",
+          "name": "Bogota- D.c."
+        }
+      }
+    },
+    "items": [
+      {
+        "scheme_id": null,
+        "collection_concept": null,
+        "note": "",
+        "mandate": null,
+        "additional_properties": [],
+        "code_reference": "SKU-001",
+        "name": "Teclado inalámbrico",
+        "quantity": "2.00",
+        "unit_measure": {
+          "code": "94",
+          "name": "unidad"
+        },
+        "standard_code": {
+          "code": "999",
+          "name": "Estándar de adopción del contribuyente"
+        },
+        "discount_rate": "10.00",
+        "discount": "17000.00",
+        "gross_value": "68000.00",
+        "taxes": [
+          {
+            "tribute": {
+              "code": "01",
+              "name": "IVA"
+            },
+            "is_excluded": false,
+            "rates": [
+              {
+                "taxable_amount": "153000.00",
+                "tax_amount": "29070.00",
+                "rate": "19.00"
+              }
+            ]
+          }
+        ],
+        "withholding_taxes": [],
+        "price": "85000.00",
+        "total": "182070.00"
+      }
+    ],
+    "prepayment_details": [],
+    "allowance_charges": [],
+    "taxes": [
+      {
+        "tribute": {
+          "code": "01",
+          "name": "IVA"
+        },
+        "is_excluded": false,
+        "rates": [
+          {
+            "taxable_amount": "153000.00",
+            "tax_amount": "29070.00",
+            "rate": "19.00"
+          }
+        ]
+      }
+    ],
+    "withholding_taxes": [],
+    "totals": {
+      "prepayment_amount": "0.00",
+      "gross_amount": "153000.00",
+      "taxable_amount": "153000.00",
+      "tax_amount": "29070.00",
+      "surcharge_amount": "0.00",
+      "total": "182070.00"
+    },
+    "currency": null,
+    "related_documents": [],
+    "related_notes": {
+      "credit_notes": [],
+      "debit_notes": []
+    },
+    "cufe": "308970cce2ea09184f4c643e52567899731562c671443c88afb59a824c152a6c4be746a05e32abd53f97e2acd1d145d1",
+    "links": {
+      "qr": "https://catalogo-vpfe-hab.dian.gov.co/document/searchqr?documentkey=308970cce2ea09184f4c643e52567899731562c671443c88afb59a824c152a6c4be746a05e32abd53f97e2acd1d145d1",
+      "public_url": "https://app-sandbox.factus.com.co/documents/bills/0000test0000cash"
+    }
+  }
+}

@@ -15,7 +15,8 @@ public final class InvalidElectronicDocumentException extends DomainException {
                 "El CUFE debe tener 96 caracteres hexadecimales (SHA-384): '" + cufe + "'.");
     }
 
-    public static InvalidElectronicDocumentException invalidPdfUrl(String url) {
-        return new InvalidElectronicDocumentException("La URL del PDF debe ser absoluta y http(s): '" + url + "'.");
+    public static InvalidElectronicDocumentException invalidUrl(String description, String url) {
+        return new InvalidElectronicDocumentException(
+                "La URL (" + description + ") debe ser absoluta y http(s): '" + url + "'.");
     }
 }

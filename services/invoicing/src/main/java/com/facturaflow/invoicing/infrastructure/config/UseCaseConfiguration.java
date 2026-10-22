@@ -1,11 +1,13 @@
 package com.facturaflow.invoicing.infrastructure.config;
 
 import com.facturaflow.invoicing.application.port.in.CreateInvoiceUseCase;
+import com.facturaflow.invoicing.application.port.in.GetInvoicePdfUseCase;
 import com.facturaflow.invoicing.application.port.in.GetInvoiceUseCase;
 import com.facturaflow.invoicing.application.port.in.IssueInvoiceUseCase;
 import com.facturaflow.invoicing.application.port.out.ElectronicInvoiceProvider;
 import com.facturaflow.invoicing.application.port.out.InvoiceRepository;
 import com.facturaflow.invoicing.application.service.CreateInvoiceService;
+import com.facturaflow.invoicing.application.service.GetInvoicePdfService;
 import com.facturaflow.invoicing.application.service.GetInvoiceService;
 import com.facturaflow.invoicing.application.service.IssueInvoiceService;
 import java.time.Clock;
@@ -33,5 +35,10 @@ class UseCaseConfiguration {
     @Bean
     IssueInvoiceUseCase issueInvoiceUseCase(InvoiceRepository repository, ElectronicInvoiceProvider provider) {
         return new IssueInvoiceService(repository, provider);
+    }
+
+    @Bean
+    GetInvoicePdfUseCase getInvoicePdfUseCase(InvoiceRepository repository, ElectronicInvoiceProvider provider) {
+        return new GetInvoicePdfService(repository, provider);
     }
 }

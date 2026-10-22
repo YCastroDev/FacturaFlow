@@ -1,0 +1,8 @@
+{
+  "status": "OK",
+  "message": "Solicitud exitosa",
+  "data": {
+    "file_name": "fv10007890020002600029353",
+    "pdf_base_64_encoded": "{{PDF_BASE64}}"
+  }
+}

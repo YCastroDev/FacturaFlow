@@ -18,4 +18,13 @@ public interface ElectronicInvoiceProvider {
      *         (caído, timeout, respuesta ilegible); la operación se puede reintentar
      */
     IssuanceResult issue(Invoice invoice);
+
+    /**
+     * Descarga la representación gráfica (PDF) de una factura ISSUED. No se guarda: se pide
+     * al proveedor cada vez (ADR 0008).
+     *
+     * @throws ElectronicInvoiceProviderUnavailableException si el proveedor no respondió o
+     *         entregó algo que no es un PDF; la operación se puede reintentar
+     */
+    InvoicePdf downloadPdf(Invoice issuedInvoice);
 }

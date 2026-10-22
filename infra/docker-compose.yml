@@ -33,6 +33,16 @@ services:
       INVOICING_DB_URL: jdbc:postgresql://postgres:5432/invoicing_db
       INVOICING_DB_USER: invoicing_user
       INVOICING_DB_PASSWORD: ${INVOICING_DB_PASSWORD:?Define INVOICING_DB_PASSWORD en .env}
+      # Proveedor de facturación: fake (por defecto) o factus (sandbox real, ADR 0008).
+      INVOICING_PROVIDER: ${INVOICING_PROVIDER:-fake}
+      # Solo se usan con INVOICING_PROVIDER=factus; la aplicación no arranca si faltan.
+      FACTUS_BASE_URL: ${FACTUS_BASE_URL:-https://api-sandbox.factus.com.co}
+      FACTUS_CLIENT_ID: ${FACTUS_CLIENT_ID:-}
+      FACTUS_CLIENT_SECRET: ${FACTUS_CLIENT_SECRET:-}
+      FACTUS_USERNAME: ${FACTUS_USERNAME:-}
+      FACTUS_PASSWORD: ${FACTUS_PASSWORD:-}
+      FACTUS_SEND_EMAIL: ${FACTUS_SEND_EMAIL:-false}
+      FACTUS_NUMBERING_RANGE_ID: ${FACTUS_NUMBERING_RANGE_ID:-}
     ports:
       - "127.0.0.1:8081:8080"
     depends_on:

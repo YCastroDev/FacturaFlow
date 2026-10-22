@@ -136,8 +136,8 @@ class JpaInvoiceRepositoryAdapterTest {
     @DisplayName("la factura que devuelve save es idéntica a la que se relee, aunque el instante traiga nanosegundos")
     void savedInstanceMatchesReloadedOne() {
         Invoice saved = repository.saveNew(newInvoice("SALE-1", PaymentTerms.cash()), HASH);
-        saved.markAsIssued(new ElectronicDocument("SETP1", VALID_CUFE, URI.create("https://sandbox.example/a.pdf"),
-                Instant.parse("2026-10-20T15:30:00.123456789Z"), Money.of("140284.97")));
+        saved.markAsIssued(new ElectronicDocument("SETP1", VALID_CUFE, URI.create("https://dian.example/qr?key=a"),
+                URI.create("https://sandbox.example/documents/a"), Instant.parse("2026-10-20T15:30:00.123456789Z"), Money.of("140284.97")));
 
         Invoice issued = repository.save(saved);
 

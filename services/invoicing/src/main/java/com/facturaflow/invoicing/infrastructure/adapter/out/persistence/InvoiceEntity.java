@@ -97,8 +97,11 @@ class InvoiceEntity {
     @Column(name = "edoc_cufe", length = 96)
     String edocCufe;
 
-    @Column(name = "edoc_pdf_url")
-    String edocPdfUrl;
+    @Column(name = "edoc_qr_url")
+    String edocQrUrl;
+
+    @Column(name = "edoc_public_url")
+    String edocPublicUrl;
 
     @Column(name = "edoc_validated_at")
     Instant edocValidatedAt;
