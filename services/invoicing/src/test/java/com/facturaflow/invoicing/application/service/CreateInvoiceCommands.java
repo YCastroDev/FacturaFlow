@@ -2,7 +2,10 @@ package com.facturaflow.invoicing.application.service;
 
 import com.facturaflow.invoicing.application.port.in.CreateInvoiceCommand;
 import com.facturaflow.invoicing.domain.model.DocumentType;
+import com.facturaflow.invoicing.domain.model.FiscalResponsibility;
 import com.facturaflow.invoicing.domain.model.PaymentMethod;
+import com.facturaflow.invoicing.domain.model.PersonType;
+import com.facturaflow.invoicing.domain.model.TaxScheme;
 import com.facturaflow.invoicing.domain.model.TaxType;
 import com.facturaflow.invoicing.domain.model.UnitOfMeasure;
 import java.math.BigDecimal;
@@ -18,8 +21,9 @@ final class CreateInvoiceCommands {
     }
 
     static CreateInvoiceCommand.Customer customer() {
-        return new CreateInvoiceCommand.Customer(DocumentType.NIT, "890903938", 8, "Cliente Ejemplo S.A.S.", null,
-                "facturacion@cliente.example");
+        return new CreateInvoiceCommand.Customer(DocumentType.NIT, "890903938", 8, PersonType.LEGAL_ENTITY,
+                "Cliente Ejemplo S.A.S.", null, TaxScheme.IVA, List.of(FiscalResponsibility.LARGE_TAXPAYER),
+                "facturacion@cliente.example", "11001", "Calle 10 # 20-30", "6015551234");
     }
 
     static CreateInvoiceCommand.Line line(String quantity, String unitPrice) {

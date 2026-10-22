@@ -15,6 +15,8 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /**
  * Fila de {@code invoices}. Es un detalle de persistencia, distinto del agregado de dominio:
@@ -60,6 +62,9 @@ class InvoiceEntity {
     @Column(name = "customer_check_digit", updatable = false)
     Short customerCheckDigit;
 
+    @Column(name = "customer_person_type", nullable = false, updatable = false, length = 20)
+    String customerPersonType;
+
     @Column(name = "customer_company_name", updatable = false)
     String customerCompanyName;
 
@@ -68,6 +73,23 @@ class InvoiceEntity {
 
     @Column(name = "customer_email", updatable = false, length = 254)
     String customerEmail;
+
+    @Column(name = "customer_tax_scheme", nullable = false, updatable = false, length = 20)
+    String customerTaxScheme;
+
+    /** Arreglo nativo de PostgreSQL ({@code TEXT[]}): un valor pequeño del snapshot, sin tabla propia (ADR 0007). */
+    @JdbcTypeCode(SqlTypes.ARRAY)
+    @Column(name = "customer_fiscal_responsibilities", nullable = false, updatable = false, columnDefinition = "text[]")
+    String[] customerFiscalResponsibilities;
+
+    @Column(name = "customer_municipality_code", updatable = false, length = 5)
+    String customerMunicipalityCode;
+
+    @Column(name = "customer_address", updatable = false, length = 250)
+    String customerAddress;
+
+    @Column(name = "customer_phone", updatable = false, length = 16)
+    String customerPhone;
 
     @Column(name = "edoc_number")
     String edocNumber;

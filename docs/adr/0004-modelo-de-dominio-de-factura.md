@@ -2,7 +2,7 @@
 
 ## Estado
 
-Aceptado — 2026-10-20
+Aceptado — 2026-10-20. Parcialmente reemplazado por el [ADR 0007](0007-datos-fiscales-del-cliente.md): el modelo del cliente (tipo de persona, situación tributaria, ubicación) y la lista de unidades de medida.
 
 ## Contexto
 

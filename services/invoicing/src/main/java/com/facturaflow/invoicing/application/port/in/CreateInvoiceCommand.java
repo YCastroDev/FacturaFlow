@@ -1,7 +1,10 @@
 package com.facturaflow.invoicing.application.port.in;
 
 import com.facturaflow.invoicing.domain.model.DocumentType;
+import com.facturaflow.invoicing.domain.model.FiscalResponsibility;
 import com.facturaflow.invoicing.domain.model.PaymentMethod;
+import com.facturaflow.invoicing.domain.model.PersonType;
+import com.facturaflow.invoicing.domain.model.TaxScheme;
 import com.facturaflow.invoicing.domain.model.TaxType;
 import com.facturaflow.invoicing.domain.model.UnitOfMeasure;
 import java.math.BigDecimal;
@@ -18,9 +21,16 @@ import java.util.List;
 public record CreateInvoiceCommand(String referenceCode, Customer customer, List<Line> lines,
                                    PaymentMethod paymentMethod, Terms paymentTerms, String observation) {
 
-    /** @param checkDigit solo para NIT; {@code null} en los demás tipos */
+    /**
+     * @param checkDigit         solo para NIT; {@code null} en los demás tipos
+     * @param municipalityCode   código DIVIPOLA (5 dígitos); opcional
+     * @param address            opcional
+     * @param phone              opcional
+     */
     public record Customer(DocumentType documentType, String documentNumber, Integer checkDigit,
-                           String companyName, String names, String email) {
+                           PersonType personType, String companyName, String names, TaxScheme taxScheme,
+                           List<FiscalResponsibility> fiscalResponsibilities, String email, String municipalityCode,
+                           String address, String phone) {
     }
 
     /** @param discountRate porcentaje; {@code null} equivale a sin descuento */

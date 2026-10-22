@@ -5,7 +5,9 @@ import com.facturaflow.invoicing.domain.model.CustomerSnapshot;
 import com.facturaflow.invoicing.domain.model.IdentificationDocument;
 import com.facturaflow.invoicing.domain.model.InvoiceLine;
 import com.facturaflow.invoicing.domain.model.LineTax;
+import com.facturaflow.invoicing.domain.model.Municipality;
 import com.facturaflow.invoicing.domain.model.PaymentTerms;
+import com.facturaflow.invoicing.domain.model.PhoneNumber;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -30,7 +32,11 @@ import java.util.List;
  */
 final class InvoiceRequestHasher {
 
-    static final String FORMAT_VERSION = "invoice-request-v1";
+    /**
+     * v2 (ADR 0007) agrega los datos fiscales y de ubicación del cliente. No se conserva el cálculo
+     * v1: ver en el ADR 0007 la limitación y cómo se versionaría la huella en producción.
+     */
+    static final String FORMAT_VERSION = "invoice-request-v2";
 
     private InvoiceRequestHasher() {
     }
@@ -48,9 +54,18 @@ final class InvoiceRequestHasher {
         out.add(identification.type().name());
         out.add(identification.number());
         out.add(identification.checkDigit() == null ? null : identification.checkDigit().toString());
+        out.add(customer.personType().name());
         out.add(customer.companyName());
         out.add(customer.names());
+        out.add(customer.fiscalProfile().taxScheme().name());
+        List<String> responsibilities = customer.fiscalProfile().responsibilities().stream()
+                .map(Enum::name).sorted().toList();   // conjunto: el orden de la petición no significa nada
+        out.add(Integer.toString(responsibilities.size()));
+        responsibilities.forEach(out::add);
         out.add(customer.email());
+        out.add(customer.optionalMunicipality().map(Municipality::code).orElse(null));
+        out.add(customer.address());
+        out.add(customer.optionalPhone().map(PhoneNumber::value).orElse(null));
 
         out.add(content.paymentMethod().name());
         switch (content.paymentTerms()) {

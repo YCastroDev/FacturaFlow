@@ -16,9 +16,24 @@ public final class InvoiceFixtures {
     private InvoiceFixtures() {
     }
 
+    public static final FiscalProfile FISCAL_PROFILE =
+            FiscalProfile.of(TaxScheme.IVA, FiscalResponsibility.LARGE_TAXPAYER, FiscalResponsibility.SELF_WITHHOLDER);
+
+    /** Persona jurídica responsable de IVA, sin datos de ubicación. */
     public static CustomerSnapshot customer() {
         return CustomerSnapshot.company(IdentificationDocument.nit("890903938", 8), "Cliente Ejemplo S.A.S.",
-                "facturacion@cliente.example");
+                FISCAL_PROFILE, "facturacion@cliente.example");
+    }
+
+    /** Persona natural no responsable (consumidor final típico). */
+    public static CustomerSnapshot naturalPerson() {
+        return CustomerSnapshot.person(IdentificationDocument.of(DocumentType.CITIZENSHIP_CARD, "1020304050"),
+                "Ana María Gómez", FiscalProfile.notResponsible(), null);
+    }
+
+    /** {@link #customer()} con municipio, dirección y teléfono. */
+    public static CustomerSnapshot customerWithLocation() {
+        return customer().withLocation(Municipality.of("11001"), "Calle 10 # 20-30", PhoneNumber.of("+57 601 555 1234"));
     }
 
     /** Línea con un solo impuesto: {@code tax} es la tarifa de IVA. */

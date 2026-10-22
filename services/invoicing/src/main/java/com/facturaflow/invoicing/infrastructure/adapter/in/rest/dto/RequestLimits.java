@@ -10,6 +10,7 @@ final class RequestLimits {
     static final int MAX_TEXT = 1000;
     static final int MAX_LINES = 500;
     static final int MAX_TAXES_PER_LINE = 10;
+    static final int MAX_FISCAL_RESPONSIBILITIES = 10;
 
     private RequestLimits() {
     }

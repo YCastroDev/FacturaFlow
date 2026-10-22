@@ -6,6 +6,8 @@ import com.facturaflow.invoicing.domain.model.CustomerSnapshot;
 import com.facturaflow.invoicing.domain.model.DiscountRate;
 import com.facturaflow.invoicing.domain.model.DocumentType;
 import com.facturaflow.invoicing.domain.model.ElectronicDocument;
+import com.facturaflow.invoicing.domain.model.FiscalProfile;
+import com.facturaflow.invoicing.domain.model.FiscalResponsibility;
 import com.facturaflow.invoicing.domain.model.IdentificationDocument;
 import com.facturaflow.invoicing.domain.model.Invoice;
 import com.facturaflow.invoicing.domain.model.InvoiceId;
@@ -13,16 +15,22 @@ import com.facturaflow.invoicing.domain.model.InvoiceLine;
 import com.facturaflow.invoicing.domain.model.InvoiceStatus;
 import com.facturaflow.invoicing.domain.model.LineTax;
 import com.facturaflow.invoicing.domain.model.Money;
+import com.facturaflow.invoicing.domain.model.Municipality;
 import com.facturaflow.invoicing.domain.model.PaymentMethod;
 import com.facturaflow.invoicing.domain.model.PaymentTerms;
+import com.facturaflow.invoicing.domain.model.PersonType;
+import com.facturaflow.invoicing.domain.model.PhoneNumber;
 import com.facturaflow.invoicing.domain.model.Quantity;
 import com.facturaflow.invoicing.domain.model.ReferenceCode;
 import com.facturaflow.invoicing.domain.model.TaxRate;
+import com.facturaflow.invoicing.domain.model.TaxScheme;
 import com.facturaflow.invoicing.domain.model.TaxType;
 import com.facturaflow.invoicing.domain.model.UnitOfMeasure;
 import java.net.URI;
 import java.time.temporal.ChronoUnit;
+import java.util.Arrays;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Component;
 
 /**
@@ -57,9 +65,16 @@ class InvoicePersistenceMapper {
         entity.customerDocumentType = identification.type().name();
         entity.customerDocumentNumber = identification.number();
         entity.customerCheckDigit = identification.checkDigit() == null ? null : identification.checkDigit().shortValue();
+        entity.customerPersonType = customer.personType().name();
         entity.customerCompanyName = customer.companyName();
         entity.customerNames = customer.names();
         entity.customerEmail = customer.email();
+        entity.customerTaxScheme = customer.fiscalProfile().taxScheme().name();
+        entity.customerFiscalResponsibilities = customer.fiscalProfile().responsibilities().stream()
+                .map(Enum::name).toArray(String[]::new);
+        entity.customerMunicipalityCode = customer.optionalMunicipality().map(Municipality::code).orElse(null);
+        entity.customerAddress = customer.address();
+        entity.customerPhone = customer.optionalPhone().map(PhoneNumber::value).orElse(null);
 
         for (InvoiceLine line : invoice.lines()) {
             entity.lines.add(toLineEntity(line));
@@ -94,8 +109,15 @@ class InvoicePersistenceMapper {
         IdentificationDocument identification = new IdentificationDocument(
                 DocumentType.valueOf(entity.customerDocumentType), entity.customerDocumentNumber,
                 entity.customerCheckDigit == null ? null : entity.customerCheckDigit.intValue());
-        CustomerSnapshot customer = new CustomerSnapshot(identification, entity.customerCompanyName,
-                entity.customerNames, entity.customerEmail);
+        FiscalProfile fiscalProfile = new FiscalProfile(TaxScheme.valueOf(entity.customerTaxScheme),
+                Arrays.stream(entity.customerFiscalResponsibilities).map(FiscalResponsibility::valueOf)
+                        .collect(Collectors.toSet()));
+        CustomerSnapshot customer = new CustomerSnapshot(identification,
+                PersonType.valueOf(entity.customerPersonType), entity.customerCompanyName, entity.customerNames,
+                fiscalProfile, entity.customerEmail,
+                entity.customerMunicipalityCode == null ? null : new Municipality(entity.customerMunicipalityCode),
+                entity.customerAddress,
+                entity.customerPhone == null ? null : new PhoneNumber(entity.customerPhone));
         PaymentTerms paymentTerms = switch (entity.paymentType) {
             case CASH -> PaymentTerms.cash();
             case CREDIT -> PaymentTerms.credit(entity.dueDate);

@@ -30,7 +30,10 @@ public record InvoiceResponse(
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record Customer(ApiDocumentType documentType, String documentNumber, Integer checkDigit,
-                           String companyName, String names, String email) {
+                           ApiPersonType personType, String companyName, String names, ApiTaxScheme taxScheme,
+                           @Schema(description = "En el orden del enum") List<ApiFiscalResponsibility> fiscalResponsibilities,
+                           String email, String municipalityCode, String address,
+                           @Schema(description = "Normalizado: solo dígitos y '+' inicial") String phone) {
     }
 
     @JsonInclude(JsonInclude.Include.NON_NULL)

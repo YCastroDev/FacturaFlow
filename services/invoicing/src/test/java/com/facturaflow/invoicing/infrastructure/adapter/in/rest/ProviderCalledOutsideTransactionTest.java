@@ -10,8 +10,11 @@ import com.facturaflow.invoicing.application.port.in.IssueInvoiceUseCase;
 import com.facturaflow.invoicing.application.port.out.ElectronicInvoiceProvider;
 import com.facturaflow.invoicing.application.port.out.IssuanceResult;
 import com.facturaflow.invoicing.domain.model.DocumentType;
+import com.facturaflow.invoicing.domain.model.FiscalResponsibility;
 import com.facturaflow.invoicing.domain.model.InvoiceStatus;
 import com.facturaflow.invoicing.domain.model.PaymentMethod;
+import com.facturaflow.invoicing.domain.model.PersonType;
+import com.facturaflow.invoicing.domain.model.TaxScheme;
 import com.facturaflow.invoicing.domain.model.TaxType;
 import com.facturaflow.invoicing.domain.model.UnitOfMeasure;
 import java.math.BigDecimal;
@@ -64,7 +67,8 @@ class ProviderCalledOutsideTransactionTest {
     @DisplayName("al emitir, el proveedor se llama sin ninguna transacción de base de datos abierta")
     void providerIsCalledOutsideTransaction() {
         var invoice = createInvoice.create(new CreateInvoiceCommand("SALE-TX",
-                new CreateInvoiceCommand.Customer(DocumentType.NIT, "890903938", 8, "Cliente", null, null),
+                new CreateInvoiceCommand.Customer(DocumentType.NIT, "890903938", 8, PersonType.LEGAL_ENTITY, "Cliente",
+                        null, TaxScheme.IVA, List.of(FiscalResponsibility.LARGE_TAXPAYER), null, null, null, null),
                 List.of(new CreateInvoiceCommand.Line("SKU-1", "Producto", BigDecimal.ONE, new BigDecimal("1000"), null,
                         UnitOfMeasure.UNIT, false, List.of(new CreateInvoiceCommand.Tax(TaxType.IVA, new BigDecimal("19"))))),
                 PaymentMethod.CASH, new CreateInvoiceCommand.CashTerms(), null)).invoice();

@@ -1,5 +1,6 @@
 package com.facturaflow.invoicing.infrastructure.adapter.in.rest.dto;
 
+import static com.facturaflow.invoicing.infrastructure.adapter.in.rest.dto.RequestLimits.MAX_FISCAL_RESPONSIBILITIES;
 import static com.facturaflow.invoicing.infrastructure.adapter.in.rest.dto.RequestLimits.MAX_LINES;
 import static com.facturaflow.invoicing.infrastructure.adapter.in.rest.dto.RequestLimits.MAX_TAXES_PER_LINE;
 import static com.facturaflow.invoicing.infrastructure.adapter.in.rest.dto.RequestLimits.MAX_TEXT;
@@ -58,16 +59,45 @@ public record CreateInvoiceRequest(
                     example = "8")
             Integer checkDigit,
 
-            @Schema(description = "Razón social (empresa). Se requiere companyName o names.")
+            @Schema(description = "LEGAL_ENTITY exige companyName (sin names); NATURAL_PERSON exige names "
+                    + "(sin companyName). No depende del tipo de documento.")
+            @NotNull(message = "es obligatorio")
+            ApiPersonType personType,
+
+            @Schema(description = "Razón social: solo para LEGAL_ENTITY")
             @Size(max = MAX_TEXT, message = "es demasiado largo")
             String companyName,
 
-            @Schema(description = "Nombres (persona natural). Se requiere companyName o names.")
+            @Schema(description = "Nombres: solo para NATURAL_PERSON")
             @Size(max = MAX_TEXT, message = "es demasiado largo")
             String names,
 
+            @Schema(description = "Responsabilidad tributaria (tributo del cliente ante la DIAN)")
+            @NotNull(message = "es obligatorio")
+            ApiTaxScheme taxScheme,
+
+            @Schema(description = "Responsabilidades fiscales del RUT, al menos una. NOT_RESPONSIBLE va sola.")
+            @NotNull(message = "es obligatorio")
+            @Size(max = MAX_FISCAL_RESPONSIBILITIES, message = "admite máximo " + MAX_FISCAL_RESPONSIBILITIES
+                    + " responsabilidades")
+            List<@NotNull(message = "no puede ser nulo") ApiFiscalResponsibility> fiscalResponsibilities,
+
             @Size(max = MAX_TEXT, message = "es demasiado largo")
-            String email) {
+            String email,
+
+            @Schema(description = "Opcional. Código DIVIPOLA del DANE del municipio (5 dígitos). Recomendado: "
+                    + "sin municipio ni dirección, la DIAN agrega una notificación (no un rechazo).", example = "11001")
+            @Size(max = MAX_TEXT, message = "es demasiado largo")
+            String municipalityCode,
+
+            @Schema(description = "Opcional, máximo 250 caracteres", example = "Calle 10 # 20-30")
+            @Size(max = MAX_TEXT, message = "es demasiado largo")
+            String address,
+
+            @Schema(description = "Opcional: de 7 a 15 dígitos, con '+' inicial opcional; se ignoran espacios, "
+                    + "guiones y paréntesis", example = "+57 601 555 1234")
+            @Size(max = MAX_TEXT, message = "es demasiado largo")
+            String phone) {
     }
 
     @Schema(description = "Línea de factura. unitPrice va SIN impuestos ni descuentos.")

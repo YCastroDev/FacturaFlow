@@ -28,6 +28,7 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 - `scripts/` — utilidades (`mvn.sh`, `check-secrets.sh`).
 - `.githooks/` — hook pre-commit con gitleaks.
 - `docs/adr/` — Architecture Decision Records.
+- `docs/spikes/` y `scripts/spikes/` — investigaciones contra sistemas externos (hallazgos y scripts reproducibles).
 
 ## Reglas de arquitectura
 
@@ -58,6 +59,8 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 - Impuestos por línea como `List<LineTax>` (`TaxType` + `TaxRate`), sin tipos repetidos, cada uno redondeado por separado. `excluded` = "excluida de IVA" (no admite `LineTax` de tipo IVA).
 - Value objects como records que se validan en su constructor; el aggregate `Invoice` sin setters.
 - Tests de dominio: JUnit 5 + AssertJ puros (sin Spring), con `@DisplayName` en español como frase de negocio.
+- Cliente (ADR 0007): `PersonType` con exclusión estricta (jurídica → solo `companyName`; natural → solo `names`); `FiscalProfile` obligatorio (`TaxScheme` + conjunto no vacío de `FiscalResponsibility`, `NOT_RESPONSIBLE` siempre sola); `Municipality` (DIVIPOLA, 5 dígitos), dirección y `PhoneNumber` opcionales.
+- `UnitOfMeasure` solo contiene unidades que el proveedor acepta (ver spike 0001). Agregar una exige comprobarlo y una migración.
 
 ## Reglas de persistencia (ADR 0005)
 
@@ -72,7 +75,7 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 
 - Casos de uso: interfaz en `port/in` + implementación en `application/service` registrada en `UseCaseConfiguration`. Reciben comandos con tipos simples y construyen los value objects ellos mismos. La fecha sale del `Clock` inyectado (zona `invoicing.time-zone`).
 - **Transacciones solo en `infrastructure/adapter/out/persistence`** (regla de ArchUnit). Nunca envolver un caso de uso en una transacción: las llamadas a sistemas externos (proveedor de facturación) van fuera de la base.
-- Idempotencia de creación por `referenceCode` + huella SHA-256 de la petición normalizada (`InvoiceRequestHasher`). Si se agrega un campo a la factura, agregarlo también a la huella y a su test parametrizado.
+- Idempotencia de creación por `referenceCode` + huella SHA-256 de la petición normalizada (`InvoiceRequestHasher`, formato v2). Si se agrega un campo a la factura, agregarlo también a la huella y a su test parametrizado (la huella no se versiona: ADR 0007, decisión 6).
 - Emisión: respuestas de negocio como `IssuanceResult` sellado (`Issued` | `Rejected`); fallas técnicas como `ElectronicInvoiceProviderUnavailableException`. Un adaptador de proveedor nunca devuelve un `Rejected` por un timeout.
 - Proveedor activo según `invoicing.provider` (`fake` por defecto). El falso se controla con `SIMULAR_RECHAZO` y `SIMULAR_CAIDA` en la observación.
 - REST: DTOs y enums propios en `adapter/in/rest/dto`, con `switch` exhaustivos hacia y desde el dominio. El controlador lee el agregado, nunca lo serializa. Bean Validation solo para forma (presencia, tipos, topes anti-abuso); las reglas de negocio no se duplican (responden 422 desde el dominio).
@@ -121,5 +124,6 @@ curl -s http://localhost:8081/actuator/health
 
 ## Regla de trabajo
 
+- Proyecto de portafolio sin datos ni usuarios en producción: cuando la solución robusta solo proteja datos de prueba o casos hipotéticos, prefiere la solución simple y documenta en el ADR cómo se haría en producción. Aplica rigor completo en arquitectura, modelado del dominio, tests y seguridad. Si dudas, pregúntame.
 - Si una decisión técnica importante no está cubierta por un ADR, **preguntar antes de implementarla**.
 - **No hacer commits** ni push; los hace el usuario.

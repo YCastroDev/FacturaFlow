@@ -5,12 +5,17 @@ import com.facturaflow.invoicing.domain.model.CustomerSnapshot;
 import com.facturaflow.invoicing.domain.model.Invoice;
 import com.facturaflow.invoicing.domain.model.InvoiceLine;
 import com.facturaflow.invoicing.domain.model.Money;
+import com.facturaflow.invoicing.domain.model.Municipality;
 import com.facturaflow.invoicing.domain.model.PaymentTerms;
+import com.facturaflow.invoicing.domain.model.PhoneNumber;
 import com.facturaflow.invoicing.domain.model.TaxType;
 import com.facturaflow.invoicing.infrastructure.adapter.in.rest.dto.ApiDocumentType;
+import com.facturaflow.invoicing.infrastructure.adapter.in.rest.dto.ApiFiscalResponsibility;
 import com.facturaflow.invoicing.infrastructure.adapter.in.rest.dto.ApiInvoiceStatus;
 import com.facturaflow.invoicing.infrastructure.adapter.in.rest.dto.ApiPaymentMethod;
 import com.facturaflow.invoicing.infrastructure.adapter.in.rest.dto.ApiPaymentTermsType;
+import com.facturaflow.invoicing.infrastructure.adapter.in.rest.dto.ApiPersonType;
+import com.facturaflow.invoicing.infrastructure.adapter.in.rest.dto.ApiTaxScheme;
 import com.facturaflow.invoicing.infrastructure.adapter.in.rest.dto.ApiTaxType;
 import com.facturaflow.invoicing.infrastructure.adapter.in.rest.dto.ApiUnitOfMeasure;
 import com.facturaflow.invoicing.infrastructure.adapter.in.rest.dto.CreateInvoiceRequest;
@@ -34,8 +39,19 @@ final class InvoiceRestMapper {
         CreateInvoiceRequest.Customer customer = request.customer();
         return new CreateInvoiceCommand(
                 request.referenceCode(),
-                new CreateInvoiceCommand.Customer(customer.documentType().toDomain(), customer.documentNumber(),
-                        customer.checkDigit(), customer.companyName(), customer.names(), customer.email()),
+                new CreateInvoiceCommand.Customer(
+                        customer.documentType().toDomain(),
+                        customer.documentNumber(),
+                        customer.checkDigit(),
+                        customer.personType().toDomain(),
+                        customer.companyName(),
+                        customer.names(),
+                        customer.taxScheme().toDomain(),
+                        customer.fiscalResponsibilities().stream().map(ApiFiscalResponsibility::toDomain).toList(),
+                        customer.email(),
+                        customer.municipalityCode(),
+                        customer.address(),
+                        customer.phone()),
                 request.lines().stream().map(InvoiceRestMapper::toCommandLine).toList(),
                 request.paymentMethod().toDomain(),
                 switch (request.paymentTerms().type()) {
@@ -70,9 +86,16 @@ final class InvoiceRestMapper {
                         ApiDocumentType.from(customer.identification().type()),
                         customer.identification().number(),
                         customer.identification().checkDigit(),
+                        ApiPersonType.from(customer.personType()),
                         customer.companyName(),
                         customer.names(),
-                        customer.email()),
+                        ApiTaxScheme.from(customer.fiscalProfile().taxScheme()),
+                        customer.fiscalProfile().responsibilities().stream().sorted()
+                                .map(ApiFiscalResponsibility::from).toList(),
+                        customer.email(),
+                        customer.optionalMunicipality().map(Municipality::code).orElse(null),
+                        customer.address(),
+                        customer.optionalPhone().map(PhoneNumber::value).orElse(null)),
                 ApiPaymentMethod.from(invoice.paymentMethod()),
                 switch (invoice.paymentTerms()) {
                     case PaymentTerms.Cash _ -> new InvoiceResponse.PaymentTerms(ApiPaymentTermsType.CASH, null);

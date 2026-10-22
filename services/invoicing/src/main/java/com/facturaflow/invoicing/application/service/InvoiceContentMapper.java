@@ -4,14 +4,18 @@ import com.facturaflow.invoicing.application.port.in.CreateInvoiceCommand;
 import com.facturaflow.invoicing.domain.exception.InvalidInvoiceException;
 import com.facturaflow.invoicing.domain.model.CustomerSnapshot;
 import com.facturaflow.invoicing.domain.model.DiscountRate;
+import com.facturaflow.invoicing.domain.model.FiscalProfile;
 import com.facturaflow.invoicing.domain.model.IdentificationDocument;
 import com.facturaflow.invoicing.domain.model.Invoice;
 import com.facturaflow.invoicing.domain.model.InvoiceLine;
 import com.facturaflow.invoicing.domain.model.LineTax;
 import com.facturaflow.invoicing.domain.model.Money;
+import com.facturaflow.invoicing.domain.model.Municipality;
 import com.facturaflow.invoicing.domain.model.PaymentTerms;
+import com.facturaflow.invoicing.domain.model.PhoneNumber;
 import com.facturaflow.invoicing.domain.model.Quantity;
 import com.facturaflow.invoicing.domain.model.TaxRate;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 
@@ -52,7 +56,22 @@ final class InvoiceContentMapper {
     private static CustomerSnapshot toCustomer(CreateInvoiceCommand.Customer customer) {
         IdentificationDocument identification = new IdentificationDocument(customer.documentType(),
                 customer.documentNumber(), customer.checkDigit());
-        return new CustomerSnapshot(identification, customer.companyName(), customer.names(), customer.email());
+        FiscalProfile fiscalProfile = new FiscalProfile(customer.taxScheme(),
+                customer.fiscalResponsibilities() == null ? null : new HashSet<>(customer.fiscalResponsibilities()));
+        return new CustomerSnapshot(
+                identification,
+                customer.personType(),
+                customer.companyName(),
+                customer.names(),
+                fiscalProfile,
+                customer.email(),
+                isBlank(customer.municipalityCode()) ? null : new Municipality(customer.municipalityCode()),
+                customer.address(),
+                isBlank(customer.phone()) ? null : new PhoneNumber(customer.phone()));
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 
     private static InvoiceLine toLine(CreateInvoiceCommand.Line line) {

@@ -55,7 +55,7 @@ El adaptador real de Factus llega en la siguiente tarea. Por ahora la emisión u
 - Los impuestos de cada línea **se ordenan por tipo**, porque su orden no significa nada.
 - El email **distingue mayúsculas**, porque el dominio lo guarda tal cual.
 
-**Cómo se codifica.** El texto canónico empieza con el prefijo de versión `invoice-request-v1`. Cada valor va precedido de su longitud (`len:valor;`) y `null` se escribe `~;`, así ninguna concatenación es ambigua: `"A;B"` no se confunde con `"A"` + `"B"`. Sobre ese texto se calcula SHA-256 en hexadecimal (`InvoiceRequestHasher`, con `java.security`, sin librerías). La migración V3 agrega `invoices.request_hash` (`TEXT NOT NULL` con `CHECK ^[0-9a-f]{64}$`).
+**Cómo se codifica.** El texto canónico empieza con un prefijo de versión: `invoice-request-v1` en esta decisión, hoy `invoice-request-v2`, que agrega los datos fiscales del cliente ([ADR 0007](0007-datos-fiscales-del-cliente.md), decisión 6). Cada valor va precedido de su longitud (`len:valor;`) y `null` se escribe `~;`, así ninguna concatenación es ambigua: `"A;B"` no se confunde con `"A"` + `"B"`. Sobre ese texto se calcula SHA-256 en hexadecimal (`InvoiceRequestHasher`, con `java.security`, sin librerías). La migración V3 agrega `invoices.request_hash` (`TEXT NOT NULL` con `CHECK ^[0-9a-f]{64}$`).
 
 **El orden importa.** El flujo es:
 

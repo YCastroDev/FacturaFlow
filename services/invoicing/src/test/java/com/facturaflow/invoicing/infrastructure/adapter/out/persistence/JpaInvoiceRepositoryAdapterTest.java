@@ -3,9 +3,11 @@ package com.facturaflow.invoicing.infrastructure.adapter.out.persistence;
 import static com.facturaflow.invoicing.domain.model.InvoiceFixtures.ISSUE_DATE;
 import static com.facturaflow.invoicing.domain.model.InvoiceFixtures.VALID_CUFE;
 import static com.facturaflow.invoicing.domain.model.InvoiceFixtures.customer;
+import static com.facturaflow.invoicing.domain.model.InvoiceFixtures.customerWithLocation;
 import static com.facturaflow.invoicing.domain.model.InvoiceFixtures.electronicDocument;
 import static com.facturaflow.invoicing.domain.model.InvoiceFixtures.excludedLine;
 import static com.facturaflow.invoicing.domain.model.InvoiceFixtures.line;
+import static com.facturaflow.invoicing.domain.model.InvoiceFixtures.naturalPerson;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -16,8 +18,11 @@ import com.facturaflow.invoicing.application.port.out.InvoiceRepository;
 import com.facturaflow.invoicing.application.port.out.RequestHash;
 import com.facturaflow.invoicing.application.port.out.StoredInvoice;
 import com.facturaflow.invoicing.domain.model.CustomerSnapshot;
+import com.facturaflow.invoicing.domain.model.DiscountRate;
 import com.facturaflow.invoicing.domain.model.DocumentType;
 import com.facturaflow.invoicing.domain.model.ElectronicDocument;
+import com.facturaflow.invoicing.domain.model.FiscalProfile;
+import com.facturaflow.invoicing.domain.model.FiscalResponsibility;
 import com.facturaflow.invoicing.domain.model.IdentificationDocument;
 import com.facturaflow.invoicing.domain.model.Invoice;
 import com.facturaflow.invoicing.domain.model.InvoiceId;
@@ -29,13 +34,14 @@ import com.facturaflow.invoicing.domain.model.PaymentMethod;
 import com.facturaflow.invoicing.domain.model.PaymentTerms;
 import com.facturaflow.invoicing.domain.model.Quantity;
 import com.facturaflow.invoicing.domain.model.ReferenceCode;
+import com.facturaflow.invoicing.domain.model.TaxScheme;
 import com.facturaflow.invoicing.domain.model.TaxType;
 import com.facturaflow.invoicing.domain.model.UnitOfMeasure;
-import com.facturaflow.invoicing.domain.model.DiscountRate;
 import jakarta.persistence.EntityManagerFactory;
 import java.net.URI;
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Stream;
 import org.hibernate.SessionFactory;
 import org.hibernate.stat.Statistics;
@@ -139,6 +145,42 @@ class JpaInvoiceRepositoryAdapterTest {
                 .isEqualTo(Instant.parse("2026-10-20T15:30:00.123456Z"));
         assertThat(repository.findById(saved.id()).orElseThrow().electronicDocument())
                 .isEqualTo(issued.electronicDocument());
+    }
+
+    @Test
+    @DisplayName("los datos fiscales y de ubicación del cliente se guardan y recuperan, incluido el arreglo de responsabilidades")
+    void savesCustomerTaxData() {
+        Invoice saved = repository.saveNew(newInvoice("SALE-1", PaymentTerms.cash(), customerWithLocation(),
+                List.of(line("1", "1000", "0", "19"))), HASH);
+
+        CustomerSnapshot loaded = repository.findById(saved.id()).orElseThrow().customer();
+
+        assertThat(loaded).isEqualTo(customerWithLocation());
+        assertThat(jdbc.sql("SELECT array_to_string(customer_fiscal_responsibilities, ',') FROM invoices")
+                .query(String.class).single().split(",")).containsExactlyInAnyOrder("LARGE_TAXPAYER", "SELF_WITHHOLDER");
+    }
+
+    @Test
+    @DisplayName("una persona natural sin ubicación se guarda y recupera igual")
+    void savesNaturalPersonWithoutLocation() {
+        Invoice saved = repository.saveNew(newInvoice("SALE-1", PaymentTerms.cash(), naturalPerson(),
+                List.of(line("1", "1000", "0", "19"))), HASH);
+
+        assertThat(repository.findById(saved.id()).orElseThrow().customer()).isEqualTo(naturalPerson());
+    }
+
+    @Test
+    @DisplayName("la base rechaza un cliente cuyo tipo de persona no corresponde con sus nombres")
+    void databaseRejectsInconsistentPersonType() {
+        Invoice saved = repository.saveNew(newInvoice("SALE-1", PaymentTerms.cash()), HASH);
+
+        assertThatThrownBy(() -> jdbc.sql("UPDATE invoices SET customer_person_type = 'NATURAL_PERSON' WHERE id = ?")
+                .param(saved.id().value()).update())
+                .hasMessageContaining("ck_invoices_customer_person_name");
+        assertThatThrownBy(() -> jdbc.sql("UPDATE invoices SET customer_fiscal_responsibilities = "
+                        + "ARRAY['NOT_RESPONSIBLE', 'LARGE_TAXPAYER'] WHERE id = ?")
+                .param(saved.id().value()).update())
+                .hasMessageContaining("ck_invoices_customer_fiscal_responsibilities");
     }
 
     @Test
@@ -283,12 +325,21 @@ class JpaInvoiceRepositoryAdapterTest {
                     ? IdentificationDocument.nit("890903938", 8)
                     : IdentificationDocument.of(type, "1020304050");
             repository.saveNew(newInvoice("DOC-" + sequence++, PaymentTerms.cash(),
-                    CustomerSnapshot.person(document, "Ana", null), List.of(line("1", "1000", "0", "19"))), HASH);
+                    CustomerSnapshot.person(document, "Ana", FiscalProfile.notResponsible(), null),
+                    List.of(line("1", "1000", "0", "19"))), HASH);
         }
         for (UnitOfMeasure unit : UnitOfMeasure.values()) {
             InvoiceLine line = new InvoiceLine("SKU-1", "Producto", Quantity.of("1"), Money.of("1000"),
                     DiscountRate.NONE, List.of(LineTax.of(TaxType.IVA, "19")), unit, false);
             repository.saveNew(newInvoice("UNIT-" + sequence++, PaymentTerms.cash(), customer(), List.of(line)), HASH);
+        }
+        for (FiscalResponsibility responsibility : FiscalResponsibility.values()) {
+            for (TaxScheme scheme : TaxScheme.values()) {
+                CustomerSnapshot company = CustomerSnapshot.company(IdentificationDocument.nit("890903938", 8),
+                        "Empresa", new FiscalProfile(scheme, Set.of(responsibility)), null);
+                repository.saveNew(newInvoice("FR-" + sequence++, PaymentTerms.cash(), company,
+                        List.of(line("1", "1000", "0", "19"))), HASH);
+            }
         }
         for (PaymentMethod method : PaymentMethod.values()) {
             repository.saveNew(Invoice.create(InvoiceId.generate(), new ReferenceCode("PM-" + sequence++), customer(),
@@ -306,6 +357,7 @@ class JpaInvoiceRepositoryAdapterTest {
         }
 
         long expected = DocumentType.values().length + UnitOfMeasure.values().length
+                + FiscalResponsibility.values().length * TaxScheme.values().length
                 + PaymentMethod.values().length + 2;
         assertThat(jdbc.sql("SELECT count(*) FROM invoices").query(Long.class).single()).isEqualTo(expected);
     }

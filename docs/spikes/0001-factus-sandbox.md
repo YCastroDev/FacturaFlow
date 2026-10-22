@@ -3,7 +3,7 @@
 - **Fecha:** 2026-10-21
 - **Entorno:** `https://api-sandbox.factus.com.co`, empresa de pruebas "FACTUS V2" (NIT 1000789002-2)
 - **Objetivo:** confirmar cómo se comporta Factus antes de diseñar el adaptador (Fase 3) y los datos fiscales del cliente (Fase 2).
-- **Facturas creadas:** 3 (`SETP990028958`, `SETP990028959`, `SETP990028960`), todas con `reference_code` `SPIKE-…` y `send_email: false`. En total hubo 8 envíos a la validación: 2 reenvíos de un código ya usado y 3 rechazos 422, que no crean nada. No se borró nada.
+- **Facturas creadas:** 4 (`SETP990028958`, `…959`, `…960` y, en la Fase 2, `…966`), todas con `reference_code` `SPIKE-…` y `send_email: false`. En total hubo 9 envíos a la validación: 2 reenvíos de un código ya usado y 3 rechazos 422, que no crean nada. No se borró nada.
 
 ## Cómo reproducirlo
 
@@ -342,7 +342,9 @@ Un código inexistente da "El valor de responsabilidades fiscales no existe".
 | `49` | Tarjeta débito | `DEBIT_CARD` |
 | `ZZZ` | Otro | — |
 
-**Campos opcionales del cliente:** `address`, `phone`, `email` y `trade_name`. La factura de la persona natural se validó **sin** dirección ni teléfono.
+**Campos opcionales del cliente:** `address`, `phone`, `email`, `trade_name` y `municipality_code`. La factura de la persona natural se validó **sin** dirección ni teléfono.
+
+**Cliente sin municipio, dirección ni teléfono** (verificación de la Fase 2, `payloads/cash-cc-no-location.json`): `SETP990028966` se **validó** (`is_validated: true`). La DIAN agrega la notificación `FAK08` ("El grupo deberá estar conformado al menos por el conjunto de elementos ID, CityName, CountrySubentity, … AddressLine …"), que no impide la validación. La respuesta trae `address: "No informado"` y `municipality: null`. Conclusión: el municipio puede ser **opcional** en el dominio, pero conviene informarlo para evitar la notificación.
 
 **Otros campos de la raíz:** `operation_type` (validado; `10` = estándar por defecto), `observation` (texto), `numbering_range_id` (opcional) y `send_email` (la respuesta refleja `false`). El valor por defecto `true` de `send_email` no se probó: el script siempre envía `false`.
 

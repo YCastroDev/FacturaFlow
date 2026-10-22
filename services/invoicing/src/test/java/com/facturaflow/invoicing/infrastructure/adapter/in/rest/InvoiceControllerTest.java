@@ -1,7 +1,7 @@
 package com.facturaflow.invoicing.infrastructure.adapter.in.rest;
 
 import static com.facturaflow.invoicing.domain.model.InvoiceFixtures.ISSUE_DATE;
-import static com.facturaflow.invoicing.domain.model.InvoiceFixtures.customer;
+import static com.facturaflow.invoicing.domain.model.InvoiceFixtures.customerWithLocation;
 import static com.facturaflow.invoicing.domain.model.InvoiceFixtures.electronicDocument;
 import static com.facturaflow.invoicing.domain.model.InvoiceFixtures.excludedLine;
 import static com.facturaflow.invoicing.domain.model.InvoiceFixtures.line;
@@ -26,12 +26,15 @@ import com.facturaflow.invoicing.application.port.in.IssueInvoiceUseCase;
 import com.facturaflow.invoicing.domain.exception.InvalidIdentificationException;
 import com.facturaflow.invoicing.domain.exception.InvalidInvoiceStateTransitionException;
 import com.facturaflow.invoicing.domain.model.DocumentType;
+import com.facturaflow.invoicing.domain.model.FiscalResponsibility;
 import com.facturaflow.invoicing.domain.model.Invoice;
 import com.facturaflow.invoicing.domain.model.InvoiceId;
 import com.facturaflow.invoicing.domain.model.LineTax;
 import com.facturaflow.invoicing.domain.model.PaymentMethod;
 import com.facturaflow.invoicing.domain.model.PaymentTerms;
+import com.facturaflow.invoicing.domain.model.PersonType;
 import com.facturaflow.invoicing.domain.model.ReferenceCode;
+import com.facturaflow.invoicing.domain.model.TaxScheme;
 import com.facturaflow.invoicing.domain.model.TaxType;
 import com.facturaflow.invoicing.domain.model.UnitOfMeasure;
 import java.math.BigDecimal;
@@ -62,11 +65,14 @@ class InvoiceControllerTest {
             {
               "referenceCode": "SALE-0001",
               "customer": { "documentType": "NIT", "documentNumber": "890903938", "checkDigit": 8,
-                            "companyName": "Cliente Ejemplo S.A.S.", "email": "facturacion@cliente.example" },
+                            "personType": "LEGAL_ENTITY", "companyName": "Cliente Ejemplo S.A.S.",
+                            "taxScheme": "IVA", "fiscalResponsibilities": [ "SELF_WITHHOLDER", "LARGE_TAXPAYER" ],
+                            "email": "facturacion@cliente.example", "municipalityCode": "11001",
+                            "address": "Calle 10 # 20-30", "phone": "+57 601 555 1234" },
               "lines": [
                 { "code": "SKU-1", "name": "Producto", "quantity": 2, "unitPrice": 50000.00, "discountRate": 10,
                   "unit": "UNIT", "taxes": [ { "type": "IVA", "rate": 19 }, { "type": "INC", "rate": 8 } ] },
-                { "code": "SKU-EXC", "name": "Excluido", "quantity": 1, "unitPrice": 20000, "unit": "BOX",
+                { "code": "SKU-EXC", "name": "Excluido", "quantity": 1, "unitPrice": 20000, "unit": "KILOGRAM",
                   "ivaExcluded": true, "taxes": [] }
               ],
               "paymentMethod": "BANK_TRANSFER",
@@ -90,7 +96,7 @@ class InvoiceControllerTest {
     /** Factura de dos líneas: (2 x 50.000 - 10 %) con IVA 19 % + INC 8 %, y una excluida de 20.000. */
     private static Invoice invoice() {
         return Invoice.create(new InvoiceId(UUID.fromString("7f1c2a4e-0000-4000-8000-000000000001")),
-                new ReferenceCode("SALE-0001"), customer(),
+                new ReferenceCode("SALE-0001"), customerWithLocation(),
                 List.of(line("2", "50000.00", "10", LineTax.of(TaxType.IVA, "19"), LineTax.of(TaxType.INC, "8")),
                         excludedLine("1", "20000.00")),
                 PaymentMethod.BANK_TRANSFER, PaymentTerms.credit(ISSUE_DATE.plusDays(30)), ISSUE_DATE,
@@ -122,6 +128,13 @@ class InvoiceControllerTest {
         assertThat(result).bodyJson().extractingPath("$.status").isEqualTo("PENDING");
         assertThat(result).bodyJson().extractingPath("$.issueDate").isEqualTo("2026-10-20");
         assertThat(result).bodyJson().extractingPath("$.paymentTerms.type").isEqualTo("CREDIT");
+        assertThat(result).bodyJson().extractingPath("$.customer.personType").isEqualTo("LEGAL_ENTITY");
+        assertThat(result).bodyJson().extractingPath("$.customer.taxScheme").isEqualTo("IVA");
+        assertThat(result).bodyJson().extractingPath("$.customer.fiscalResponsibilities").asArray()
+                .containsExactly("LARGE_TAXPAYER", "SELF_WITHHOLDER");
+        assertThat(result).bodyJson().extractingPath("$.customer.municipalityCode").isEqualTo("11001");
+        assertThat(result).bodyJson().extractingPath("$.customer.phone").isEqualTo("+576015551234");
+        assertThat(result).bodyJson().doesNotHavePath("$.customer.names");
         assertThat(result).bodyJson().extractingPath("$.lines[0].lineNumber").isEqualTo(1);
         assertThat(result).bodyJson().extractingPath("$.lines[0].taxableAmount").isEqualTo(90000.0);
         assertThat(result).bodyJson().extractingPath("$.lines[0].taxes[1].amount").isEqualTo(7200.0);
@@ -157,13 +170,20 @@ class InvoiceControllerTest {
         assertThat(command.referenceCode()).isEqualTo("SALE-0001");
         assertThat(command.customer().documentType()).isEqualTo(DocumentType.NIT);
         assertThat(command.customer().checkDigit()).isEqualTo(8);
+        assertThat(command.customer().personType()).isEqualTo(PersonType.LEGAL_ENTITY);
+        assertThat(command.customer().taxScheme()).isEqualTo(TaxScheme.IVA);
+        assertThat(command.customer().fiscalResponsibilities())
+                .containsExactly(FiscalResponsibility.SELF_WITHHOLDER, FiscalResponsibility.LARGE_TAXPAYER);
+        assertThat(command.customer().municipalityCode()).isEqualTo("11001");
+        assertThat(command.customer().address()).isEqualTo("Calle 10 # 20-30");
+        assertThat(command.customer().phone()).isEqualTo("+57 601 555 1234");
         assertThat(command.paymentMethod()).isEqualTo(PaymentMethod.BANK_TRANSFER);
         assertThat(command.paymentTerms()).isEqualTo(new CreateInvoiceCommand.CreditTerms(LocalDate.of(2026, 11, 19)));
         assertThat(command.lines().get(0).ivaExcluded()).isFalse();
         assertThat(command.lines().get(0).taxes()).extracting(CreateInvoiceCommand.Tax::type)
                 .containsExactly(TaxType.IVA, TaxType.INC);
         assertThat(command.lines().get(1).discountRate()).isNull();
-        assertThat(command.lines().get(1).unit()).isEqualTo(UnitOfMeasure.BOX);
+        assertThat(command.lines().get(1).unit()).isEqualTo(UnitOfMeasure.KILOGRAM);
         assertThat(command.lines().get(1).ivaExcluded()).isTrue();
         assertThat(command.lines().get(1).quantity()).isEqualByComparingTo(BigDecimal.ONE);
     }
@@ -219,6 +239,19 @@ class InvoiceControllerTest {
     }
 
     @Test
+    @DisplayName("faltar el tipo de persona, la responsabilidad tributaria o las responsabilidades fiscales responde 400")
+    void missingCustomerTaxDataReturns400() {
+        MvcTestResult result = post(VALID_REQUEST
+                .replace("\"personType\": \"LEGAL_ENTITY\",", "")
+                .replace("\"taxScheme\": \"IVA\",", "")
+                .replace("\"fiscalResponsibilities\": [ \"SELF_WITHHOLDER\", \"LARGE_TAXPAYER\" ],", ""));
+
+        assertProblem(result, HttpStatus.BAD_REQUEST, "invalid-request");
+        assertThat(result).bodyJson().extractingPath("$.errors[*].field").asArray().containsExactlyInAnyOrder(
+                "customer.personType", "customer.taxScheme", "customer.fiscalResponsibilities");
+    }
+
+    @Test
     @DisplayName("una venta de contado con fecha de vencimiento responde 400")
     void cashWithDueDateReturns400() {
         MvcTestResult result = post(VALID_REQUEST.replace("\"type\": \"CREDIT\"", "\"type\": \"CASH\""));
@@ -235,7 +268,8 @@ class InvoiceControllerTest {
         String lines = String.join(",", java.util.Collections.nCopies(501, line));
         MvcTestResult result = post("""
                 { "referenceCode": "S-1", "customer": { "documentType": "NIT", "documentNumber": "890903938",
-                  "checkDigit": 8, "companyName": "C" }, "lines": [ %s ], "paymentMethod": "CASH",
+                  "checkDigit": 8, "personType": "LEGAL_ENTITY", "companyName": "C", "taxScheme": "IVA",
+                  "fiscalResponsibilities": [ "LARGE_TAXPAYER" ] }, "lines": [ %s ], "paymentMethod": "CASH",
                   "paymentTerms": { "type": "CASH" } }
                 """.formatted(lines));
 
@@ -265,7 +299,7 @@ class InvoiceControllerTest {
     @Test
     @DisplayName("un valor de enum inexistente responde 400 e indica el campo")
     void unknownEnumValueReturns400() {
-        MvcTestResult result = post(VALID_REQUEST.replace("\"unit\": \"BOX\"", "\"unit\": \"BARREL\""));
+        MvcTestResult result = post(VALID_REQUEST.replace("\"unit\": \"KILOGRAM\"", "\"unit\": \"BOX\""));
 
         assertProblem(result, HttpStatus.BAD_REQUEST, "malformed-request");
         assertThat(result).bodyJson().extractingPath("$.field").isEqualTo("lines[1].unit");

@@ -2,6 +2,7 @@ package com.facturaflow.invoicing.infrastructure.adapter.out.persistence;
 
 import static com.facturaflow.invoicing.domain.model.InvoiceFixtures.ISSUE_DATE;
 import static com.facturaflow.invoicing.domain.model.InvoiceFixtures.customer;
+import static com.facturaflow.invoicing.domain.model.InvoiceFixtures.customerWithLocation;
 import static com.facturaflow.invoicing.domain.model.InvoiceFixtures.electronicDocument;
 import static com.facturaflow.invoicing.domain.model.InvoiceFixtures.excludedLine;
 import static com.facturaflow.invoicing.domain.model.InvoiceFixtures.line;
@@ -10,6 +11,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.facturaflow.invoicing.application.port.out.RequestHash;
 import com.facturaflow.invoicing.domain.model.CustomerSnapshot;
 import com.facturaflow.invoicing.domain.model.DocumentType;
+import com.facturaflow.invoicing.domain.model.FiscalProfile;
 import com.facturaflow.invoicing.domain.model.IdentificationDocument;
 import com.facturaflow.invoicing.domain.model.Invoice;
 import com.facturaflow.invoicing.domain.model.InvoiceId;
@@ -92,7 +94,8 @@ class InvoicePersistenceMapperTest {
     @DisplayName("una persona natural sin NIT se guarda sin dígito de verificación")
     void personWithoutCheckDigit() {
         CustomerSnapshot person = CustomerSnapshot.person(
-                IdentificationDocument.of(DocumentType.CITIZENSHIP_CARD, "1020304050"), "Ana Pérez", null);
+                IdentificationDocument.of(DocumentType.CITIZENSHIP_CARD, "1020304050"), "Ana Pérez",
+                FiscalProfile.notResponsible(), null);
         Invoice original = invoice(person, PaymentTerms.cash(), null);
 
         InvoiceEntity entity = mapper.toNewEntity(original, HASH);
@@ -101,6 +104,22 @@ class InvoicePersistenceMapperTest {
         assertThat(entity.customerCompanyName).isNull();
         entity.version = 0L;
         assertThat(mapper.toDomain(entity).customer()).isEqualTo(person);
+    }
+
+    @Test
+    @DisplayName("los datos fiscales y de ubicación del cliente sobreviven la ida y vuelta")
+    void customerTaxDataRoundTrip() {
+        Invoice original = invoice(customerWithLocation(), PaymentTerms.cash(), null);
+
+        InvoiceEntity entity = mapper.toNewEntity(original, HASH);
+
+        assertThat(entity.customerPersonType).isEqualTo("LEGAL_ENTITY");
+        assertThat(entity.customerTaxScheme).isEqualTo("IVA");
+        assertThat(entity.customerFiscalResponsibilities).containsExactlyInAnyOrder("LARGE_TAXPAYER", "SELF_WITHHOLDER");
+        assertThat(entity.customerMunicipalityCode).isEqualTo("11001");
+        assertThat(entity.customerPhone).isEqualTo("+576015551234");
+        entity.version = 0L;
+        assertThat(mapper.toDomain(entity).customer()).isEqualTo(customerWithLocation());
     }
 
     @Test

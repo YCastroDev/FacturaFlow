@@ -13,10 +13,13 @@ import com.facturaflow.invoicing.domain.exception.DomainException;
 import com.facturaflow.invoicing.domain.exception.InvalidIdentificationException;
 import com.facturaflow.invoicing.domain.exception.InvalidPaymentTermsException;
 import com.facturaflow.invoicing.domain.model.DocumentType;
+import com.facturaflow.invoicing.domain.model.FiscalResponsibility;
 import com.facturaflow.invoicing.domain.model.InvoiceStatus;
 import com.facturaflow.invoicing.domain.model.Money;
 import com.facturaflow.invoicing.domain.model.PaymentMethod;
+import com.facturaflow.invoicing.domain.model.PersonType;
 import com.facturaflow.invoicing.domain.model.ReferenceCode;
+import com.facturaflow.invoicing.domain.model.TaxScheme;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -145,7 +148,8 @@ class CreateInvoiceServiceTest {
     @DisplayName("los datos que violan reglas de negocio se rechazan con la excepción del dominio y no se guarda nada")
     void businessRulesAreValidatedByDomain() {
         CreateInvoiceCommand wrongCheckDigit = new CreateInvoiceCommand(REFERENCE_CODE,
-                new CreateInvoiceCommand.Customer(DocumentType.NIT, "890903938", 1, "Cliente", null, null),
+                new CreateInvoiceCommand.Customer(DocumentType.NIT, "890903938", 1, PersonType.LEGAL_ENTITY, "Cliente",
+                        null, TaxScheme.IVA, List.of(FiscalResponsibility.LARGE_TAXPAYER), null, null, null, null),
                 command().lines(), PaymentMethod.CASH, new CreateInvoiceCommand.CashTerms(), null);
         CreateInvoiceCommand noLines = new CreateInvoiceCommand(REFERENCE_CODE, command().customer(), List.of(),
                 PaymentMethod.CASH, new CreateInvoiceCommand.CashTerms(), null);

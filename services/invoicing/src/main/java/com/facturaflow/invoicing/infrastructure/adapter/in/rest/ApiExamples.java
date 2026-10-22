@@ -3,7 +3,7 @@ package com.facturaflow.invoicing.infrastructure.adapter.in.rest;
 /**
  * Ejemplos de petición para Swagger UI. Son text blocks (constantes de compilación), por eso
  * pueden usarse dentro de {@code @ExampleObject}. Los datos son ficticios pero válidos: el NIT
- * tiene su dígito de verificación correcto.
+ * tiene su dígito de verificación correcto y los emails usan el dominio reservado {@code .example}.
  */
 final class ApiExamples {
 
@@ -14,8 +14,14 @@ final class ApiExamples {
                 "documentType": "NIT",
                 "documentNumber": "890903938",
                 "checkDigit": 8,
+                "personType": "LEGAL_ENTITY",
                 "companyName": "Cliente Ejemplo S.A.S.",
-                "email": "facturacion@cliente.example"
+                "taxScheme": "IVA",
+                "fiscalResponsibilities": [ "LARGE_TAXPAYER", "SELF_WITHHOLDER" ],
+                "email": "facturacion@cliente.example",
+                "municipalityCode": "11001",
+                "address": "Calle 10 # 20-30",
+                "phone": "+57 601 555 1234"
               },
               "lines": [
                 {
@@ -41,8 +47,12 @@ final class ApiExamples {
               "customer": {
                 "documentType": "CITIZENSHIP_CARD",
                 "documentNumber": "1020304050",
+                "personType": "NATURAL_PERSON",
                 "names": "Ana María Gómez",
-                "email": "ana.gomez@correo.example"
+                "taxScheme": "NOT_APPLICABLE",
+                "fiscalResponsibilities": [ "NOT_RESPONSIBLE" ],
+                "email": "ana.gomez@correo.example",
+                "municipalityCode": "05001"
               },
               "lines": [
                 {
