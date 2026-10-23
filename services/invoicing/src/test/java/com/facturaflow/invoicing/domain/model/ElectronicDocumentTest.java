@@ -19,18 +19,18 @@ class ElectronicDocumentTest {
     private static final Instant VALIDATED_AT = Instant.parse("2026-10-20T15:30:00Z");
 
     @Test
-    @DisplayName("el CUFE se guarda normalizado en minúsculas")
+    @DisplayName("el código único (CUFE o CUDE) se guarda normalizado en minúsculas")
     void normalizesCufe() {
         ElectronicDocument document = new ElectronicDocument("SETP990000001", VALID_CUFE.toUpperCase(), QR, PUBLIC,
                 VALIDATED_AT, Money.of("100"));
 
-        assertThat(document.cufe()).isEqualTo(VALID_CUFE);
+        assertThat(document.uniqueCode()).isEqualTo(VALID_CUFE);
     }
 
     @ParameterizedTest(name = "CUFE ''{0}''")
     @ValueSource(strings = {"", "abc123", "zz23456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
             + "0123456789abcdef0123456789abcdef"})
-    @DisplayName("un CUFE que no es un SHA-384 en hexadecimal se rechaza")
+    @DisplayName("un código único que no es un SHA-384 en hexadecimal se rechaza")
     void rejectsInvalidCufe(String cufe) {
         assertThatThrownBy(() -> new ElectronicDocument("SETP990000001", cufe, QR, PUBLIC, VALIDATED_AT,
                 Money.of("100")))

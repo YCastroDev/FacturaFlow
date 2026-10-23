@@ -78,10 +78,21 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 - **Transacciones solo en `infrastructure/adapter/out/persistence`** (regla de ArchUnit). Nunca envolver un caso de uso en una transacción: las llamadas a sistemas externos (proveedor de facturación) van fuera de la base.
 - Idempotencia de creación por `referenceCode` + huella SHA-256 de la petición normalizada (`InvoiceRequestHasher`, formato v2). Si se agrega un campo a la factura, agregarlo también a la huella y a su test parametrizado (la huella no se versiona: ADR 0007, decisión 6).
 - Emisión: respuestas de negocio como `IssuanceResult` sellado (`Issued` | `Rejected`); fallas técnicas como `ElectronicInvoiceProviderUnavailableException`. Un adaptador de proveedor nunca devuelve un `Rejected` por un timeout.
-- Proveedor activo según `invoicing.provider` (`fake` por defecto, `factus` para el sandbox real). El falso se controla con `SIMULAR_RECHAZO` y `SIMULAR_CAIDA` en la observación.
+- Proveedor activo según `invoicing.provider` (`fake` por defecto, `factus` para el sandbox real). El falso se controla con `SIMULAR_RECHAZO` y `SIMULAR_CAIDA` en la observación (de la factura o de la nota crédito).
 - REST: DTOs y enums propios en `adapter/in/rest/dto`, con `switch` exhaustivos hacia y desde el dominio. El controlador lee el agregado, nunca lo serializa. Bean Validation solo para forma (presencia, tipos, topes anti-abuso); las reglas de negocio no se duplican (responden 422 desde el dominio).
-- Errores: siempre Problem Details desde `ProblemDetailsHandler`, con `type` `urn:facturaflow:problem:<slug>`. Nunca exponer mensajes de Spring, Jackson o Hibernate ni trazas. Una excepción nueva de `application.exception` necesita su fila en la tabla del ADR 0006 y su test en `InvoiceControllerTest`.
+- Errores: siempre Problem Details desde `ProblemDetailsHandler`, con `type` `urn:facturaflow:problem:<slug>`. Nunca exponer mensajes de Spring, Jackson o Hibernate ni trazas. Una excepción nueva de `application.exception` necesita su fila en la tabla del ADR 0006 y su test en el test del controlador que la expone (`InvoiceControllerTest` o `CreditNoteControllerTest`).
 - Tests: casos de uso con `InMemoryInvoiceRepository` y `StubElectronicInvoiceProvider` (sin Spring); web con `@WebMvcTest` + `MockMvcTester`; punta a punta con `RestTestClient` + Testcontainers.
+
+## Reglas de las notas crédito (ADR 0009)
+
+- `CreditNote` es un agregado SEPARADO: referencia la factura por `InvoiceId`, con su ciclo PENDING → ISSUED | REJECTED. La factura no cambia de estado al acreditarse.
+- Motivos propios (`PARTIAL_RETURN`, `TOTAL_ANNULMENT`); los códigos de la DIAN solo en el adaptador.
+- El cliente de la nota es SIEMPRE el de la factura guardada; nunca viene en la petición.
+- Cada línea es el número de línea de la factura (desde 1) + `InvoiceLine.withQuantity(q)`: los montos salen del mismo cálculo que la factura.
+- **Regla que cruza agregados:** lo acreditado (notas PENDING + ISSUED; las REJECTED no cuentan) nunca supera lo facturado, **en cantidades por línea**, nunca en dinero. La calcula `CreditBalance`; la protege `CreditNoteRepository.saveNew`, que sube la versión de la factura solo si sigue siendo la leída (bloqueo optimista). Toda nota nueva DEBE pasar por `saveNew`. El caso de uso reintenta hasta 3 veces (422 si ya no cabe, 409 si persisten los conflictos).
+- Emitir o rechazar una nota no toca la factura. No hay cancelación de notas PENDING (limitación documentada en el ADR 0009).
+- `ElectronicDocument.uniqueCode` es el CUFE o el CUDE; la API usa `cufe` en facturas y `cude` en notas.
+- Con Factus, la emisión de notas responde 503 hasta que exista su adaptador (`FactusCreditNotesNotYetSupported`).
 
 ## Reglas del adaptador de Factus (ADR 0008)
 

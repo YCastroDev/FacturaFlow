@@ -10,9 +10,11 @@ public final class InvalidElectronicDocumentException extends DomainException {
         return new InvalidElectronicDocumentException("El documento electrónico requiere " + field + ".");
     }
 
-    public static InvalidElectronicDocumentException invalidCufe(String cufe) {
+    /** El código único es el CUFE de una factura o el CUDE de una nota crédito (ADR 0009). */
+    public static InvalidElectronicDocumentException invalidUniqueCode(String uniqueCode) {
         return new InvalidElectronicDocumentException(
-                "El CUFE debe tener 96 caracteres hexadecimales (SHA-384): '" + cufe + "'.");
+                "El código único del documento (CUFE/CUDE) debe tener 96 caracteres hexadecimales (SHA-384): '"
+                        + uniqueCode + "'.");
     }
 
     public static InvalidElectronicDocumentException invalidUrl(String description, String url) {

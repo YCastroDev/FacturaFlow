@@ -4,6 +4,8 @@
 
 Aceptado — 2026-10-22. Completa el ADR 0006: agrega el adaptador real del puerto `ElectronicInvoiceProvider`, la descarga del PDF y una fila a su tabla de errores. Reemplaza la "URL del PDF" del documento electrónico por los enlaces reales.
 
+> **Nota posterior (ADR 0009):** `ElectronicDocument.cufe` pasó a llamarse `uniqueCode` (CUFE o CUDE); la API de facturas conserva `cufe`. Mientras llega el adaptador de notas crédito, con `invoicing.provider=factus` su emisión y su PDF responden 503 (`FactusCreditNotesNotYetSupported`) y nada se envía a Factus.
+
 ## Contexto
 
 Hasta ahora la emisión usaba un proveedor falso (ADR 0006). El [spike 0001](../spikes/0001-factus-sandbox.md) mostró cómo se comporta de verdad el sandbox de Factus. Los hallazgos que más pesan en el diseño:

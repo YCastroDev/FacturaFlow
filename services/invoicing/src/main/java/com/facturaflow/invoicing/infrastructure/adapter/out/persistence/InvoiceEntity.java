@@ -94,8 +94,8 @@ class InvoiceEntity {
     @Column(name = "edoc_number")
     String edocNumber;
 
-    @Column(name = "edoc_cufe", length = 96)
-    String edocCufe;
+    @Column(name = "edoc_unique_code", length = 96)
+    String edocUniqueCode;
 
     @Column(name = "edoc_qr_url")
     String edocQrUrl;

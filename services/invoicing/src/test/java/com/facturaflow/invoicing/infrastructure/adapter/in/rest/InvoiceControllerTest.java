@@ -21,6 +21,7 @@ import com.facturaflow.invoicing.application.exception.ReferenceCodeConflictExce
 import com.facturaflow.invoicing.application.port.in.CreateInvoiceCommand;
 import com.facturaflow.invoicing.application.port.in.CreateInvoiceResult;
 import com.facturaflow.invoicing.application.port.in.CreateInvoiceUseCase;
+import com.facturaflow.invoicing.application.port.in.GetCreditBalanceUseCase;
 import com.facturaflow.invoicing.application.port.in.GetInvoicePdfUseCase;
 import com.facturaflow.invoicing.application.port.in.GetInvoiceUseCase;
 import com.facturaflow.invoicing.application.port.in.IssueInvoiceCommand;
@@ -28,6 +29,9 @@ import com.facturaflow.invoicing.application.port.in.IssueInvoiceUseCase;
 import com.facturaflow.invoicing.application.port.out.InvoicePdf;
 import com.facturaflow.invoicing.domain.exception.InvalidIdentificationException;
 import com.facturaflow.invoicing.domain.exception.InvalidInvoiceStateTransitionException;
+import com.facturaflow.invoicing.domain.model.CreditBalance;
+import com.facturaflow.invoicing.domain.model.CreditNote;
+import com.facturaflow.invoicing.domain.model.CreditNoteFixtures;
 import com.facturaflow.invoicing.domain.model.DocumentType;
 import com.facturaflow.invoicing.domain.model.FiscalResponsibility;
 import com.facturaflow.invoicing.domain.model.Invoice;
@@ -99,6 +103,9 @@ class InvoiceControllerTest {
 
     @MockitoBean
     private GetInvoicePdfUseCase getInvoicePdf;
+
+    @MockitoBean
+    private GetCreditBalanceUseCase getCreditBalance;
 
     /** Factura de dos líneas: (2 x 50.000 - 10 %) con IVA 19 % + INC 8 %, y una excluida de 20.000. */
     private static Invoice invoice() {
@@ -352,6 +359,41 @@ class InvoiceControllerTest {
         assertThat(result).bodyJson().extractingPath("$.electronicDocument.validatedAt")
                 .isEqualTo("2026-10-20T15:30:00Z");
         assertThat(result).bodyJson().extractingPath("$.electronicDocument.officialTotalDiscrepancy").isEqualTo(true);
+    }
+
+    @Test
+    @DisplayName("una factura ISSUED muestra su CUFE, lo acreditado con notas crédito y el saldo por línea")
+    void issuedInvoiceIncludesCredits() {
+        Invoice issued = CreditNoteFixtures.issuedInvoiceToCredit();
+        CreditBalance empty = CreditBalance.of(issued, List.of());
+        CreditNote pendingNote = CreditNoteFixtures.partialReturn(empty, "DEV-1", CreditNoteFixtures.credit(1, "1"));
+        given(getInvoice.byId(issued.id().value())).willReturn(issued);
+        given(getCreditBalance.forInvoice(issued.id().value())).willReturn(CreditBalance.of(issued, List.of(pendingNote)));
+
+        MvcTestResult result = mvc.get().uri(URL + "/" + issued.id()).exchange();
+
+        assertThat(result).hasStatus(HttpStatus.OK);
+        assertThat(result).bodyJson().extractingPath("$.electronicDocument.cufe").asString().hasSize(96);
+        assertThat(result).bodyJson().extractingPath("$.status").isEqualTo("ISSUED");
+        assertThat(result).bodyJson().extractingPath("$.credits.issuedTotal").isEqualTo(0.0);
+        assertThat(result).bodyJson().extractingPath("$.credits.pendingTotal").isEqualTo(39158.33);
+        assertThat(result).bodyJson().extractingPath("$.credits.balance").isEqualTo(108316.68);
+        assertThat(result).bodyJson().extractingPath("$.credits.lines[0].lineNumber").isEqualTo(1);
+        assertThat(result).bodyJson().extractingPath("$.credits.lines[0].invoicedQuantity").isEqualTo(3.0);
+        assertThat(result).bodyJson().extractingPath("$.credits.lines[0].creditedQuantity").isEqualTo(1.0);
+        assertThat(result).bodyJson().extractingPath("$.credits.lines[0].remainingQuantity").isEqualTo(2.0);
+        assertThat(result).bodyJson().extractingPath("$.credits.lines[1].remainingQuantity").isEqualTo(1.5);
+    }
+
+    @Test
+    @DisplayName("una factura PENDING no muestra créditos ni consulta el saldo")
+    void pendingInvoiceHasNoCredits() {
+        given(getInvoice.byId(invoice().id().value())).willReturn(invoice());
+
+        MvcTestResult result = mvc.get().uri(URL + "/" + invoice().id()).exchange();
+
+        assertThat(result).bodyJson().doesNotHavePath("$.credits");
+        verifyNoInteractions(getCreditBalance);
     }
 
     @Test

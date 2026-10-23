@@ -7,6 +7,7 @@ Aceptado — 2026-10-21
 > **Notas posteriores:**
 > - Huella v2 (ADR 0007).
 > - **ADR 0008:** adaptador real de Factus, endpoint `GET /api/v1/invoices/{id}/pdf` con su fila `invoice-not-issued` en la tabla de la decisión 8, y `electronicDocument.pdfUrl` reemplazado por `qrUrl` y `publicUrl` (también en el proveedor falso). Las decisiones de este ADR no cambian.
+> - **ADR 0009:** notas crédito con los mismos patrones (idempotencia con huella, emisión fuera de transacción, proveedor falso con las mismas palabras de simulación) y sus filas en la tabla de la decisión 8. La respuesta de una factura ISSUED agrega `credits`. `CanonicalText` se extrajo de `InvoiceRequestHasher` sin cambiar la huella. Las decisiones de este ADR no cambian.
 
 ## Contexto
 
@@ -196,6 +197,12 @@ Las reglas de negocio (longitudes exactas, formato del código, DV del NIT, posi
 | `InvoiceNotIssuedException` (PDF de una factura no emitida, ADR 0008) | 409 | `invoice-not-issued` |
 | `InvoiceConcurrentModificationException` | 409 | `concurrent-modification` |
 | `InvalidInvoiceStateTransitionException` | 409 | `invalid-state-transition` |
+| `CreditNoteNotFoundException` (ADR 0009) | 404 | `credit-note-not-found` |
+| `CreditNoteReferenceCodeConflictException` / `DuplicateCreditNoteReferenceCodeException` (ADR 0009) | 409 | `credit-note-reference-code-conflict` |
+| `CreditNoteAlreadyRejectedException` (ADR 0009) | 409 | `credit-note-already-rejected` |
+| `CreditNoteNotIssuedException` (PDF de una nota no emitida, ADR 0009) | 409 | `credit-note-not-issued` |
+| `CreditNoteConcurrentModificationException` (ADR 0009) | 409 | `concurrent-modification` |
+| `InvoiceNotCreditableException` (dominio: acreditar una factura que no está ISSUED, ADR 0009) | 409 | `invoice-not-issued` |
 | Otra `DomainException` | 422 | `business-rule-violation` |
 | `ElectronicInvoiceProviderUnavailableException` | 503 + `Retry-After: 30` | `provider-unavailable` |
 | Cualquier otra excepción | 500 | `internal-error` |

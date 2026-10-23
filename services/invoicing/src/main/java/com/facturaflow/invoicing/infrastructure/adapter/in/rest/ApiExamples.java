@@ -78,6 +78,25 @@ final class ApiExamples {
             }
             """;
 
+    /** Devuelve 1 de las 2 unidades de la línea 1 (p. ej. de la factura "Contado con IVA"). */
+    static final String PARTIAL_RETURN = """
+            {
+              "referenceCode": "DEV-2026-0001",
+              "reason": "PARTIAL_RETURN",
+              "lines": [ { "lineNumber": 1, "quantity": 1 } ],
+              "observation": "El cliente devolvió un teclado"
+            }
+            """;
+
+    /** Anula la factura: acredita todo lo que aún no se ha acreditado. No lleva líneas. */
+    static final String TOTAL_ANNULMENT = """
+            {
+              "referenceCode": "ANU-2026-0001",
+              "reason": "TOTAL_ANNULMENT",
+              "observation": "Venta anulada por error en el pedido"
+            }
+            """;
+
     private ApiExamples() {
     }
 }

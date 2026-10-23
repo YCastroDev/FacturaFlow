@@ -8,11 +8,7 @@ import com.facturaflow.invoicing.domain.model.LineTax;
 import com.facturaflow.invoicing.domain.model.Municipality;
 import com.facturaflow.invoicing.domain.model.PaymentTerms;
 import com.facturaflow.invoicing.domain.model.PhoneNumber;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.Comparator;
-import java.util.HexFormat;
 import java.util.List;
 
 /**
@@ -26,9 +22,8 @@ import java.util.List;
  * <p>Las líneas conservan su orden (definen la numeración del documento); los impuestos de
  * cada línea se ordenan por tipo (su orden no significa nada).
  *
- * <p>Codificación canónica: cada valor con su longitud delante ({@code len:valor;}) y
- * {@code ~;} para {@code null}, así ninguna concatenación es ambigua. El prefijo de versión
- * permite cambiar el formato en el futuro sabiendo con cuál se calculó cada huella.
+ * <p>Codificación canónica: la de {@link CanonicalText}. El prefijo de versión permite cambiar
+ * el formato en el futuro sabiendo con cuál se calculó cada huella.
  */
 final class InvoiceRequestHasher {
 
@@ -42,11 +37,11 @@ final class InvoiceRequestHasher {
     }
 
     static RequestHash hash(InvoiceContent content) {
-        return new RequestHash(HexFormat.of().formatHex(sha256(canonicalForm(content))));
+        return CanonicalText.sha256(canonicalForm(content));
     }
 
     static String canonicalForm(InvoiceContent content) {
-        Canonical out = new Canonical();
+        CanonicalText out = new CanonicalText();
         out.add(FORMAT_VERSION);
 
         CustomerSnapshot customer = content.customer();
@@ -97,31 +92,5 @@ final class InvoiceRequestHasher {
             }
         }
         return out.toString();
-    }
-
-    private static byte[] sha256(String text) {
-        try {
-            return MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8));
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("La JVM no ofrece SHA-256", e);   // obligatorio en toda JVM
-        }
-    }
-
-    private static final class Canonical {
-
-        private final StringBuilder text = new StringBuilder();
-
-        void add(String value) {
-            if (value == null) {
-                text.append("~;");
-            } else {
-                text.append(value.length()).append(':').append(value).append(';');
-            }
-        }
-
-        @Override
-        public String toString() {
-            return text.toString();
-        }
     }
 }

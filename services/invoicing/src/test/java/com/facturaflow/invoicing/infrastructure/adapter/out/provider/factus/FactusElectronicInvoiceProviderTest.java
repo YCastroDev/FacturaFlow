@@ -129,7 +129,7 @@ class FactusElectronicInvoiceProviderTest {
         ElectronicDocument document = issuedDocument(provider.issue(cash()));
 
         assertThat(document.number()).isEqualTo(NUMBER);
-        assertThat(document.cufe()).hasSize(96).startsWith("308970cce2ea");
+        assertThat(document.uniqueCode()).hasSize(96).startsWith("308970cce2ea");
         assertThat(document.qrUrl().toString()).startsWith("https://catalogo-vpfe-hab.dian.gov.co/document/searchqr");
         assertThat(document.publicUrl()).hasToString("https://app-sandbox.factus.com.co/documents/bills/0000test0000cash");
         // "21-10-2026 01:35:11 PM" es hora de Colombia (UTC-5)

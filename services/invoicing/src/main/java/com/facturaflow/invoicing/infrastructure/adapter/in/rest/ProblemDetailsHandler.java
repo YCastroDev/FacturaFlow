@@ -1,5 +1,11 @@
 package com.facturaflow.invoicing.infrastructure.adapter.in.rest;
 
+import com.facturaflow.invoicing.application.exception.CreditNoteAlreadyRejectedException;
+import com.facturaflow.invoicing.application.exception.CreditNoteConcurrentModificationException;
+import com.facturaflow.invoicing.application.exception.CreditNoteNotFoundException;
+import com.facturaflow.invoicing.application.exception.CreditNoteNotIssuedException;
+import com.facturaflow.invoicing.application.exception.CreditNoteReferenceCodeConflictException;
+import com.facturaflow.invoicing.application.exception.DuplicateCreditNoteReferenceCodeException;
 import com.facturaflow.invoicing.application.exception.DuplicateReferenceCodeException;
 import com.facturaflow.invoicing.application.exception.ElectronicInvoiceProviderUnavailableException;
 import com.facturaflow.invoicing.application.exception.InvoiceAlreadyRejectedException;
@@ -9,6 +15,7 @@ import com.facturaflow.invoicing.application.exception.InvoiceNotIssuedException
 import com.facturaflow.invoicing.application.exception.ReferenceCodeConflictException;
 import com.facturaflow.invoicing.domain.exception.DomainException;
 import com.facturaflow.invoicing.domain.exception.InvalidInvoiceStateTransitionException;
+import com.facturaflow.invoicing.domain.exception.InvoiceNotCreditableException;
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
@@ -133,8 +140,8 @@ class ProblemDetailsHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(InvoiceConcurrentModificationException.class)
     ProblemDetail concurrentModification(InvoiceConcurrentModificationException ex) {
         return problem(HttpStatus.CONFLICT, "concurrent-modification", "Modificación concurrente",
-                "La factura " + ex.invoiceId() + " fue modificada por otra petición al mismo tiempo. "
-                        + "Consúltela de nuevo antes de reintentar.");
+                "La factura " + ex.invoiceId() + " fue modificada por otra petición al mismo tiempo (p. ej. "
+                        + "otra nota crédito sobre ella). Consúltela de nuevo antes de reintentar.");
     }
 
     /** Red de seguridad: el caso de uso de creación ya la resuelve; no debería llegar aquí. */
@@ -142,6 +149,49 @@ class ProblemDetailsHandler extends ResponseEntityExceptionHandler {
     ProblemDetail duplicateReferenceCode(DuplicateReferenceCodeException ex) {
         return problem(HttpStatus.CONFLICT, "reference-code-conflict", "Código de referencia en uso",
                 "Ya existe una factura con el código de referencia '" + ex.referenceCode() + "'.");
+    }
+
+    // ----- Notas crédito (ADR 0009) -----
+
+    @ExceptionHandler(CreditNoteNotFoundException.class)
+    ProblemDetail creditNoteNotFound(CreditNoteNotFoundException ex) {
+        return problem(HttpStatus.NOT_FOUND, "credit-note-not-found", "Nota crédito no encontrada", ex.getMessage());
+    }
+
+    @ExceptionHandler(CreditNoteReferenceCodeConflictException.class)
+    ProblemDetail creditNoteReferenceCodeConflict(CreditNoteReferenceCodeConflictException ex) {
+        return problem(HttpStatus.CONFLICT, "credit-note-reference-code-conflict", "Código de referencia en uso",
+                ex.getMessage());
+    }
+
+    /** Red de seguridad: el caso de uso de creación ya la resuelve; no debería llegar aquí. */
+    @ExceptionHandler(DuplicateCreditNoteReferenceCodeException.class)
+    ProblemDetail duplicateCreditNoteReferenceCode(DuplicateCreditNoteReferenceCodeException ex) {
+        return problem(HttpStatus.CONFLICT, "credit-note-reference-code-conflict", "Código de referencia en uso",
+                "Ya existe una nota crédito con el código de referencia '" + ex.referenceCode() + "'.");
+    }
+
+    @ExceptionHandler(CreditNoteAlreadyRejectedException.class)
+    ProblemDetail creditNoteAlreadyRejected(CreditNoteAlreadyRejectedException ex) {
+        return problem(HttpStatus.CONFLICT, "credit-note-already-rejected", "Nota crédito rechazada", ex.getMessage());
+    }
+
+    @ExceptionHandler(CreditNoteNotIssuedException.class)
+    ProblemDetail creditNoteNotIssued(CreditNoteNotIssuedException ex) {
+        return problem(HttpStatus.CONFLICT, "credit-note-not-issued", "Nota crédito no emitida", ex.getMessage());
+    }
+
+    @ExceptionHandler(CreditNoteConcurrentModificationException.class)
+    ProblemDetail creditNoteConcurrentModification(CreditNoteConcurrentModificationException ex) {
+        return problem(HttpStatus.CONFLICT, "concurrent-modification", "Modificación concurrente",
+                "La nota crédito " + ex.creditNoteId() + " fue modificada por otra petición al mismo tiempo. "
+                        + "Consúltela de nuevo antes de reintentar.");
+    }
+
+    /** Acreditar una factura que no está ISSUED es un conflicto con su estado, como descargar su PDF. */
+    @ExceptionHandler(InvoiceNotCreditableException.class)
+    ProblemDetail invoiceNotCreditable(InvoiceNotCreditableException ex) {
+        return problem(HttpStatus.CONFLICT, "invoice-not-issued", "Factura no emitida", ex.getMessage());
     }
 
     /** Un cambio de estado no permitido es un conflicto con el estado actual, no un dato inválido. */
@@ -166,8 +216,8 @@ class ProblemDetailsHandler extends ResponseEntityExceptionHandler {
         LOG.warn("Proveedor de facturación no disponible: {}", ex.getMessage(), ex.getCause());
         ProblemDetail problem = problem(HttpStatus.SERVICE_UNAVAILABLE, "provider-unavailable",
                 "Proveedor no disponible",
-                "El proveedor de facturación electrónica no está disponible. La factura sigue PENDING; "
-                        + "reintente la emisión más tarde.");
+                "El proveedor de facturación electrónica no está disponible. " + ex.document().subject()
+                        + " sigue PENDING; reintente la emisión más tarde.");
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                 .header(HttpHeaders.RETRY_AFTER, RETRY_AFTER_SECONDS)
                 .body(problem);

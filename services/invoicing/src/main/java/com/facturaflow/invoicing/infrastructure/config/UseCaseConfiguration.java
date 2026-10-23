@@ -1,14 +1,26 @@
 package com.facturaflow.invoicing.infrastructure.config;
 
+import com.facturaflow.invoicing.application.port.in.CreateCreditNoteUseCase;
 import com.facturaflow.invoicing.application.port.in.CreateInvoiceUseCase;
+import com.facturaflow.invoicing.application.port.in.GetCreditBalanceUseCase;
+import com.facturaflow.invoicing.application.port.in.GetCreditNotePdfUseCase;
+import com.facturaflow.invoicing.application.port.in.GetCreditNoteUseCase;
 import com.facturaflow.invoicing.application.port.in.GetInvoicePdfUseCase;
 import com.facturaflow.invoicing.application.port.in.GetInvoiceUseCase;
+import com.facturaflow.invoicing.application.port.in.IssueCreditNoteUseCase;
 import com.facturaflow.invoicing.application.port.in.IssueInvoiceUseCase;
+import com.facturaflow.invoicing.application.port.out.CreditNoteRepository;
+import com.facturaflow.invoicing.application.port.out.ElectronicCreditNoteProvider;
 import com.facturaflow.invoicing.application.port.out.ElectronicInvoiceProvider;
 import com.facturaflow.invoicing.application.port.out.InvoiceRepository;
+import com.facturaflow.invoicing.application.service.CreateCreditNoteService;
 import com.facturaflow.invoicing.application.service.CreateInvoiceService;
+import com.facturaflow.invoicing.application.service.GetCreditBalanceService;
+import com.facturaflow.invoicing.application.service.GetCreditNotePdfService;
+import com.facturaflow.invoicing.application.service.GetCreditNoteService;
 import com.facturaflow.invoicing.application.service.GetInvoicePdfService;
 import com.facturaflow.invoicing.application.service.GetInvoiceService;
+import com.facturaflow.invoicing.application.service.IssueCreditNoteService;
 import com.facturaflow.invoicing.application.service.IssueInvoiceService;
 import java.time.Clock;
 import org.springframework.context.annotation.Bean;
@@ -40,5 +52,35 @@ class UseCaseConfiguration {
     @Bean
     GetInvoicePdfUseCase getInvoicePdfUseCase(InvoiceRepository repository, ElectronicInvoiceProvider provider) {
         return new GetInvoicePdfService(repository, provider);
+    }
+
+    // ----- Notas crédito (ADR 0009) -----
+
+    @Bean
+    CreateCreditNoteUseCase createCreditNoteUseCase(InvoiceRepository invoices, CreditNoteRepository creditNotes,
+                                                    Clock clock) {
+        return new CreateCreditNoteService(invoices, creditNotes, clock);
+    }
+
+    @Bean
+    GetCreditNoteUseCase getCreditNoteUseCase(InvoiceRepository invoices, CreditNoteRepository creditNotes) {
+        return new GetCreditNoteService(invoices, creditNotes);
+    }
+
+    @Bean
+    IssueCreditNoteUseCase issueCreditNoteUseCase(InvoiceRepository invoices, CreditNoteRepository creditNotes,
+                                                  ElectronicCreditNoteProvider provider) {
+        return new IssueCreditNoteService(invoices, creditNotes, provider);
+    }
+
+    @Bean
+    GetCreditNotePdfUseCase getCreditNotePdfUseCase(CreditNoteRepository creditNotes,
+                                                    ElectronicCreditNoteProvider provider) {
+        return new GetCreditNotePdfService(creditNotes, provider);
+    }
+
+    @Bean
+    GetCreditBalanceUseCase getCreditBalanceUseCase(InvoiceRepository invoices, CreditNoteRepository creditNotes) {
+        return new GetCreditBalanceService(invoices, creditNotes);
     }
 }

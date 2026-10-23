@@ -4,9 +4,10 @@ import com.facturaflow.invoicing.domain.model.ElectronicDocument;
 import java.util.Objects;
 
 /**
- * Respuesta de NEGOCIO del proveedor a una solicitud de emisión: la factura quedó emitida
- * o fue rechazada. Ambas son respuestas válidas. Las fallas técnicas (proveedor caído,
- * timeout) no son un resultado: son {@code ElectronicInvoiceProviderUnavailableException}.
+ * Respuesta de NEGOCIO del proveedor a una solicitud de emisión (de una factura o de una nota
+ * crédito): el documento quedó emitido o fue rechazado. Ambas son respuestas válidas. Las fallas
+ * técnicas (proveedor caído, timeout) no son un resultado: son
+ * {@code ElectronicInvoiceProviderUnavailableException}.
  *
  * <p>Al ser {@code sealed}, un {@code switch} sobre el resultado no necesita {@code default}
  * y el compilador avisa si algún día aparece un caso nuevo.

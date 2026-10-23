@@ -58,7 +58,7 @@ class FactusSandboxTest {
 
         assertThat(first).isInstanceOf(IssuanceResult.Issued.class);
         ElectronicDocument document = ((IssuanceResult.Issued) first).document();
-        assertThat(document.cufe()).hasSize(96);
+        assertThat(document.uniqueCode()).hasSize(96);
         assertThat(document.officialTotal()).isEqualTo(invoice.total());
 
         // Idempotencia de Factus: el mismo reference_code devuelve el mismo documento (no crea otro).

@@ -83,6 +83,19 @@ final class InMemoryInvoiceRepository implements InvoiceRepository {
         return copy(stored, readVersion + 1);
     }
 
+    /**
+     * Lo que hace el adaptador JPA al insertar una nota crédito: sube la versión de la factura solo
+     * si sigue siendo {@code expectedVersion} (ADR 0009). Devuelve si la subió.
+     */
+    boolean incrementVersion(InvoiceId id, long expectedVersion) {
+        Row current = rows.get(id);
+        if (current == null || current.invoice().version().orElseThrow() != expectedVersion) {
+            return false;
+        }
+        rows.put(id, new Row(copy(current.invoice(), expectedVersion + 1), current.requestHash()));
+        return true;
+    }
+
     @Override
     public Optional<Invoice> findById(InvoiceId id) {
         return Optional.ofNullable(rows.get(id)).map(row -> copy(row.invoice(), row.invoice().version().orElseThrow()));

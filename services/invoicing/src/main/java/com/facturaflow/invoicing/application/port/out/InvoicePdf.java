@@ -4,7 +4,8 @@ import java.util.Locale;
 import java.util.regex.Pattern;
 
 /**
- * Representación gráfica (PDF) de una factura emitida, tal como la entrega el proveedor.
+ * Representación gráfica (PDF) de un documento emitido (factura o nota crédito), tal como la
+ * entrega el proveedor.
  * {@code fileName} se normaliza a caracteres seguros para un header HTTP y termina en {@code .pdf}.
  * El arreglo no se copia: quien lo recibe no debe modificarlo.
  */

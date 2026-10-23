@@ -1,6 +1,7 @@
 package com.facturaflow.invoicing.infrastructure.adapter.in.rest;
 
 import com.facturaflow.invoicing.application.port.in.CreateInvoiceCommand;
+import com.facturaflow.invoicing.domain.model.CreditBalance;
 import com.facturaflow.invoicing.domain.model.CustomerSnapshot;
 import com.facturaflow.invoicing.domain.model.Invoice;
 import com.facturaflow.invoicing.domain.model.InvoiceLine;
@@ -76,6 +77,11 @@ final class InvoiceRestMapper {
     }
 
     static InvoiceResponse toResponse(Invoice invoice) {
+        return toResponse(invoice, null);
+    }
+
+    /** @param credits saldo de notas crédito de una factura ISSUED, o {@code null} para omitirlo */
+    static InvoiceResponse toResponse(Invoice invoice, CreditBalance credits) {
         CustomerSnapshot customer = invoice.customer();
         return new InvoiceResponse(
                 invoice.id().value(),
@@ -110,14 +116,34 @@ final class InvoiceRestMapper {
                 invoice.electronicDocument()
                         .map(document -> new InvoiceResponse.ElectronicDocument(
                                 document.number(),
-                                document.cufe(),
+                                document.uniqueCode(),
                                 document.qrUrl().toString(),
                                 document.publicUrl().toString(),
                                 document.validatedAt(),
                                 amount(document.officialTotal()),
                                 invoice.hasOfficialTotalDiscrepancy()))
                         .orElse(null),
-                invoice.rejectionReason().orElse(null));
+                invoice.rejectionReason().orElse(null),
+                credits == null ? null : toCredits(credits));
+    }
+
+    private static InvoiceResponse.Credits toCredits(CreditBalance balance) {
+        return new InvoiceResponse.Credits(
+                amount(balance.issuedCreditTotal()),
+                amount(balance.pendingCreditTotal()),
+                amount(balance.remainingValue()),
+                balance.lines().stream()
+                        .map(line -> new InvoiceResponse.CreditedLine(line.lineNumber(), line.invoiced().value(),
+                                line.credited(), line.remaining()))
+                        .toList());
+    }
+
+    /** Impuestos de una línea con su valor; lo reutilizan las líneas de las notas crédito. */
+    static List<InvoiceResponse.LineTax> toLineTaxes(InvoiceLine line) {
+        return line.taxes().stream()
+                .map(tax -> new InvoiceResponse.LineTax(ApiTaxType.from(tax.type()), tax.rate().percent(),
+                        amount(line.taxAmount(tax.type()))))
+                .toList();
     }
 
     private static InvoiceResponse.Line toResponseLine(int lineNumber, InvoiceLine line) {
@@ -130,10 +156,7 @@ final class InvoiceRestMapper {
                 line.discountRate().percent(),
                 ApiUnitOfMeasure.from(line.unit()),
                 line.excluded(),
-                line.taxes().stream()
-                        .map(tax -> new InvoiceResponse.LineTax(ApiTaxType.from(tax.type()), tax.rate().percent(),
-                                amount(line.taxAmount(tax.type()))))
-                        .toList(),
+                toLineTaxes(line),
                 amount(line.grossAmount()),
                 amount(line.discountAmount()),
                 amount(line.taxableAmount()),
@@ -156,7 +179,7 @@ final class InvoiceRestMapper {
                 amount(invoice.total()));
     }
 
-    private static BigDecimal amount(Money money) {
+    static BigDecimal amount(Money money) {
         return money.amount();
     }
 }

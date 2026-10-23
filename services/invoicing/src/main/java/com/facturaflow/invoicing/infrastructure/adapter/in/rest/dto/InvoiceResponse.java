@@ -26,7 +26,9 @@ public record InvoiceResponse(
         List<Line> lines,
         Totals totals,
         @Schema(description = "Solo si la factura está ISSUED") ElectronicDocument electronicDocument,
-        @Schema(description = "Solo si la factura está REJECTED") String rejectionReason) {
+        @Schema(description = "Solo si la factura está REJECTED") String rejectionReason,
+        @Schema(description = "Solo si la factura está ISSUED: lo acreditado con notas crédito y el saldo")
+        Credits credits) {
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record Customer(ApiDocumentType documentType, String documentNumber, Integer checkDigit,
@@ -86,5 +88,23 @@ public record InvoiceResponse(
             @Schema(description = "Total con validez legal, informado por el proveedor") BigDecimal officialTotal,
             @Schema(description = "true si el total oficial difiere del calculado; debe investigarse")
             boolean officialTotalDiscrepancy) {
+    }
+
+    /**
+     * Notas crédito de una factura ISSUED (ADR 0009). La factura no cambia de estado al acreditarse;
+     * aquí se ve cuánto se acreditó y cuánto queda. La regla se aplica en cantidades por línea.
+     */
+    @Schema(description = "Lo acreditado con notas crédito (las REJECTED no cuentan) y lo que queda por acreditar")
+    public record Credits(
+            @Schema(description = "Total de las notas ISSUED") BigDecimal issuedTotal,
+            @Schema(description = "Total de las notas PENDING: ya reservado, aún sin emitir") BigDecimal pendingTotal,
+            @Schema(description = "Saldo: valor de las cantidades que aún se pueden acreditar (con el redondeo por "
+                    + "línea; puede diferir en centavos de total - acreditado)") BigDecimal balance,
+            List<CreditedLine> lines) {
+    }
+
+    @Schema(description = "Cantidades de una línea: facturada, acreditada (notas PENDING e ISSUED) y por acreditar")
+    public record CreditedLine(int lineNumber, BigDecimal invoicedQuantity, BigDecimal creditedQuantity,
+                               BigDecimal remainingQuantity) {
     }
 }

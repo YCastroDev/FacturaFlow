@@ -158,7 +158,7 @@ class InvoicePersistenceMapperTest {
         mapper.applyMutableState(original, entity);
 
         assertThat(entity.status).isEqualTo("ISSUED");
-        assertThat(entity.edocCufe).isEqualTo(original.electronicDocument().orElseThrow().cufe());
+        assertThat(entity.edocUniqueCode).isEqualTo(original.electronicDocument().orElseThrow().uniqueCode());
         assertThat(entity.lines).isSameAs(linesBefore);
     }
 }

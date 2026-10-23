@@ -42,7 +42,22 @@ Con el entorno levantado, abre **http://localhost:8081/swagger-ui.html**. Para p
 2. **Repetir** la misma petición: responde `200` con la misma factura, sin crear otra. Si cambias cualquier dato y mantienes el `referenceCode`, responde `409`.
 3. **Emitir** (`POST /api/v1/invoices/{id}/issue`) con el `id` de la respuesta. La factura emitida trae su número, el CUFE, `qrUrl` (consulta en la DIAN) y `publicUrl` (vista pública en el proveedor).
 4. **Descargar el PDF** (`GET /api/v1/invoices/{id}/pdf`): solo para facturas `ISSUED` (si no, `409`).
-5. **Consultar** por id (`GET /api/v1/invoices/{id}`) o por código (`GET /api/v1/invoices?referenceCode=...`).
+5. **Consultar** por id (`GET /api/v1/invoices/{id}`) o por código (`GET /api/v1/invoices?referenceCode=...`). Una factura `ISSUED` trae `credits`: lo acreditado con notas crédito y el saldo por línea.
+
+### Notas crédito (sección *Notas crédito*)
+
+Corrigen una factura `ISSUED` sin cambiar su estado ([ADR 0009](docs/adr/0009-notas-credito.md)):
+
+1. **Crear** (`POST /api/v1/invoices/{id}/credit-notes`) con uno de los ejemplos:
+   - *Devolución parcial*: líneas y cantidades;
+   - *Anulación total*: sin líneas, acredita todo lo que queda.
+   
+   El cliente, los precios y los impuestos salen de la factura. Si se pide más de lo que queda por acreditar, responde `422`. Es idempotente por `referenceCode`, como la factura.
+2. **Emitir** (`POST /api/v1/credit-notes/{id}/issue`): la nota emitida trae su número y su CUDE.
+3. **Consultar el saldo** en `GET /api/v1/invoices/{id}` → `credits`.
+4. **Descargar el PDF** (`GET /api/v1/credit-notes/{id}/pdf`).
+
+Las notas de una factura se listan con `GET /api/v1/invoices/{id}/credit-notes`. Una nota `PENDING` ya reserva sus cantidades; una `REJECTED` las libera.
 
 La especificación OpenAPI está en http://localhost:8081/v3/api-docs. Los errores siguen el formato Problem Details (RFC 9457).
 
@@ -61,21 +76,21 @@ Para usar Factus, pon `INVOICING_PROVIDER=factus` en `.env`, o pásalo solo para
 INVOICING_PROVIDER=factus docker compose --env-file .env -f infra/docker-compose.yml up --build -d
 ```
 
-Si falta una credencial, el servicio no arranca y el log dice cuál. Opcionales: `FACTUS_SEND_EMAIL` (por defecto `false`; en el sandbox, déjalo así) y `FACTUS_NUMBERING_RANGE_ID` (vacío = el rango por defecto de la cuenta). Con Factus, `SIMULAR_RECHAZO` y `SIMULAR_CAIDA` no tienen efecto: los rechazos y las caídas son reales.
+Si falta una credencial, el servicio no arranca y el log dice cuál. Opcionales: `FACTUS_SEND_EMAIL` (por defecto `false`; en el sandbox, déjalo así) y `FACTUS_NUMBERING_RANGE_ID` (vacío = el rango por defecto de la cuenta). Con Factus, `SIMULAR_RECHAZO` y `SIMULAR_CAIDA` no tienen efecto: los rechazos y las caídas son reales. Las notas crédito con Factus aún no están implementadas: se pueden crear, pero emitirlas responde `503`.
 
 ### Proveedor de facturación falso
 
-Con `INVOICING_PROVIDER=fake` (el valor por defecto) la emisión usa un proveedor **simulado**. Su comportamiento depende de la **observación** de la factura:
+Con `INVOICING_PROVIDER=fake` (el valor por defecto) la emisión usa un proveedor **simulado**. Su comportamiento depende de la **observación** del documento que se emite (factura o nota crédito):
 
 | La observación contiene | Resultado de `POST /{id}/issue` |
 |---|---|
-| `SIMULAR_RECHAZO` | `200` con la factura `REJECTED` y un motivo de ejemplo |
-| `SIMULAR_CAIDA` | `503` con `Retry-After`; la factura sigue `PENDING` y se puede reintentar |
-| ninguna de las dos | `200` con la factura `ISSUED` |
+| `SIMULAR_RECHAZO` | `200` con el documento `REJECTED` y un motivo de ejemplo |
+| `SIMULAR_CAIDA` | `503` con `Retry-After`; el documento sigue `PENDING` y se puede reintentar |
+| ninguna de las dos | `200` con el documento `ISSUED` |
 
 Una emisión "exitosa" del proveedor falso **no tiene validez ante la DIAN**:
-- el número es `FAKE-<referenceCode>`;
-- el CUFE empieza con 16 ceros;
+- el número es `FAKE-<referenceCode>` (`FAKE-NC-<referenceCode>` en las notas);
+- el CUFE (o el CUDE) empieza con 16 ceros;
 - `qrUrl` y `publicUrl` apuntan a `https://fake-provider.invalid/...`, un dominio reservado que nunca resuelve;
 - el PDF es un documento mínimo que dice "DOCUMENTO FALSO - SIN VALIDEZ".
 

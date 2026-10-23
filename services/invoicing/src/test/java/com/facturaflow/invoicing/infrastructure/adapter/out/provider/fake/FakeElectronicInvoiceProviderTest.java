@@ -10,6 +10,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.facturaflow.invoicing.application.exception.ElectronicInvoiceProviderUnavailableException;
 import com.facturaflow.invoicing.application.port.out.InvoicePdf;
 import com.facturaflow.invoicing.application.port.out.IssuanceResult;
+import com.facturaflow.invoicing.domain.model.CreditBalance;
+import com.facturaflow.invoicing.domain.model.CreditNote;
+import com.facturaflow.invoicing.domain.model.CreditNoteFixtures;
+import com.facturaflow.invoicing.domain.model.CreditNoteId;
+import com.facturaflow.invoicing.domain.model.CreditNoteReason;
 import com.facturaflow.invoicing.domain.model.ElectronicDocument;
 import com.facturaflow.invoicing.domain.model.Invoice;
 import com.facturaflow.invoicing.domain.model.InvoiceId;
@@ -49,7 +54,7 @@ class FakeElectronicInvoiceProviderTest {
         assertThat(result).isInstanceOf(IssuanceResult.Issued.class);
         ElectronicDocument document = ((IssuanceResult.Issued) result).document();
         assertThat(document.number()).isEqualTo("FAKE-VENTA-7");
-        assertThat(document.cufe()).hasSize(96).startsWith(FakeElectronicInvoiceProvider.FAKE_CUFE_MARK);
+        assertThat(document.uniqueCode()).hasSize(96).startsWith(FakeElectronicInvoiceProvider.FAKE_CUFE_MARK);
         assertThat(document.qrUrl()).hasToString("https://fake-provider.invalid/qr/FAKE-VENTA-7");
         assertThat(document.publicUrl()).hasToString("https://fake-provider.invalid/invoices/FAKE-VENTA-7");
         assertThat(document.validatedAt()).isEqualTo(NOW);
@@ -67,9 +72,9 @@ class FakeElectronicInvoiceProviderTest {
     void isDeterministic() {
         Invoice invoice = invoice(null);
 
-        String first = ((IssuanceResult.Issued) provider.issue(invoice)).document().cufe();
-        String again = ((IssuanceResult.Issued) provider.issue(invoice)).document().cufe();
-        String other = ((IssuanceResult.Issued) provider.issue(invoice(null))).document().cufe();
+        String first = ((IssuanceResult.Issued) provider.issue(invoice)).document().uniqueCode();
+        String again = ((IssuanceResult.Issued) provider.issue(invoice)).document().uniqueCode();
+        String other = ((IssuanceResult.Issued) provider.issue(invoice(null))).document().uniqueCode();
 
         assertThat(again).isEqualTo(first);
         assertThat(other).isNotEqualTo(first);
@@ -120,6 +125,54 @@ class FakeElectronicInvoiceProviderTest {
     }
 
     /** Cada entrada de la tabla xref debe apuntar exactamente al inicio de su objeto, y startxref a la tabla. */
+    // ----- Notas crédito (ADR 0009) -----
+
+    private static CreditNote creditNote(String observation) {
+        Invoice invoice = CreditNoteFixtures.issuedInvoiceToCredit();
+        return CreditNote.create(CreditNoteId.generate(), new ReferenceCode("DEV-7"),
+                CreditBalance.of(invoice, List.of()), CreditNoteReason.PARTIAL_RETURN,
+                List.of(CreditNoteFixtures.credit(1, "1")), ISSUE_DATE.plusDays(1), observation);
+    }
+
+    @Test
+    @DisplayName("una nota crédito se emite con datos falsos propios (FAKE-NC-) y su total como total oficial")
+    void issuesFakeCreditNote() {
+        CreditNote note = creditNote("Devolución");
+
+        IssuanceResult result = provider.issue(note, CreditNoteFixtures.issuedInvoiceToCredit());
+
+        ElectronicDocument document = ((IssuanceResult.Issued) result).document();
+        assertThat(document.number()).isEqualTo("FAKE-NC-DEV-7");
+        assertThat(document.uniqueCode()).hasSize(96).startsWith(FakeElectronicInvoiceProvider.FAKE_CUFE_MARK);
+        assertThat(document.officialTotal()).isEqualTo(note.total());
+    }
+
+    @Test
+    @DisplayName("la observación de la NOTA controla la simulación: SIMULAR_RECHAZO rechaza y SIMULAR_CAIDA falla")
+    void simulatesOnCreditNotes() {
+        Invoice invoice = CreditNoteFixtures.issuedInvoiceToCredit();
+
+        assertThat(provider.issue(creditNote("SIMULAR_RECHAZO"), invoice)).isInstanceOf(IssuanceResult.Rejected.class);
+        CreditNote outage = creditNote("SIMULAR_CAIDA");
+        assertThatThrownBy(() -> provider.issue(outage, invoice))
+                .isInstanceOf(ElectronicInvoiceProviderUnavailableException.class)
+                .hasMessageContaining("nota crédito " + outage.id());
+    }
+
+    @Test
+    @DisplayName("el PDF falso de una nota emitida la identifica como nota crédito")
+    void downloadsFakeCreditNotePdf() {
+        CreditNote note = creditNote(null);
+        note.markAsIssued(((IssuanceResult.Issued) provider.issue(note, CreditNoteFixtures.issuedInvoiceToCredit()))
+                .document());
+
+        InvoicePdf pdf = provider.downloadPdf(note);
+
+        assertThat(pdf.fileName()).isEqualTo("FAKE-NC-DEV-7.pdf");
+        assertThat(new String(pdf.content(), StandardCharsets.US_ASCII)).startsWith("%PDF-1.4")
+                .contains("Nota credito FAKE-NC-DEV-7", "DOCUMENTO FALSO - SIN VALIDEZ");
+    }
+
     private static void assertXrefPointsToObjects(String pdf) {
         int xref = pdf.indexOf("xref\n");
         Matcher startXref = Pattern.compile("startxref\n(\\d+)\n").matcher(pdf);

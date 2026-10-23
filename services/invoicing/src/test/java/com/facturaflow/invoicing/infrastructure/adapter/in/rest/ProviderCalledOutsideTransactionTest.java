@@ -4,14 +4,23 @@ import static com.facturaflow.invoicing.domain.model.InvoiceFixtures.electronicD
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.facturaflow.invoicing.TestcontainersConfiguration;
+import com.facturaflow.invoicing.application.port.in.CreateCreditNoteCommand;
+import com.facturaflow.invoicing.application.port.in.CreateCreditNoteUseCase;
 import com.facturaflow.invoicing.application.port.in.CreateInvoiceCommand;
 import com.facturaflow.invoicing.application.port.in.CreateInvoiceUseCase;
+import com.facturaflow.invoicing.application.port.in.GetCreditNotePdfUseCase;
 import com.facturaflow.invoicing.application.port.in.GetInvoicePdfUseCase;
+import com.facturaflow.invoicing.application.port.in.IssueCreditNoteCommand;
+import com.facturaflow.invoicing.application.port.in.IssueCreditNoteUseCase;
 import com.facturaflow.invoicing.application.port.in.IssueInvoiceCommand;
 import com.facturaflow.invoicing.application.port.in.IssueInvoiceUseCase;
+import com.facturaflow.invoicing.application.port.out.ElectronicCreditNoteProvider;
 import com.facturaflow.invoicing.application.port.out.ElectronicInvoiceProvider;
 import com.facturaflow.invoicing.application.port.out.InvoicePdf;
 import com.facturaflow.invoicing.application.port.out.IssuanceResult;
+import com.facturaflow.invoicing.domain.model.CreditNote;
+import com.facturaflow.invoicing.domain.model.CreditNoteReason;
+import com.facturaflow.invoicing.domain.model.CreditNoteStatus;
 import com.facturaflow.invoicing.domain.model.DocumentType;
 import com.facturaflow.invoicing.domain.model.FiscalResponsibility;
 import com.facturaflow.invoicing.domain.model.Invoice;
@@ -56,6 +65,15 @@ class ProviderCalledOutsideTransactionTest {
     private GetInvoicePdfUseCase getInvoicePdf;
 
     @Autowired
+    private CreateCreditNoteUseCase createCreditNote;
+
+    @Autowired
+    private IssueCreditNoteUseCase issueCreditNote;
+
+    @Autowired
+    private GetCreditNotePdfUseCase getCreditNotePdf;
+
+    @Autowired
     private RecordingProvider provider;
 
     @Autowired
@@ -71,7 +89,8 @@ class ProviderCalledOutsideTransactionTest {
     }
 
     @Test
-    @DisplayName("al emitir y al descargar el PDF, el proveedor se llama sin ninguna transacción de base de datos abierta")
+    @DisplayName("al emitir y al descargar el PDF de una factura y de su nota crédito, el proveedor se llama sin "
+            + "ninguna transacción de base de datos abierta")
     void providerIsCalledOutsideTransaction() {
         var invoice = createInvoice.create(new CreateInvoiceCommand("SALE-TX",
                 new CreateInvoiceCommand.Customer(DocumentType.NIT, "890903938", 8, PersonType.LEGAL_ENTITY, "Cliente",
@@ -83,20 +102,25 @@ class ProviderCalledOutsideTransactionTest {
         var issued = issueInvoice.issue(new IssueInvoiceCommand(invoice.id().value()));
 
         getInvoicePdf.pdf(invoice.id().value());
+        var creditNote = createCreditNote.create(new CreateCreditNoteCommand(invoice.id().value(), "DEV-TX",
+                CreditNoteReason.TOTAL_ANNULMENT, List.of(), null)).creditNote();
+        var issuedNote = issueCreditNote.issue(new IssueCreditNoteCommand(creditNote.id().value()));
+        getCreditNotePdf.pdf(creditNote.id().value());
 
         assertThat(issued.status()).isEqualTo(InvoiceStatus.ISSUED);
-        assertThat(provider.transactionActiveOnCall).containsExactly(false, false);
+        assertThat(issuedNote.status()).isEqualTo(CreditNoteStatus.ISSUED);
+        assertThat(provider.transactionActiveOnCall).containsExactly(false, false, false, false);
     }
 
     @Test
     @DisplayName("control positivo: la sonda sí detecta una transacción cuando la hay")
     void probeDetectsTransactions() {
-        transactionTemplate.executeWithoutResult(status -> provider.issue(null));
+        transactionTemplate.executeWithoutResult(status -> provider.issue((Invoice) null));
 
         assertThat(provider.transactionActiveOnCall).containsExactly(true);
     }
 
-    static final class RecordingProvider implements ElectronicInvoiceProvider {
+    static final class RecordingProvider implements ElectronicInvoiceProvider, ElectronicCreditNoteProvider {
 
         final List<Boolean> transactionActiveOnCall = new ArrayList<>();
 
@@ -110,6 +134,18 @@ class ProviderCalledOutsideTransactionTest {
         public InvoicePdf downloadPdf(Invoice issuedInvoice) {
             transactionActiveOnCall.add(TransactionSynchronizationManager.isActualTransactionActive());
             return new InvoicePdf("prueba", new byte[] {'%'});
+        }
+
+        @Override
+        public IssuanceResult issue(CreditNote creditNote, Invoice creditedInvoice) {
+            transactionActiveOnCall.add(TransactionSynchronizationManager.isActualTransactionActive());
+            return new IssuanceResult.Issued(electronicDocument(creditNote.total().amount().toPlainString()));
+        }
+
+        @Override
+        public InvoicePdf downloadPdf(CreditNote issuedCreditNote) {
+            transactionActiveOnCall.add(TransactionSynchronizationManager.isActualTransactionActive());
+            return new InvoicePdf("prueba-nc", new byte[] {'%'});
         }
     }
 

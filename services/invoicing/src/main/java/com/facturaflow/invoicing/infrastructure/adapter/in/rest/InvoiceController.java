@@ -2,11 +2,15 @@ package com.facturaflow.invoicing.infrastructure.adapter.in.rest;
 
 import com.facturaflow.invoicing.application.port.in.CreateInvoiceResult;
 import com.facturaflow.invoicing.application.port.in.CreateInvoiceUseCase;
+import com.facturaflow.invoicing.application.port.in.GetCreditBalanceUseCase;
 import com.facturaflow.invoicing.application.port.in.GetInvoicePdfUseCase;
 import com.facturaflow.invoicing.application.port.in.GetInvoiceUseCase;
 import com.facturaflow.invoicing.application.port.in.IssueInvoiceCommand;
 import com.facturaflow.invoicing.application.port.in.IssueInvoiceUseCase;
 import com.facturaflow.invoicing.application.port.out.InvoicePdf;
+import com.facturaflow.invoicing.domain.model.CreditBalance;
+import com.facturaflow.invoicing.domain.model.Invoice;
+import com.facturaflow.invoicing.domain.model.InvoiceStatus;
 import com.facturaflow.invoicing.infrastructure.adapter.in.rest.dto.CreateInvoiceRequest;
 import com.facturaflow.invoicing.infrastructure.adapter.in.rest.dto.InvoiceResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -47,13 +51,16 @@ class InvoiceController {
     private final GetInvoiceUseCase getInvoice;
     private final IssueInvoiceUseCase issueInvoice;
     private final GetInvoicePdfUseCase getInvoicePdf;
+    private final GetCreditBalanceUseCase getCreditBalance;
 
     InvoiceController(CreateInvoiceUseCase createInvoice, GetInvoiceUseCase getInvoice,
-                      IssueInvoiceUseCase issueInvoice, GetInvoicePdfUseCase getInvoicePdf) {
+                      IssueInvoiceUseCase issueInvoice, GetInvoicePdfUseCase getInvoicePdf,
+                      GetCreditBalanceUseCase getCreditBalance) {
         this.createInvoice = createInvoice;
         this.getInvoice = getInvoice;
         this.issueInvoice = issueInvoice;
         this.getInvoicePdf = getInvoicePdf;
+        this.getCreditBalance = getCreditBalance;
     }
 
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -81,7 +88,7 @@ class InvoiceController {
                     schema = @Schema(implementation = ProblemDetail.class)))
     ResponseEntity<InvoiceResponse> create(@Valid @RequestBody CreateInvoiceRequest request) {
         CreateInvoiceResult result = createInvoice.create(InvoiceRestMapper.toCommand(request));
-        InvoiceResponse body = InvoiceRestMapper.toResponse(result.invoice());
+        InvoiceResponse body = respond(result.invoice());
         if (!result.created()) {
             return ResponseEntity.ok(body);
         }
@@ -91,7 +98,8 @@ class InvoiceController {
     }
 
     @GetMapping("/{id}")
-    @Operation(summary = "Consultar una factura por id")
+    @Operation(summary = "Consultar una factura por id",
+            description = "Si está ISSUED, incluye 'credits': lo acreditado con notas crédito y el saldo por línea.")
     @ApiResponse(responseCode = "200", description = "La factura")
     @ApiResponse(responseCode = "400", description = "El id no es un UUID",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
@@ -100,7 +108,7 @@ class InvoiceController {
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
     InvoiceResponse getById(@PathVariable UUID id) {
-        return InvoiceRestMapper.toResponse(getInvoice.byId(id));
+        return respond(getInvoice.byId(id));
     }
 
     @GetMapping
@@ -116,7 +124,7 @@ class InvoiceController {
     InvoiceResponse getByReferenceCode(
             @Parameter(description = "Código de referencia de la venta", example = "VENTA-2026-0001")
             @RequestParam String referenceCode) {
-        return InvoiceRestMapper.toResponse(getInvoice.byReferenceCode(referenceCode));
+        return respond(getInvoice.byReferenceCode(referenceCode));
     }
 
     @PostMapping("/{id}/issue")
@@ -137,7 +145,7 @@ class InvoiceController {
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
     InvoiceResponse issue(@PathVariable UUID id) {
-        return InvoiceRestMapper.toResponse(issueInvoice.issue(new IssueInvoiceCommand(id)));
+        return respond(issueInvoice.issue(new IssueInvoiceCommand(id)));
     }
 
     @GetMapping(value = "/{id}/pdf", produces = MediaType.APPLICATION_PDF_VALUE)
@@ -163,5 +171,13 @@ class InvoiceController {
                 .header(HttpHeaders.CONTENT_DISPOSITION,
                         ContentDisposition.attachment().filename(pdf.fileName()).build().toString())
                 .body(pdf.content());
+    }
+
+    /** Una factura ISSUED muestra además lo acreditado y su saldo (ADR 0009); las demás no tienen notas. */
+    private InvoiceResponse respond(Invoice invoice) {
+        CreditBalance credits = invoice.status() == InvoiceStatus.ISSUED
+                ? getCreditBalance.forInvoice(invoice.id().value())
+                : null;
+        return InvoiceRestMapper.toResponse(invoice, credits);
     }
 }

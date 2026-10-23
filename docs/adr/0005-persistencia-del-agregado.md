@@ -4,6 +4,8 @@
 
 Aceptado — 2026-10-20
 
+> **Nota posterior (ADR 0009):** las notas crédito son un segundo agregado persistido con los mismos criterios. Insertar una nota sube la versión de su factura con un `UPDATE … WHERE version = ?` (bloqueo optimista sobre la factura), sin cargarla. La columna `edoc_cufe` pasó a `edoc_unique_code` (V6). Las decisiones de este ADR no cambian.
+
 ## Contexto
 
 El agregado `Invoice` (ADR 0004) debe guardarse y recuperarse en PostgreSQL (ADR 0003) sin que el dominio sepa que existe una base de datos (ADR 0002). Una factura es un agregado con colecciones anidadas (factura → líneas → impuestos), se modifica después de creada (cambios de estado) y puede ser leída y modificada por dos procesos a la vez. Además, una venta nunca debe facturarse dos veces.

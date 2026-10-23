@@ -80,6 +80,14 @@ public record InvoiceLine(String code, String name, Quantity quantity, Money uni
         return taxableAmount().plus(taxAmount());
     }
 
+    /**
+     * La misma línea con otra cantidad. Lo usan las notas crédito: una devolución parcial se
+     * calcula con exactamente las mismas reglas y el mismo redondeo que la factura (ADR 0009).
+     */
+    public InvoiceLine withQuantity(Quantity newQuantity) {
+        return new InvoiceLine(code, name, newQuantity, unitPrice, discountRate, taxes, unit, excluded);
+    }
+
     private static List<LineTax> validateTaxes(String code, List<LineTax> taxes, boolean excluded) {
         if (taxes == null) {
             throw InvalidInvoiceLineException.missing("una lista de impuestos (vacía si no aplica ninguno)");
