@@ -1,0 +1,45 @@
+# La conexión a la base se lee SOLO desde variables de entorno (sin valores por defecto).
+spring:
+  application:
+    name: catalog
+  datasource:
+    url: ${CATALOG_DB_URL}
+    username: ${CATALOG_DB_USER}
+    password: ${CATALOG_DB_PASSWORD}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate   # El esquema lo gestiona Flyway; Hibernate solo valida.
+    properties:
+      hibernate:
+        # Los impuestos de los productos y las responsabilidades de los clientes de una página se cargan
+        # en UNA consulta adicional (IN de hasta 100 ids), no en una por fila (ADR 0011).
+        default_batch_fetch_size: 100
+  flyway:
+    locations: classpath:db/migration
+  jackson:
+    deserialization:
+      # Un campo mal escrito (p. ej. "nombre") da 400 en vez de ignorarse sin aviso.
+      fail-on-unknown-properties: true
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+  api-docs:
+    path: /v3/api-docs
+
+server:
+  port: 8080
+  error:
+    include-message: never
+    include-stacktrace: never
+
+# Actuator: solo lectura y nada sensible. El puerto solo se publica en 127.0.0.1 (docker-compose).
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: never

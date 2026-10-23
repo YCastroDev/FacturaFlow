@@ -25,16 +25,16 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 
 ## Estructura
 
-- `services/<servicio>/` — un proyecto Spring Boot independiente por servicio (hoy solo `invoicing`).
+- `services/<servicio>/` — un proyecto Spring Boot independiente por servicio: `invoicing` (hexagonal, ADR 0002) y `catalog` (en capas, ADR 0011).
 - `infra/` — `docker-compose.yml` y scripts de init de PostgreSQL.
 - `scripts/` — utilidades (`mvn.sh`, `check-secrets.sh`).
 - `.githooks/` — hook pre-commit con gitleaks.
 - `docs/adr/` — Architecture Decision Records.
 - `docs/spikes/` y `scripts/spikes/` — investigaciones contra sistemas externos (hallazgos y scripts reproducibles).
 
-## Reglas de arquitectura
+## Reglas de arquitectura (invoicing)
 
-- Estructura hexagonal obligatoria en cada servicio (ADR 0002), bajo `com.facturaflow.<servicio>`:
+- Estructura hexagonal obligatoria en invoicing (ADR 0002); catalog es en capas (ADR 0011, sección propia abajo), bajo `com.facturaflow.<servicio>`:
   `domain/{model,exception}`, `application/{port/in,port/out,service}`, `infrastructure/{adapter/in/...,adapter/out/...,config}`.
 - **Nada de anotaciones ni imports de Spring, JPA o Jackson en `domain/`.** El dominio es Java puro.
 - Las dependencias apuntan hacia adentro: `infrastructure → application → domain`. `application` no conoce adaptadores concretos.
@@ -114,6 +114,17 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 - El health no depende de Factus: el componente `factus` siempre es UP (detalles en `/actuator/health/providers`) y no entra en liveness/readiness.
 - Los valores viven en `invoicing.factus.resilience.*` (`application.yml`); los tests del adaptador usan `FactusTestData.singleAttempt()` salvo `FactusResilienceTest`.
 
+## Servicio catalog (ADR 0011)
+
+- Dueño de productos y clientes (datos maestros). Arquitectura en CAPAS, no hexagonal: `com.facturaflow.catalog.{web(+dto),service,repository,model,config}`. Reglas en `LayeredArchitectureTest`: dependencias hacia abajo (web → service → repository, todas sobre model), controladores sin repositorios, `@Transactional` solo en `service`, `model` solo con Java + `jakarta.persistence`, DTOs sin tipos del modelo, sin ciclos y **nada de `com.facturaflow.invoicing`**.
+- Las reglas del dato viven en el modelo (`ProductDetails`, `ProductTax`, `CustomerDocument`, `CustomerProfile`) y son una **copia deliberada** de las de invoicing (DV del NIT, documentos, tipo de persona, situación tributaria, DIVIPOLA, teléfono, impuestos, 8 unidades). Si cambia una regla en un servicio, revisar su copia en el otro (tabla en el ADR 0011). Mismos nombres de enums y campos que la API de invoicing.
+- Código de producto único sin distinguir mayúsculas (`lower(code)`); cliente único por tipo + número (número en mayúsculas). Código y documento son inmutables (422). Nada se borra: `POST /{id}/deactivate` y `/activate`, idempotentes.
+- Concurrencia: `@Version` = ETag fuerte (`"3"`). `PUT` exige `If-Match` (sin él 428; viejo 412; `*`, listas o `W/` 400); activar y desactivar lo aceptan opcional (carrera sin él: 409). Un PUT sin cambios no sube la versión. El servicio hace `flush` dentro de la transacción para traducir el bloqueo optimista.
+- Duplicados: comprobación previa + nombre de la restricción única (`uq_products_code`, `uq_customers_document`) → 409, nunca 500.
+- Listados: `page`/`size` (1–100)/`q`/`active`, orden fijo y estable, DTO `PageResponse` propio; colecciones EAGER cargadas por lotes (`default_batch_fetch_size`): 3 sentencias por página (`QueryCountIntegrationTest`).
+- Problem Details con el mismo formato que invoicing; una excepción nueva necesita su fila en la tabla del ADR 0011 y su test en el test del controlador.
+- Puerto local `127.0.0.1:8082`; base `catalog_db` / usuario `catalog_user` (`CATALOG_DB_PASSWORD`).
+
 ## Convenciones
 
 - Código, clases, paquetes y endpoints en inglés. Documentación y ADRs en español.
@@ -135,7 +146,11 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 # Cualquier otro goal de Maven
 ./scripts/mvn.sh invoicing -B package -DskipTests
 
-# Levantar el entorno (PostgreSQL + invoicing)
+# Tests de catalog (y solo su ArchUnit)
+./scripts/mvn.sh catalog test
+./scripts/mvn.sh catalog test -Dtest=LayeredArchitectureTest
+
+# Levantar el entorno (PostgreSQL + invoicing + catalog)
 docker compose --env-file .env -f infra/docker-compose.yml up --build -d
 
 # Estado, logs y apagado
@@ -144,11 +159,16 @@ docker compose --env-file .env -f infra/docker-compose.yml logs -f invoicing
 docker compose --env-file .env -f infra/docker-compose.yml down       # conserva datos
 docker compose --env-file .env -f infra/docker-compose.yml down -v    # BORRA datos (re-ejecuta init de PostgreSQL)
 
-# Health de invoicing
+# Health de invoicing y de catalog
 curl -s http://localhost:8081/actuator/health
+curl -s http://localhost:8082/actuator/health
 
 # Swagger UI (API documentada con ejemplos)
-# http://localhost:8081/swagger-ui.html
+# invoicing: http://localhost:8081/swagger-ui.html   catalog: http://localhost:8082/swagger-ui.html
+
+# Agregar la base de un servicio nuevo a un volumen con datos (script idempotente, sin down -v)
+docker compose --env-file .env -f infra/docker-compose.yml up -d postgres
+docker compose --env-file .env -f infra/docker-compose.yml exec postgres bash /docker-entrypoint-initdb.d/01-create-service-databases.sh
 
 # Tests contra el sandbox REAL de Factus (excluidos por defecto; crean 2 facturas y 1 nota crédito por ejecución).
 # Docker inyecta el .env con --env-file; nadie lo lee ni lo muestra.

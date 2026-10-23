@@ -13,6 +13,7 @@ services:
       POSTGRES_DB: postgres
       # Contraseñas de los usuarios de cada servicio (las usa el script de init)
       INVOICING_DB_PASSWORD: ${INVOICING_DB_PASSWORD:?Define INVOICING_DB_PASSWORD en .env}
+      CATALOG_DB_PASSWORD: ${CATALOG_DB_PASSWORD:?Define CATALOG_DB_PASSWORD en .env}
     volumes:
       # PostgreSQL 18+: el volumen se monta en /var/lib/postgresql
       - postgres-data:/var/lib/postgresql
@@ -46,6 +47,26 @@ services:
       FACTUS_CREDIT_NOTE_NUMBERING_RANGE_ID: ${FACTUS_CREDIT_NOTE_NUMBERING_RANGE_ID:-}
     ports:
       - "127.0.0.1:8081:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q UP"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    restart: unless-stopped
+
+  catalog:
+    build:
+      context: ../services/catalog
+    environment:
+      CATALOG_DB_URL: jdbc:postgresql://postgres:5432/catalog_db
+      CATALOG_DB_USER: catalog_user
+      CATALOG_DB_PASSWORD: ${CATALOG_DB_PASSWORD:?Define CATALOG_DB_PASSWORD en .env}
+    ports:
+      - "127.0.0.1:8082:8080"
     depends_on:
       postgres:
         condition: service_healthy

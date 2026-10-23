@@ -4,11 +4,22 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 
 ## Arquitectura
 
-- **Monorepo** con un proyecto independiente por servicio en `services/` (hoy: `invoicing`; luego catalog, sales, notifications, identity con Keycloak, gateway y frontend).
-- **Arquitectura hexagonal** (ports & adapters) dentro de cada servicio.
-- **Base de datos por servicio**: un PostgreSQL con una base y un usuario por servicio; esquema gestionado con Flyway.
-- Comunicación entre servicios solo por HTTP o eventos (RabbitMQ, más adelante).
-- Todo corre en Docker: no se necesita Java ni Maven instalados.
+- **Monorepo** con un proyecto independiente por servicio en `services/`. Hoy hay dos; luego vendrán sales, notifications, identity (con Keycloak), gateway y frontend.
+
+  | Servicio | Responsabilidad | Arquitectura | Puerto local | Base |
+  |---|---|---|---|---|
+  | `invoicing` | Facturas y notas crédito electrónicas ante la DIAN (vía Factus) | Hexagonal ([ADR 0002](docs/adr/0002-arquitectura-hexagonal.md)) | `127.0.0.1:8081` | `invoicing_db` |
+  | `catalog` | Productos y clientes (datos maestros) | En capas ([ADR 0011](docs/adr/0011-servicio-catalog-en-capas.md)) | `127.0.0.1:8082` | `catalog_db` |
+
+- **Cada servicio usa la arquitectura que necesita:**
+  - invoicing, hexagonal: integra un proveedor externo intercambiable;
+  - catalog, en capas (controller → service → repository): es casi un CRUD.
+
+  Las dos se validan con ArchUnit.
+- **Base de datos por servicio:** un PostgreSQL con una base y un usuario por servicio; el esquema lo gestiona Flyway.
+- **Sin código compartido entre servicios:** los conceptos repetidos, como el DV del NIT, se duplican a propósito.
+- **Comunicación entre servicios** solo por HTTP o eventos (RabbitMQ, más adelante). Sales consultará catalog por HTTP al crear una venta.
+- **Todo corre en Docker:** no se necesita Java ni Maven instalados.
 
 Las decisiones y sus motivos están en los [ADRs](docs/adr/README.md).
 
@@ -25,14 +36,32 @@ Requisito: Docker Engine con Docker Compose.
    cp .env.example .env
    ```
    El `.env` está en `.gitignore`: nunca se sube al repositorio.
-3. **Levantar el entorno:**
+3. **Levantar el entorno** (PostgreSQL, invoicing y catalog):
    ```bash
-   docker compose --env-file .env -f infra/docker-compose.yml up --build
+   docker compose --env-file .env -f infra/docker-compose.yml up --build -d
+   docker compose --env-file .env -f infra/docker-compose.yml ps     # los tres "healthy"
    ```
-4. **Comprobar** que invoicing responde:
+4. **Comprobar** que los dos servicios responden:
    ```bash
-   curl http://localhost:8081/actuator/health    # {"status":"UP"}
+   curl http://localhost:8081/actuator/health    # invoicing: {"status":"UP",...}
+   curl http://localhost:8082/actuator/health    # catalog:   {"status":"UP",...}
    ```
+
+### Si ya tenías el entorno levantado antes de catalog
+
+El script que crea las bases (`infra/postgres/init/`) corre automáticamente solo con el volumen vacío. Para crear `catalog_db` **sin borrar tus datos** (sin `down -v`):
+
+1. Agrega `CATALOG_DB_PASSWORD` a tu `.env` (ver `.env.example`).
+2. Recrea el contenedor de PostgreSQL para que reciba la variable; el volumen se conserva.
+3. Ejecuta el script a mano. Es idempotente: solo crea lo que falta.
+4. Levanta todo.
+
+```bash
+docker compose --env-file .env -f infra/docker-compose.yml up -d postgres
+docker compose --env-file .env -f infra/docker-compose.yml exec postgres \
+  bash /docker-entrypoint-initdb.d/01-create-service-databases.sh
+docker compose --env-file .env -f infra/docker-compose.yml up --build -d
+```
 
 ## Probar la API con Swagger
 
@@ -126,10 +155,41 @@ Una emisión "exitosa" del proveedor falso **no tiene validez ante la DIAN**:
 
 Los ejemplos a crédito usan un vencimiento lejano (`2030-01-31`) porque el vencimiento debe ser posterior a la fecha de emisión, que es la de hoy en Colombia.
 
+## Catálogo: productos y clientes (catalog)
+
+Swagger UI: **http://localhost:8082/swagger-ui.html**, especificación en http://localhost:8082/v3/api-docs.
+
+1. **Crear** un producto (`POST /api/v1/products`) o un cliente (`POST /api/v1/customers`) con uno de los ejemplos del desplegable. Responde `201`, con el header `ETag: "0"`.
+   - El código del producto es único sin distinguir mayúsculas, y el cliente es único por tipo + número de documento: repetirlos responde `409`.
+   - Las reglas son las mismas que exige una factura (DV del NIT, tipo de persona, impuestos…): si no se cumplen, responde `422`.
+2. **Consultar:**
+   - por id: `GET /{id}`;
+   - por código: `GET /api/v1/products/by-code/{code}`;
+   - por documento: `GET /api/v1/customers/by-document/{tipo}/{número}`;
+   - o listar con `?q=texto&active=true&page=0&size=20`.
+3. **Actualizar** (`PUT /{id}`): es un reemplazo completo y **exige `If-Match`**, para que nadie pise sin saberlo un cambio ajeno.
+   1. Copia el header `etag` de la respuesta del `GET` (en Swagger UI, en *Response headers*), p. ej. `"0"`.
+   2. Pégalo, con comillas, en el campo **If-Match** del `PUT`. La respuesta trae el ETag nuevo (`"1"`).
+
+   Con un ETag viejo responde `412`, y sin el header `428`. El código del producto y el documento del cliente no se pueden cambiar (`422`).
+4. **Desactivar** (`POST /{id}/deactivate`) y **reactivar** (`POST /{id}/activate`): nada se borra, porque ventas y facturas lo referencian.
+
+Lo mismo con curl:
+
+```bash
+curl -si -X POST localhost:8082/api/v1/products -H 'Content-Type: application/json' \
+  -d '{"code":"CAFE-500","name":"Café molido 500 g","unitPrice":18500,"unit":"UNIT","taxes":[{"type":"IVA","rate":5}]}'
+# -> 201, ETag: "0", Location: .../api/v1/products/<id>
+curl -si -X PUT localhost:8082/api/v1/products/<id> -H 'Content-Type: application/json' -H 'If-Match: "0"' \
+  -d '{"code":"CAFE-500","name":"Café molido 500 g","unitPrice":19900,"unit":"UNIT","taxes":[{"type":"IVA","rate":5}]}'
+# -> 200, ETag: "1". Repetir el mismo PUT con If-Match: "0" -> 412
+```
+
 ## Otros comandos
 
 ```bash
-./scripts/mvn.sh invoicing test   # tests del servicio (Maven + Testcontainers + WireMock en Docker)
+./scripts/mvn.sh invoicing test   # tests de invoicing (Maven + Testcontainers + WireMock en Docker)
+./scripts/mvn.sh catalog test     # tests de catalog (Maven + Testcontainers en Docker)
 # Tests contra el sandbox real de Factus (no corren por defecto; crean 2 facturas y 1 nota crédito reales por ejecución)
 MVN_ENV_FILE=.env ./scripts/mvn.sh invoicing test -Dgroups=sandbox -DexcludedGroups=none
 ./scripts/check-secrets.sh        # escaneo de secretos en todo el repo
