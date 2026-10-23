@@ -1,5 +1,6 @@
 package com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus;
 
+import com.facturaflow.invoicing.application.exception.ElectronicInvoiceProviderUnavailableException.Reason;
 import com.facturaflow.invoicing.application.port.out.InvoicePdf;
 import com.facturaflow.invoicing.application.port.out.IssuanceResult;
 import com.facturaflow.invoicing.domain.exception.DomainException;
@@ -341,6 +342,10 @@ final class FactusResponseInterpreter {
                     + (response.retryAfter() == null ? "no informado" : response.retryAfter()) + ")";
             default -> response.status() >= 500 ? "error del servidor de Factus" : "respuesta HTTP no esperada";
         };
-        return new FactusTechnicalException(operation + ": HTTP " + response.status() + ", " + meaning);
+        // Un 429 que no se reintentó (Retry-After demasiado largo) le pasa ese Retry-After al cliente (ADR 0010).
+        return response.status() == 429
+                ? new FactusTechnicalException(operation + ": HTTP 429, " + meaning, Reason.RATE_LIMITED,
+                        FactusResilience.retryAfter(response), null)
+                : new FactusTechnicalException(operation + ": HTTP " + response.status() + ", " + meaning);
     }
 }

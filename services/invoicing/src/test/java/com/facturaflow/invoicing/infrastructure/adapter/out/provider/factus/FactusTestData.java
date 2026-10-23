@@ -24,6 +24,10 @@ import com.facturaflow.invoicing.domain.model.Quantity;
 import com.facturaflow.invoicing.domain.model.ReferenceCode;
 import com.facturaflow.invoicing.domain.model.TaxType;
 import com.facturaflow.invoicing.domain.model.UnitOfMeasure;
+import com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus.FactusProperties.CircuitBreakerSettings;
+import com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus.FactusProperties.RateLimiterSettings;
+import com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus.FactusProperties.Resilience;
+import com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus.FactusProperties.RetrySettings;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
@@ -109,15 +113,41 @@ final class FactusTestData {
                 null);
     }
 
+    /**
+     * Un solo intento y un circuito que no se abre: para los tests que prueban la TABLA de resultados
+     * (cada respuesta de Factus, interpretada una vez). La resiliencia se prueba en {@code FactusResilienceTest}.
+     */
+    static Resilience singleAttempt() {
+        return new Resilience(new RetrySettings(1, Duration.ofMillis(1), 1.0, 0.0, Duration.ZERO),
+                new CircuitBreakerSettings(100, 100, 100, Duration.ofSeconds(1), 1),
+                new RateLimiterSettings(1000, Duration.ofSeconds(1), Duration.ZERO));
+    }
+
+    /** Los mismos valores que {@code application.yml} (ADR 0010). */
+    static Resilience productionResilience() {
+        return new Resilience(new RetrySettings(3, Duration.ofMillis(500), 2.0, 0.5, Duration.ofSeconds(5)),
+                new CircuitBreakerSettings(10, 5, 50, Duration.ofSeconds(30), 2),
+                new RateLimiterSettings(10, Duration.ofSeconds(6), Duration.ofSeconds(2)));
+    }
+
     static FactusProperties properties(String baseUrl) {
         return properties(baseUrl, false, null, Duration.ofSeconds(2));
     }
 
     static FactusProperties properties(String baseUrl, boolean sendEmail, Integer numberingRangeId,
                                        Duration readTimeout) {
+        return properties(baseUrl, sendEmail, numberingRangeId, readTimeout, singleAttempt());
+    }
+
+    static FactusProperties properties(String baseUrl, Duration readTimeout, Resilience resilience) {
+        return properties(baseUrl, false, null, readTimeout, resilience);
+    }
+
+    private static FactusProperties properties(String baseUrl, boolean sendEmail, Integer numberingRangeId,
+                                               Duration readTimeout, Resilience resilience) {
         return new FactusProperties(URI.create(baseUrl), "client-id-de-prueba", CLIENT_SECRET,
                 "usuario@empresa.example", PASSWORD, sendEmail, numberingRangeId, CREDIT_NOTE_RANGE,
-                Duration.ofSeconds(2), readTimeout, Duration.ofSeconds(60), "FacturaFlow-Test/1.0");
+                Duration.ofSeconds(2), readTimeout, Duration.ofSeconds(60), "FacturaFlow-Test/1.0", resilience);
     }
 
     /** Un archivo de {@code src/test/resources/factus/} con {@code {{REFERENCE_CODE}}} reemplazado. */

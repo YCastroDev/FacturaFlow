@@ -48,7 +48,8 @@ class FactusSandboxTest {
         provider = FactusElectronicInvoiceProvider.create(new FactusProperties(URI.create(baseUrl),
                 System.getenv("FACTUS_CLIENT_ID"), System.getenv("FACTUS_CLIENT_SECRET"),
                 System.getenv("FACTUS_USERNAME"), System.getenv("FACTUS_PASSWORD"), false, null, creditNoteRange(),
-                Duration.ofSeconds(5), Duration.ofSeconds(30), Duration.ofSeconds(60), "FacturaFlow-Invoicing/0.0.1"),
+                Duration.ofSeconds(3), Duration.ofSeconds(10), Duration.ofSeconds(60), "FacturaFlow-Invoicing/0.0.1",
+                FactusTestData.productionResilience()),
                 Clock.systemUTC());
     }
 

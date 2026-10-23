@@ -25,6 +25,8 @@
         <springdoc.version>3.1.1</springdoc.version>
         <!-- No la gestiona Spring Boot; el "standalone" trae Jetty y Jackson sombreados (sin choques) -->
         <wiremock.version>3.13.1</wiremock.version>
+        <!-- No la gestiona Spring Boot (su BOM no incluye este módulo); 2.4.0 es la primera para Boot 4 (ADR 0010) -->
+        <resilience4j.version>2.4.0</resilience4j.version>
         <!-- Los tests contra el sandbox real de Factus no corren por defecto (ADR 0008). Para correrlos:
              -Dgroups=sandbox -DexcludedGroups=none -->
         <excludedGroups>sandbox</excludedGroups>
@@ -40,6 +42,12 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <!-- Resiliencia de las llamadas a Factus: registros, métricas Micrometer y endpoints de Actuator (ADR 0010) -->
+        <dependency>
+            <groupId>io.github.resilience4j</groupId>
+            <artifactId>resilience4j-spring-boot4</artifactId>
+            <version>${resilience4j.version}</version>
         </dependency>
         <!-- Persistencia -->
         <dependency>

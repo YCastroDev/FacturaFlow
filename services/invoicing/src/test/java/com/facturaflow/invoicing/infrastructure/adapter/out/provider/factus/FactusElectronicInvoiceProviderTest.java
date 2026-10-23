@@ -49,6 +49,9 @@ import org.springframework.boot.test.system.OutputCaptureExtension;
  * El adaptador completo (RestClient, TokenProvider, traductor e intérprete) contra un Factus falso
  * (WireMock) que responde con los cuerpos reales del spike 0001. Los casos que el spike no observó
  * usan fixtures marcados como NO VERIFICADOS (ver {@code src/test/resources/factus/README.md}).
+ *
+ * <p>Usa UN solo intento ({@link FactusTestData#singleAttempt()}): aquí se prueba qué significa cada
+ * respuesta. Los reintentos, el circuit breaker y el limitador están en {@code FactusResilienceTest}.
  */
 @ExtendWith(OutputCaptureExtension.class)
 class FactusElectronicInvoiceProviderTest {
@@ -268,7 +271,7 @@ class FactusElectronicInvoiceProviderTest {
     }
 
     @Test
-    @DisplayName("429 (NO VERIFICADO) → falla técnica, sin reintentar y con el Retry-After en el mensaje")
+    @DisplayName("429 (NO VERIFICADO) → falla técnica con el Retry-After en el mensaje (con un solo intento)")
     void rateLimitIsTechnical() {
         FACTUS.stubFor(validate().willReturn(json(429, fixture("error-429.json")).withHeader("Retry-After", "17")));
 
@@ -279,7 +282,7 @@ class FactusElectronicInvoiceProviderTest {
     }
 
     @Test
-    @DisplayName("500 (NO VERIFICADO) → falla técnica, sin reintentar")
+    @DisplayName("500 (NO VERIFICADO) → falla técnica (con un solo intento)")
     void serverErrorIsTechnical() {
         respondToValidation(500, "error-500.json");
 

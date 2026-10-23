@@ -78,6 +78,36 @@ INVOICING_PROVIDER=factus docker compose --env-file .env -f infra/docker-compose
 
 Si falta una credencial, el servicio no arranca y el log dice cuál. Opcionales: `FACTUS_SEND_EMAIL` (por defecto `false`; en el sandbox, déjalo así) y `FACTUS_NUMBERING_RANGE_ID` (vacío = el rango por defecto de la cuenta). Con Factus, `SIMULAR_RECHAZO` y `SIMULAR_CAIDA` no tienen efecto: los rechazos y las caídas son reales. Para las notas crédito con Factus también se necesita `FACTUS_CREDIT_NOTE_NUMBERING_RANGE_ID`; es obligatorio, y en el sandbox vale `390`.
 
+### Resiliencia hacia Factus
+
+Con `INVOICING_PROVIDER=factus`, toda llamada a Factus (facturas, notas, PDF y token) tiene tres protecciones ([ADR 0010](docs/adr/0010-resiliencia-factus.md)):
+- **Reintentos cortos** (3 intentos con backoff y jitter), solo ante fallas técnicas: nunca ante un rechazo de la DIAN.
+- **Circuit breaker:** tras fallas repetidas (unas 2 emisiones fallidas) se deja de llamar a Factus 30 s. Mientras tanto, emitir responde `503` al instante, con `Retry-After` igual al tiempo que falta y `"reason": "circuit-open"`.
+- **Limitador** de 100 peticiones/min, por debajo del límite real de 120.
+
+El health del servicio **no** depende de Factus: `/actuator/health` sigue `UP`. El estado se ve en:
+
+```bash
+curl -s http://localhost:8081/actuator/health/providers    # componente "factus": estado del circuito y del limitador
+curl -s http://localhost:8081/actuator/circuitbreakers
+curl -s http://localhost:8081/actuator/metrics/resilience4j.retry.calls
+curl -s http://localhost:8081/actuator/metrics/invoicing.factus.rejected
+```
+
+**Demostración: abrir el circuito** con un Factus inalcanzable, solo para esa ejecución, sin tocar `.env`:
+
+```bash
+INVOICING_PROVIDER=factus FACTUS_CREDIT_NOTE_NUMBERING_RANGE_ID=390 FACTUS_BASE_URL=http://10.255.255.1 \
+  docker compose --env-file .env -f infra/docker-compose.yml up --build -d
+# Crear una factura (ejemplo "Contado con IVA" de Swagger) y emitirla 3 o 4 veces (con facturas distintas):
+#   1.ª: 503 tras los reintentos (reason "failure")   2.ª: el circuito se abre (reason "circuit-open")
+#   siguientes: 503 inmediato con Retry-After decreciente
+curl -s http://localhost:8081/actuator/health/providers   # "circuitBreaker":"OPEN", "retryAfterSeconds":...
+curl -s http://localhost:8081/actuator/health             # sigue {"status":"UP"}
+docker compose --env-file .env -f infra/docker-compose.yml logs invoicing | grep "Circuito de Factus"
+docker compose --env-file .env -f infra/docker-compose.yml up --build -d   # volver al proveedor falso
+```
+
 ### Proveedor de facturación falso
 
 Con `INVOICING_PROVIDER=fake` (el valor por defecto) la emisión usa un proveedor **simulado**. Su comportamiento depende de la **observación** del documento que se emite (factura o nota crédito):

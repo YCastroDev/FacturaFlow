@@ -6,6 +6,7 @@ Aceptado — 2026-10-22. Completa el ADR 0006: agrega el adaptador real del puer
 
 > **Notas posteriores (ADR 0009):**
 > - `ElectronicDocument.cufe` pasó a llamarse `uniqueCode` (CUFE o CUDE); la API de facturas conserva `cufe`.
+> - **Resiliencia (ADR 0010):** las llamadas a Factus tienen reintentos, circuit breaker y limitador. Los timeouts pasaron a 3 s (conexión) y 10 s (lectura). Un 503 lleva ahora un `Retry-After` real (circuito abierto, limitador o el 429 de Factus) y un `reason`. La tabla de resultados (decisión 5) no cambia: es lo que se decide tras los reintentos.
 > - **Notas crédito con Factus** (2026-10-23): el mismo adaptador implementa también `ElectronicCreditNoteProvider`, con la misma tabla de resultados y la misma verificación de identidad. Ver la decisión 10. La propiedad nueva `credit-note-numbering-range-id` es obligatoria. Las decisiones 1 a 9 no cambian.
 
 ## Contexto
@@ -35,7 +36,7 @@ Hasta ahora la emisión usaba un proveedor falso (ADR 0006). El [spike 0001](../
 | `send-email` | `FACTUS_SEND_EMAIL` | `false` |
 | `numbering-range-id` | `FACTUS_NUMBERING_RANGE_ID` | vacío, que usa el rango por defecto de la cuenta |
 | `credit-note-numbering-range-id` (decisión 10) | `FACTUS_CREDIT_NOTE_NUMBERING_RANGE_ID` | ninguno: **obligatorio**, vacío hace fallar el arranque (en el sandbox: `390`) |
-| `connect-timeout` / `read-timeout` | — | 5 s / 30 s (la validación ante la DIAN tardó unos 2,3 s) |
+| `connect-timeout` / `read-timeout` | — | 3 s / 10 s desde el ADR 0010 (antes 5 s / 30 s; la validación ante la DIAN tardó unos 2,3 s) |
 | `token-refresh-margin` | — | 60 s |
 | `user-agent` | — | `FacturaFlow-Invoicing/0.0.1` |
 
@@ -259,11 +260,7 @@ El último ocurre si la factura ISSUED en nuestra base no existe en esta cuenta 
 
 ## Limitaciones
 
-- **Sin resiliencia todavía:** no hay reintentos (salvo el del 401), ni circuit breaker, ni limitador de peticiones.
-  - El límite real es **120 peticiones/min** en la API y **60/min** en `/oauth/token`.
-  - Un 429 se trata como falla técnica (503).
-  - El `Retry-After` que se responde es el fijo de 30 s, no el de Factus.
-  - El reintento, el circuit breaker y el `RateLimiter` llegarán juntos con **Resilience4j**, en el paso de resiliencia. Por eso no se escribió un limitador propio, que quedaría para tirar.
+- **Resiliencia:** resuelta en el [ADR 0010](0010-resiliencia-factus.md): reintentos cortos, un circuit breaker `factus` y un limitador de 100/min (el límite real es 120/min en la API y 60/min en `/oauth/token`), todo con Resilience4j.
 - **Doble escritura (ADR 0006, D4):** sigue presente. Si la DIAN valida y el `save` falla, la factura queda PENDING con un documento real en Factus.
   - Un reintento lo recupera por la idempotencia de Factus, porque el `reference_code` es el mismo UUID.
   - La solución prevista sigue siendo Outbox más una reconciliación que consulte `GET /v2/bills?filter[reference_code]=…`.
@@ -283,7 +280,7 @@ El último ocurre si la factura ISSUED en nuestra base no existe en esta cuenta 
 - **Enviar el `referenceCode` de la venta como `reference_code`:** si se reseteara la base o hubiera otro entorno en la misma cuenta, Factus devolvería una factura ajena sin avisar.
 - **Tolerancia en el total para decidir la identidad:** el total no identifica una factura; un redondeo distinto de nuestra propia factura no debe dejarla PENDING para siempre.
 - **`Rejected` ante una identidad distinta:** ocultaría que la DIAN validó un documento.
-- **Limitador de peticiones propio:** se descarta porque quedaría reemplazado por el `RateLimiter` de Resilience4j.
+- **Limitador de peticiones propio:** se descartó porque lo reemplazaba el `RateLimiter` de Resilience4j (ADR 0010).
 - **Renovar el token con un hilo programado:** agrega un ciclo de vida que gestionar. La renovación perezosa con margen, junto con el reintento del 401, cubre los mismos casos.
 - **Token en la base de datos:** no aporta nada con una sola instancia, y guardaría un secreto en la base.
 - **WebClient o un cliente declarativo (`@HttpExchange`):** WebClient trae la pila reactiva sin necesidad. Con un cliente declarativo, el manejo del 401 y de los códigos crudos quedaría menos explícito.
@@ -298,6 +295,6 @@ El último ocurre si la factura ISSUED en nuestra base no existe en esta cuenta 
 - Las fallas técnicas nunca cierran una factura: siempre se puede reintentar sin riesgo de duplicarla.
 
 **Negativas**
-- Un pico de emisiones puede chocar con el límite de Factus hasta que llegue Resilience4j.
+- ~~Un pico de emisiones puede chocar con el límite de Factus hasta que llegue Resilience4j.~~ Resuelto en el ADR 0010.
 - Hay comportamiento basado en respuestas no observadas (409, `is_validated: false`, 429, 5xx), marcado como tal.
 - Cambio incompatible en la API (`pdfUrl`) y una migración que exige vaciar la base local si tiene facturas ISSUED.

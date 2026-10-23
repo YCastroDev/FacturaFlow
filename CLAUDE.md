@@ -21,6 +21,7 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 | Documentación de la API | springdoc-openapi 3.1.1 (Swagger UI) |
 | Escaneo de secretos | gitleaks v8.30.1 (vía Docker) |
 | Mock HTTP (tests del adaptador de Factus) | WireMock 3.13.1 (`wiremock-standalone`) |
+| Resiliencia (llamadas a Factus) | Resilience4j 2.4.0 (`resilience4j-spring-boot4`, versión fijada en el pom) |
 
 ## Estructura
 
@@ -100,9 +101,18 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 - Códigos de catálogo solo en `FactusCodes` (`switch` exhaustivos) y cada uno con su fila en `FactusCodesTest`. Un código nuevo exige verificarlo contra el sandbox.
 - `reference_code` = `InvoiceId` (UUID). Una respuesta con otro `reference_code` o con otra identificación del cliente es otra factura: falla técnica y log ERROR, nunca `Issued`. Si solo difiere el total: `Issued` con el total oficial y log WARN.
 - Resultados según la tabla del ADR 0008, la misma para facturas y notas crédito: solo un 422 por los datos del documento es `Rejected`; todo lo demás (incluido `is_validated: false`, 409, 429, 5xx, timeouts y un 422 de configuración) es falla técnica. `data.errors` con `is_validated: true` son notificaciones, no errores.
-- Nunca borrar nada en Factus. Sin reintentos ni limitador propios (salvo el reintento único ante un 401): la resiliencia llega con Resilience4j.
+- Nunca borrar nada en Factus. Sin reintentos ni limitadores a mano: la resiliencia es la del ADR 0010 (abajo); el 401 lo sigue resolviendo `FactusClient` con un único reintento.
 - **Nunca registrar** tokens, `client_secret`, contraseñas ni `public_url` (enlace-capacidad); los `toString` de propiedades y tokens enmascaran. Los mensajes de error solo llevan el estado HTTP, nunca el cuerpo.
 - Tests con WireMock y las respuestas reales del spike (`src/test/resources/factus/`, con los casos no observados marcados como NO VERIFICADOS). Los de sandbox real llevan `@Tag("sandbox")` y no corren por defecto; crean facturas reales: con moderación y `send_email=false`.
+
+## Reglas de resiliencia (ADR 0010)
+
+- Solo en el adaptador de Factus, programática (sin anotaciones): `FactusResilience` envuelve CADA llamada HTTP en `FactusHttp.exchange` con Retry → CircuitBreaker → RateLimiter. Toda llamada nueva a Factus debe pasar por `FactusHttp`.
+- Se reintenta (máx. 3 intentos, backoff con jitter) solo ante timeouts, errores de red, 5xx, 429 (si su `Retry-After` ≤ 5 s) y 409 "pendiente". NUNCA ante 422, 401 (lo maneja `FactusClient`) ni una identidad distinta (se detecta después, en el intérprete).
+- Un solo circuito `factus`. Cuentan como falla: timeouts, red, 5xx y 429; el 409 y el limitador se ignoran; los rechazos de la DIAN no cuentan.
+- Circuito abierto o limitador agotado → `ElectronicInvoiceProviderUnavailableException` con `reason` y `retryAfter` → 503 con ese `Retry-After`.
+- El health no depende de Factus: el componente `factus` siempre es UP (detalles en `/actuator/health/providers`) y no entra en liveness/readiness.
+- Los valores viven en `invoicing.factus.resilience.*` (`application.yml`); los tests del adaptador usan `FactusTestData.singleAttempt()` salvo `FactusResilienceTest`.
 
 ## Convenciones
 
@@ -146,6 +156,11 @@ MVN_ENV_FILE=.env ./scripts/mvn.sh invoicing test -Dgroups=sandbox -DexcludedGro
 
 # Levantar con Factus en vez del proveedor falso (o INVOICING_PROVIDER=factus en .env)
 INVOICING_PROVIDER=factus docker compose --env-file .env -f infra/docker-compose.yml up --build -d
+
+# Estado de la resiliencia hacia Factus (con INVOICING_PROVIDER=factus)
+curl -s http://localhost:8081/actuator/health/providers
+curl -s http://localhost:8081/actuator/circuitbreakers
+curl -s http://localhost:8081/actuator/metrics/resilience4j.circuitbreaker.not.permitted.calls
 
 # Escaneo de secretos de todo el repo
 ./scripts/check-secrets.sh

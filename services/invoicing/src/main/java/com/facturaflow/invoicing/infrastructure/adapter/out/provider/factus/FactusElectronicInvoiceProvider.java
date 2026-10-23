@@ -1,6 +1,8 @@
 package com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus;
 
 import com.facturaflow.invoicing.application.exception.ElectronicInvoiceProviderUnavailableException;
+import com.facturaflow.invoicing.application.exception.ElectronicInvoiceProviderUnavailableException.Document;
+import com.facturaflow.invoicing.application.exception.ElectronicInvoiceProviderUnavailableException.Reason;
 import com.facturaflow.invoicing.application.port.out.ElectronicCreditNoteProvider;
 import com.facturaflow.invoicing.application.port.out.ElectronicInvoiceProvider;
 import com.facturaflow.invoicing.application.port.out.InvoicePdf;
@@ -8,7 +10,12 @@ import com.facturaflow.invoicing.application.port.out.IssuanceResult;
 import com.facturaflow.invoicing.domain.model.CreditNote;
 import com.facturaflow.invoicing.domain.model.ElectronicDocument;
 import com.facturaflow.invoicing.domain.model.Invoice;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import io.github.resilience4j.ratelimiter.RateLimiterRegistry;
+import io.github.resilience4j.retry.RetryRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
+import java.util.UUID;
 import tools.jackson.core.JacksonException;
 
 /**
@@ -18,8 +25,8 @@ import tools.jackson.core.JacksonException;
  * ({@link FactusClient}, con un solo {@link TokenProvider} para los dos) e interpreta la respuesta con
  * la misma tabla ({@link FactusResponseInterpreter}). Toda falla
  * técnica sale como {@link ElectronicInvoiceProviderUnavailableException}; ningún tipo de Factus sale
- * de este paquete. Nunca borra nada en Factus y no reintenta (más allá del 401): la resiliencia
- * llegará con Resilience4j.
+ * de este paquete, con su motivo y su {@code Retry-After}. Nunca borra nada en Factus. Los reintentos,
+ * el circuit breaker y el limitador viven en {@link FactusResilience}, debajo del cliente (ADR 0010).
  */
 final class FactusElectronicInvoiceProvider implements ElectronicInvoiceProvider, ElectronicCreditNoteProvider {
 
@@ -36,9 +43,16 @@ final class FactusElectronicInvoiceProvider implements ElectronicInvoiceProvider
         this.interpreter = interpreter;
     }
 
-    /** Arma el adaptador completo; lo usan la configuración de Spring y los tests (sin Spring). */
+    /** Arma el adaptador con registros propios (tests sin Spring). */
     static FactusElectronicInvoiceProvider create(FactusProperties properties, Clock clock) {
-        FactusHttp http = new FactusHttp(properties);
+        return create(properties, clock, new FactusResilience(properties.resilience(), CircuitBreakerRegistry.ofDefaults(),
+                RetryRegistry.ofDefaults(), RateLimiterRegistry.ofDefaults(), new SimpleMeterRegistry()));
+    }
+
+    /** Arma el adaptador completo; la configuración de Spring le pasa los registros de Resilience4j. */
+    static FactusElectronicInvoiceProvider create(FactusProperties properties, Clock clock,
+                                                  FactusResilience resilience) {
+        FactusHttp http = new FactusHttp(properties, resilience);
         TokenProvider tokens = new InMemoryTokenProvider(new FactusTokenEndpoint(http, properties), clock,
                 properties.tokenRefreshMargin());
         return new FactusElectronicInvoiceProvider(
@@ -54,7 +68,7 @@ final class FactusElectronicInvoiceProvider implements ElectronicInvoiceProvider
             byte[] json = FactusJson.MAPPER.writeValueAsBytes(translator.toBill(invoice));
             return interpreter.issuance(invoice, client.validateBill(json));
         } catch (FactusTechnicalException | JacksonException e) {
-            throw new ElectronicInvoiceProviderUnavailableException(invoice.id().value(), e.getMessage(), e);
+            throw unavailable(Document.INVOICE, invoice.id().value(), e);
         }
     }
 
@@ -65,7 +79,7 @@ final class FactusElectronicInvoiceProvider implements ElectronicInvoiceProvider
         try {
             return interpreter.pdf(number, client.downloadPdf(number));
         } catch (FactusTechnicalException e) {
-            throw new ElectronicInvoiceProviderUnavailableException(issuedInvoice.id().value(), e.getMessage(), e);
+            throw unavailable(Document.INVOICE, issuedInvoice.id().value(), e);
         }
     }
 
@@ -76,8 +90,7 @@ final class FactusElectronicInvoiceProvider implements ElectronicInvoiceProvider
                     creditedInvoice));
             return interpreter.creditNoteIssuance(creditNote, creditedInvoice, client.validateCreditNote(json));
         } catch (FactusTechnicalException | JacksonException e) {
-            throw ElectronicInvoiceProviderUnavailableException.forCreditNote(creditNote.id().value(), e.getMessage(),
-                    e);
+            throw unavailable(Document.CREDIT_NOTE, creditNote.id().value(), e);
         }
     }
 
@@ -89,8 +102,17 @@ final class FactusElectronicInvoiceProvider implements ElectronicInvoiceProvider
         try {
             return interpreter.pdf(number, client.downloadCreditNotePdf(number));
         } catch (FactusTechnicalException e) {
-            throw ElectronicInvoiceProviderUnavailableException.forCreditNote(issuedCreditNote.id().value(),
-                    e.getMessage(), e);
+            throw unavailable(Document.CREDIT_NOTE, issuedCreditNote.id().value(), e);
         }
+    }
+
+    /** Traduce la falla técnica conservando el motivo y el {@code Retry-After} que verá el cliente. */
+    private static ElectronicInvoiceProviderUnavailableException unavailable(Document document, UUID id,
+                                                                             RuntimeException error) {
+        return error instanceof FactusTechnicalException technical
+                ? ElectronicInvoiceProviderUnavailableException.of(document, id, technical.getMessage(), technical,
+                        technical.reason(), technical.retryAfter())
+                : ElectronicInvoiceProviderUnavailableException.of(document, id, error.getMessage(), error,
+                        Reason.FAILURE, null);
     }
 }

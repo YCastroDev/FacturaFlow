@@ -38,13 +38,41 @@ invoicing:
     numbering-range-id: ${FACTUS_NUMBERING_RANGE_ID:}
     # Obligatorio con Factus: rango de las notas crédito (la cuenta tiene varios; spike 0002).
     credit-note-numbering-range-id: ${FACTUS_CREDIT_NOTE_NUMBERING_RANGE_ID:}
-    connect-timeout: 5s
-    # La validación ante la DIAN tardó ~2,3 s en el spike; el resto, menos de 1 s.
-    read-timeout: 30s
+    # Conectar a Factus toma milisegundos: 3 s ya indica un problema (ADR 0010).
+    connect-timeout: 3s
+    # La validación ante la DIAN tardó ~2,3 s en el spike; el PDF, menos de 1 s. Con 3 intentos, 30 s
+    # dejaría una petición en más de 90 s; con 10 s, el peor caso es ~47 s (ADR 0010).
+    read-timeout: 10s
     # El token se renueva este tiempo antes de su vencimiento (expires_in).
     token-refresh-margin: 60s
     # Cloudflare, delante de Factus, bloquea algunos User-Agent genéricos (spike 0001).
     user-agent: FacturaFlow-Invoicing/0.0.1
+    # Resiliencia de TODAS las llamadas a Factus (facturas, notas, PDF y token). Por qué cada valor: ADR 0010.
+    resilience:
+      retry:
+        # Intentos en total (1 + 2 reintentos), solo ante fallas técnicas: timeout, red, 5xx, 429, 409.
+        max-attempts: 3
+        # Espera exponencial con jitter: ~250–750 ms y ~500–1500 ms. El jitter evita reintentos sincronizados.
+        initial-wait: 500ms
+        multiplier: 2.0
+        jitter: 0.5
+        # Un 429 con Retry-After de hasta 5 s se reintenta tras esa espera; más largo, 503 con ese Retry-After.
+        max-retry-after: 5s
+      circuit-breaker:
+        # Ventana de las últimas 10 llamadas; se evalúa desde la 5.ª, así 1 o 2 fallas sueltas no lo abren.
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        # Abre con la mitad de las llamadas fallidas: con 3 intentos por petición, ~2 emisiones fallidas.
+        failure-rate-threshold: 50
+        # Abierto 30 s (el Retry-After que ya usábamos); luego 2 llamadas de prueba deciden si cierra.
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 2
+      rate-limiter:
+        # 10 cada 6 s = 100/min, por debajo del límite real (120/min). Ventanas cortas: ningún minuto pasa de 110.
+        limit-for-period: 10
+        limit-refresh-period: 6s
+        # Esperar un permiso como máximo 2 s; si no llega, 503 (sin reintentos).
+        timeout: 2s
 
 springdoc:
   swagger-ui:
@@ -58,12 +86,33 @@ server:
     include-message: never
     include-stacktrace: never
 
+# Actuator (ADR 0010). Solo lectura y nada sensible. En producción iría en un puerto de gestión aparte y
+# con autenticación; aquí el puerto solo se publica en 127.0.0.1 (docker-compose).
 management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        # circuitbreakers, circuitbreakerevents, retries y ratelimiters los aporta Resilience4j.
+        include: health,info,metrics,circuitbreakers,circuitbreakerevents,retries,ratelimiters
   endpoint:
     health:
       show-details: never
       show-components: never
+      # El componente "factus" solo existe con invoicing.provider=factus; con el falso, el grupo queda vacío
+      # en vez de impedir el arranque.
+      validate-group-membership: false
+      group:
+        # /actuator/health/providers: el componente informativo "factus" con sus detalles (estado del circuito).
+        # Siempre UP: Factus caído no baja el health ni entra en liveness/readiness. (Un grupo no puede
+        # llamarse igual que un componente.)
+        providers:
+          include: factus
+          show-details: always
+          show-components: always
+  health:
+    # Los indicadores de Resilience4j bajarían el health (o usarían un estado CIRCUIT_OPEN) con el circuito
+    # abierto; se usa el componente propio "factus" en su lugar.
+    circuitbreakers:
+      enabled: false
+    ratelimiters:
+      enabled: false

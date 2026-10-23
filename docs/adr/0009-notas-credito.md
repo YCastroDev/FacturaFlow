@@ -250,7 +250,10 @@ Sigue los criterios del ADR 0005 (entidades separadas, mapeo a mano, entity grap
      - Si existe pero está pendiente en Factus (el 409 de la documentación), no se cancela.
      - La consulta por `reference_code` existe para facturas (spike 0001, sección 8); para notas falta verificarla.
   2. **Reconciliación periódica**, el mismo mecanismo previsto para la doble escritura del ADR 0006 (decisión 5): un proceso que recorre las notas PENDING antiguas, consulta a Factus y las resuelve (ISSUED, o cancelables) sin intervención manual.
-- **Mitigación prevista:** los reintentos automáticos con backoff del paso de resiliencia (Resilience4j, ADR 0008) reducirán el caso: la mayoría de las fallas técnicas son transitorias, y la nota terminará emitida sin intervención.
+- **Mitigación (ADR 0010, ya implementada):** cada emisión hace hasta 3 intentos con backoff ante timeouts, errores de red, 5xx, 429 y el 409 "pendiente". La mayoría de las fallas técnicas son transitorias, así que la nota termina ISSUED en la misma petición en lugar de quedar PENDING.
+  - **Timeouts:** el caso más peligroso, un timeout en el que Factus **sí** validó la nota, también se resuelve. El reintento envía el mismo `reference_code`, Factus devuelve la nota existente (idempotencia ciega) y la verificación de identidad confirma que es la nuestra.
+  - **Circuito abierto:** no se intenta nada y la nota sigue PENDING sin riesgo, porque nada salió hacia Factus.
+  - **Lo que queda:** una nota PENDING tras una caída larga sigue bloqueando sus cantidades hasta que alguien reintente su emisión. La cancelación verificada y la reconciliación siguen pendientes y llegarán con RabbitMQ.
 - **Hoy:** no se implementa. En un proyecto de portafolio solo afectaría a datos de prueba, y la solución correcta requiere la consulta a Factus de la fase siguiente.
 
 **Otras limitaciones:**

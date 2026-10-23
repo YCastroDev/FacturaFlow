@@ -46,6 +46,7 @@ import com.facturaflow.invoicing.domain.model.TaxType;
 import com.facturaflow.invoicing.domain.model.UnitOfMeasure;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
@@ -494,6 +495,37 @@ class InvoiceControllerTest {
         assertProblem(result, HttpStatus.SERVICE_UNAVAILABLE, "provider-unavailable");
         assertThat(result).hasHeader("Retry-After", "30");
         assertThat(result).bodyText().doesNotContain("Connection refused", "factus-internal-host", "socket");
+    }
+
+    @Test
+    @DisplayName("con el circuito de Factus abierto responde 503 con el Retry-After que falta y el motivo circuit-open")
+    void openCircuitReturns503WithDynamicRetryAfter() {
+        UUID id = UUID.randomUUID();
+        given(issueInvoice.issue(any())).willThrow(ElectronicInvoiceProviderUnavailableException.of(
+                ElectronicInvoiceProviderUnavailableException.Document.INVOICE, id, "circuito abierto", null,
+                ElectronicInvoiceProviderUnavailableException.Reason.CIRCUIT_OPEN, Duration.ofMillis(12_300)));
+
+        MvcTestResult result = mvc.post().uri(URL + "/" + id + "/issue").exchange();
+
+        assertProblem(result, HttpStatus.SERVICE_UNAVAILABLE, "provider-unavailable");
+        assertThat(result).hasHeader("Retry-After", "13");
+        assertThat(result).bodyJson().extractingPath("$.reason").isEqualTo("circuit-open");
+        assertThat(result).bodyJson().extractingPath("$.detail").asString()
+                .contains("falló varias veces seguidas", "La factura sigue PENDING", "en 13 s");
+    }
+
+    @Test
+    @DisplayName("con el límite de peticiones agotado responde 503 con el motivo rate-limited")
+    void rateLimitedReturns503() {
+        UUID id = UUID.randomUUID();
+        given(issueInvoice.issue(any())).willThrow(ElectronicInvoiceProviderUnavailableException.of(
+                ElectronicInvoiceProviderUnavailableException.Document.INVOICE, id, "limitador", null,
+                ElectronicInvoiceProviderUnavailableException.Reason.RATE_LIMITED, Duration.ofSeconds(6)));
+
+        MvcTestResult result = mvc.post().uri(URL + "/" + id + "/issue").exchange();
+
+        assertThat(result).hasHeader("Retry-After", "6");
+        assertThat(result).bodyJson().extractingPath("$.reason").isEqualTo("rate-limited");
     }
 
     @Test

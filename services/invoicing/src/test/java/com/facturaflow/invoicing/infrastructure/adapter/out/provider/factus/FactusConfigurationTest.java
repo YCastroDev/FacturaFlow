@@ -31,7 +31,20 @@ class FactusConfigurationTest {
             "invoicing.factus.connect-timeout=5s",
             "invoicing.factus.read-timeout=30s",
             "invoicing.factus.token-refresh-margin=60s",
-            "invoicing.factus.user-agent=FacturaFlow-Test/1.0"};
+            "invoicing.factus.user-agent=FacturaFlow-Test/1.0",
+            "invoicing.factus.resilience.retry.max-attempts=3",
+            "invoicing.factus.resilience.retry.initial-wait=500ms",
+            "invoicing.factus.resilience.retry.multiplier=2.0",
+            "invoicing.factus.resilience.retry.jitter=0.5",
+            "invoicing.factus.resilience.retry.max-retry-after=5s",
+            "invoicing.factus.resilience.circuit-breaker.sliding-window-size=10",
+            "invoicing.factus.resilience.circuit-breaker.minimum-number-of-calls=5",
+            "invoicing.factus.resilience.circuit-breaker.failure-rate-threshold=50",
+            "invoicing.factus.resilience.circuit-breaker.wait-duration-in-open-state=30s",
+            "invoicing.factus.resilience.circuit-breaker.permitted-number-of-calls-in-half-open-state=2",
+            "invoicing.factus.resilience.rate-limiter.limit-for-period=10",
+            "invoicing.factus.resilience.rate-limiter.limit-refresh-period=6s",
+            "invoicing.factus.resilience.rate-limiter.timeout=2s"};
 
     @Test
     @DisplayName("con invoicing.provider=factus los dos puertos (facturas y notas) los implementa el MISMO adaptador")
@@ -43,6 +56,9 @@ class FactusConfigurationTest {
                     .isSameAs(context.getBean(ElectronicCreditNoteProvider.class));
             assertThat(context.getBean(FactusProperties.class).creditNoteNumberingRangeId()).isEqualTo(390);
             assertThat(context.getBean(FactusProperties.class).numberingRangeId()).isNull();
+            assertThat(context.getBean(FactusProperties.class).resilience().rateLimiter().limitForPeriod())
+                    .isEqualTo(10);
+            assertThat(context).hasSingleBean(FactusHealthIndicator.class);
         });
     }
 
@@ -74,6 +90,13 @@ class FactusConfigurationTest {
                     assertThat(context).hasFailed();
                     assertThat(stackTrace(context.getStartupFailure())).contains("creditNoteNumberingRangeId");
                 });
+    }
+
+    @Test
+    @DisplayName("una configuración de resiliencia inválida (p. ej. 0 intentos) impide el arranque")
+    void failsFastWithInvalidResilience() {
+        runner.withPropertyValues(VALID).withPropertyValues("invoicing.factus.resilience.retry.max-attempts=0")
+                .run(context -> assertThat(context).hasFailed());
     }
 
     @Test

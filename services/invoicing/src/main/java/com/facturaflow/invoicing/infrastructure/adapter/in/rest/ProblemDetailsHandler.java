@@ -18,6 +18,7 @@ import com.facturaflow.invoicing.domain.exception.InvalidInvoiceStateTransitionE
 import com.facturaflow.invoicing.domain.exception.InvoiceNotCreditableException;
 import java.net.URI;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -210,16 +211,34 @@ class ProblemDetailsHandler extends ResponseEntityExceptionHandler {
 
     // ----- 503 / 500 -----
 
-    /** El mensaje de la excepción es técnico (para el log); al cliente solo se le dice que reintente. */
+    /**
+     * El mensaje de la excepción es técnico (para el log); al cliente solo se le dice por qué y cuándo
+     * reintentar (ADR 0010). {@code Retry-After} es el que dio el adaptador (p. ej. lo que falta para que
+     * el circuito vuelva a probar) o {@value #RETRY_AFTER_SECONDS} s si no lo sabe.
+     */
     @ExceptionHandler(ElectronicInvoiceProviderUnavailableException.class)
     ResponseEntity<ProblemDetail> providerUnavailable(ElectronicInvoiceProviderUnavailableException ex) {
-        LOG.warn("Proveedor de facturación no disponible: {}", ex.getMessage(), ex.getCause());
+        if (ex.reason() == ElectronicInvoiceProviderUnavailableException.Reason.FAILURE) {
+            LOG.warn("Proveedor de facturación no disponible: {}", ex.getMessage(), ex.getCause());
+        } else {
+            // Circuito abierto o limitador: es una decisión nuestra, no una falla nueva; sin traza en cada petición.
+            LOG.warn("Proveedor de facturación no disponible: {}", ex.getMessage());
+        }
+        String seconds = ex.retryAfter()
+                .map(duration -> Long.toString(Math.max(1, (duration.toMillis() + 999) / 1000)))
+                .orElse(RETRY_AFTER_SECONDS);
+        String why = switch (ex.reason()) {
+            case FAILURE -> "El proveedor de facturación electrónica no está disponible.";
+            case CIRCUIT_OPEN -> "El proveedor de facturación electrónica falló varias veces seguidas y se dejó de "
+                    + "llamar por un momento para no saturarlo.";
+            case RATE_LIMITED -> "Se alcanzó el límite de peticiones al proveedor de facturación electrónica.";
+        };
         ProblemDetail problem = problem(HttpStatus.SERVICE_UNAVAILABLE, "provider-unavailable",
-                "Proveedor no disponible",
-                "El proveedor de facturación electrónica no está disponible. " + ex.document().subject()
-                        + " sigue PENDING; reintente la emisión más tarde.");
+                "Proveedor no disponible", why + " " + ex.document().subject() + " sigue PENDING; reintente la "
+                        + "emisión en " + seconds + " s.");
+        problem.setProperty("reason", ex.reason().name().toLowerCase(Locale.ROOT).replace('_', '-'));
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                .header(HttpHeaders.RETRY_AFTER, RETRY_AFTER_SECONDS)
+                .header(HttpHeaders.RETRY_AFTER, seconds)
                 .body(problem);
     }
 

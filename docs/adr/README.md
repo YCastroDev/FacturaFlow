@@ -13,5 +13,6 @@ Un ADR es un documento corto que registra una decisión técnica importante, su 
 | [0007](0007-datos-fiscales-del-cliente.md) | Datos fiscales del cliente (tipo de persona, situación tributaria, municipio DIVIPOLA) y unidades de medida emitibles | Aceptado (reemplaza parcialmente al 0004) |
 | [0008](0008-integracion-con-factus.md) | Integración con Factus: Anti-Corruption Layer, token en memoria, mapeo de respuestas, verificación de identidad y PDF | Aceptado (completa el 0006) |
 | [0009](0009-notas-credito.md) | Notas crédito: agregado separado, saldo por cantidades y bloqueo optimista sobre la factura | Aceptado (completa el 0005 y el 0006) |
+| [0010](0010-resiliencia-factus.md) | Resiliencia de las llamadas a Factus: reintentos, circuit breaker y limitador (Resilience4j), health informativo | Aceptado (completa el 0008) |
 
 Para una nueva decisión: copia el formato de un ADR existente, usa el siguiente número y agrégalo a esta tabla. Un ADR aceptado no cambia su decisión: si la decisión cambia, se crea uno nuevo que lo reemplaza. Sí se pueden agregar notas que no la alteren (p. ej. cómo se verifica).
