@@ -2,6 +2,7 @@ package com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.facturaflow.invoicing.domain.model.CreditNoteReason;
 import com.facturaflow.invoicing.domain.model.DocumentType;
 import com.facturaflow.invoicing.domain.model.FiscalResponsibility;
 import com.facturaflow.invoicing.domain.model.PaymentMethod;
@@ -20,7 +21,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 
 /**
  * Las tablas de equivalencia, una fila por valor del dominio, contra los códigos que el sandbox
- * aceptó en el spike 0001 (sección 9). Si un código cambia aquí, hay que volver a verificarlo.
+ * aceptó en el spike 0001 (sección 9) y en el spike 0002 (sección 1, notas crédito). Si un código cambia aquí, hay que volver a verificarlo.
  */
 class FactusCodesTest {
 
@@ -98,5 +99,20 @@ class FactusCodesTest {
 
     private static <E> void assertUnique(E[] values, Function<E, String> code) {
         assertThat(Arrays.stream(values).map(code).distinct().count()).isEqualTo(values.length);
+    }
+
+    @ParameterizedTest(name = "{0} → {1}")
+    @CsvSource({"PARTIAL_RETURN, 1", "TOTAL_ANNULMENT, 2"})
+    @DisplayName("cada motivo de nota crédito tiene su correction_concept_code (devolución parcial 1, anulación 2)")
+    void creditNoteReasons(CreditNoteReason reason, String code) {
+        assertThat(FactusCodes.correctionConcept(reason)).isEqualTo(code);
+        assertThat(Arrays.stream(CreditNoteReason.values()).map(FactusCodes::correctionConcept).distinct())
+                .hasSize(CreditNoteReason.values().length);
+    }
+
+    @Test
+    @DisplayName("la nota referencia una factura electrónica: customization_id 20")
+    void creditNoteCustomization() {
+        assertThat(FactusCodes.CREDIT_NOTE_REFERENCING_INVOICE).isEqualTo("20");
     }
 }

@@ -4,7 +4,9 @@
 
 Aceptado — 2026-10-22. Completa el ADR 0006: agrega el adaptador real del puerto `ElectronicInvoiceProvider`, la descarga del PDF y una fila a su tabla de errores. Reemplaza la "URL del PDF" del documento electrónico por los enlaces reales.
 
-> **Nota posterior (ADR 0009):** `ElectronicDocument.cufe` pasó a llamarse `uniqueCode` (CUFE o CUDE); la API de facturas conserva `cufe`. Mientras llega el adaptador de notas crédito, con `invoicing.provider=factus` su emisión y su PDF responden 503 (`FactusCreditNotesNotYetSupported`) y nada se envía a Factus.
+> **Notas posteriores (ADR 0009):**
+> - `ElectronicDocument.cufe` pasó a llamarse `uniqueCode` (CUFE o CUDE); la API de facturas conserva `cufe`.
+> - **Notas crédito con Factus** (2026-10-23): el mismo adaptador implementa también `ElectronicCreditNoteProvider`, con la misma tabla de resultados y la misma verificación de identidad. Ver la decisión 10. La propiedad nueva `credit-note-numbering-range-id` es obligatoria. Las decisiones 1 a 9 no cambian.
 
 ## Contexto
 
@@ -32,6 +34,7 @@ Hasta ahora la emisión usaba un proveedor falso (ADR 0006). El [spike 0001](../
 | `client-id`, `client-secret`, `username`, `password` | `FACTUS_*` | ninguno: vacío hace fallar el arranque |
 | `send-email` | `FACTUS_SEND_EMAIL` | `false` |
 | `numbering-range-id` | `FACTUS_NUMBERING_RANGE_ID` | vacío, que usa el rango por defecto de la cuenta |
+| `credit-note-numbering-range-id` (decisión 10) | `FACTUS_CREDIT_NOTE_NUMBERING_RANGE_ID` | ninguno: **obligatorio**, vacío hace fallar el arranque (en el sandbox: `390`) |
 | `connect-timeout` / `read-timeout` | — | 5 s / 30 s (la validación ante la DIAN tardó unos 2,3 s) |
 | `token-refresh-margin` | — | 60 s |
 | `user-agent` | — | `FacturaFlow-Invoicing/0.0.1` |
@@ -77,7 +80,8 @@ Todo vive en `infrastructure.adapter.out.provider.factus` y es package-private:
 | Pieza | Responsabilidad |
 |---|---|
 | `FactusElectronicInvoiceProvider` | Implementa el puerto: traduce, envía e interpreta. Toda falla técnica sale como `ElectronicInvoiceProviderUnavailableException` |
-| `FactusBillTranslator` | `Invoice` → `BillRequest` |
+| `FactusBillTranslator` | `Invoice` → `BillRequest`; también arma el cliente y los ítems de las notas |
+| `FactusCreditNoteTranslator` (decisión 10) | `CreditNote` + su `Invoice` → `CreditNoteRequest` |
 | `FactusCodes` | Tablas de equivalencia dominio → códigos DIAN, con `switch` exhaustivos |
 | `FactusClient` / `FactusHttp` / `FactusTokenEndpoint` | Llamadas HTTP y autenticación |
 | `FactusResponseInterpreter` | La tabla de resultados (decisión 5) |
@@ -125,7 +129,7 @@ Toda falla técnica es un 503 con `Retry-After: 30`; el adaptador **nunca** devu
 - **422 de configuración:** un 422 sobre `numbering_range_id` o `send_email` no es culpa de la factura. Marcarla REJECTED sería un estado final que no le corresponde, así que es una falla técnica.
 - **Notificaciones:** `data.errors` con `is_validated: true` se registra, pero no cambia el resultado (spike, sorpresa 8).
 
-**Nunca se borra nada en Factus:** el adaptador solo usa `POST /v2/bills/validate`, `GET /v2/bills/{number}/download-pdf` y `POST /oauth/token`.
+**Nunca se borra nada en Factus:** el adaptador solo usa `POST /v2/bills/validate`, `GET /v2/bills/{number}/download-pdf`, `POST /v2/credit-notes/validate`, `GET /v2/credit-notes/{number}/download-pdf` y `POST /oauth/token`.
 
 ### 6. ¿Es nuestra factura? Identidad frente a total
 
@@ -187,7 +191,8 @@ Si otro proveedor algún día no ofreciera vista pública, `publicUrl` pasaría 
 | `InMemoryTokenProviderTest` | Margen, rotación, respaldo con contraseña y **concurrencia**: 64 hilos sin token → una sola autenticación; 64 hilos con el token vencido → un solo refresh; 32 hilos con 401 → una sola renovación |
 | `FactusBillTranslatorTest`, `FactusCodesTest` | Las peticiones y los códigos verificados en el spike |
 | `FactusConfigurationTest` | La activación por propiedad, el arranque fallido sin credenciales y el `toString` enmascarado |
-| `FactusSandboxTest` (`@Tag("sandbox")`) | Contra el sandbox **real**: emite una factura, la reenvía (mismo número), baja el PDF y provoca un 422 que no crea nada |
+| `FactusSandboxTest` (`@Tag("sandbox")`) | Contra el sandbox **real**: emite una factura, la reenvía (mismo número), baja el PDF y provoca un 422 que no crea nada. Desde la decisión 10, además, acredita una factura real con una devolución parcial, reenvía la nota (mismo número) y baja su PDF |
+| `FactusCreditNoteProviderTest` (WireMock, decisión 10) | Notas crédito con las respuestas reales del spike 0002: la petición exacta, el CUDE, `CBF02` como notificación, las tres verificaciones de identidad, el total distinto con WARN, el 422 de datos, el de rango, el de factura inexistente y el PDF |
 
 **Fixtures de WireMock.** Son las respuestas reales del spike, sanitizadas: sin el bloque `company` y con una `public_url` falsa. Los casos no observados están marcados como **NO VERIFICADOS** en `src/test/resources/factus/README.md`.
 
@@ -198,6 +203,59 @@ MVN_ENV_FILE=.env ./scripts/mvn.sh invoicing test -Dgroups=sandbox -DexcludedGro
 ```
 
 Docker inyecta el `.env` (`--env-file`) sin que el script lo lea.
+
+### 10. Notas crédito (ADR 0009, spike 0002)
+
+**Se extiende el ACL sin duplicarlo.** `FactusElectronicInvoiceProvider` implementa los dos puertos y es un solo bean. Facturas y notas comparten:
+- el `FactusHttp` (timeouts y User-Agent);
+- el `TokenProvider` (un solo token para los dos);
+- el `FactusClient`, con el reintento único ante un 401;
+- las tablas de `FactusCodes`.
+
+`FactusResponseInterpreter` aplica **una sola** tabla de resultados (decisión 5) a los dos documentos. Las diferencias viven en dos piezas:
+- **lo que se espera** de la respuesta: el sujeto de los mensajes, el `reference_code`, el cliente, la factura acreditada, el total y los campos de configuración;
+- **un lector por forma de respuesta**, que lleva cada una a una vista común.
+
+**Petición** (`FactusCreditNoteTranslator`; verificada en el sandbox con `FactusSandboxTest`):
+
+| Campo | Valor |
+|---|---|
+| `reference_code` | el `CreditNoteId` (UUID), por la misma idempotencia ciega que en facturas |
+| `correction_concept_code` | `FactusCodes.correctionConcept`: `PARTIAL_RETURN` → `1`, `TOTAL_ANNULMENT` → `2` |
+| `customization_id` | `20`: "nota crédito que referencia una factura electrónica" |
+| `bill_number` | el número que la DIAN asignó a nuestra factura |
+| `numbering_range_id` | `credit-note-numbering-range-id`: obligatorio, porque la cuenta tiene dos rangos de notas |
+| `customer` | **el de la factura**, con el mismo código que la factura (`FactusBillTranslator.customer`). Factus lo exige y no lo toma de la factura |
+| `items` | cada línea acreditada, con el mismo código que los ítems de la factura (`FactusBillTranslator.item`) |
+| `payment_details` | **contado** (`1`), con el medio de pago de la factura y el total de la nota. La devolución no abre un plazo nuevo, y repetir el vencimiento de una factura a crédito ya vencida daría un 422 |
+| `send_email` | el mismo `send-email` de las facturas |
+
+**Respuesta.** Tiene tres diferencias reales con la de la factura (spike 0002, sorpresa 5):
+- el código único llega en `cude`;
+- `errors` es una **lista de textos**. Se registran solo los códigos de regla (`CBF02`, `RUT01`) como notificaciones;
+- trae `bill`, con la factura acreditada.
+
+`CBF02` ("no se informó la factura referenciada") aparece siempre en habilitación aunque la referencia llegue. Con `is_validated: true` es una notificación, **no** un rechazo.
+
+**Identidad (decisión 6, ampliada).** Antes de marcar la nota emitida se verifican tres cosas:
+- el `reference_code`;
+- la identificación del cliente (la de **nuestra factura**);
+- que `bill.number` sea el número de nuestra factura.
+
+Si cualquiera difiere, o falta `bill`, es otra nota: falla técnica, log ERROR con lo esperado y lo recibido, y la nota sigue PENDING. Si solo difiere el total, se guarda el oficial con un WARN.
+
+**422 de configuración, para notas.** Tres campos no son culpa de la nota y dan falla técnica, con un log ERROR que dice qué revisar:
+- `numbering_range_id` → `FACTUS_CREDIT_NOTE_NUMBERING_RANGE_ID`;
+- `send_email`;
+- `bill_number` ("La factura referenciada no existe.").
+
+El último ocurre si la factura ISSUED en nuestra base no existe en esta cuenta de Factus: por ejemplo, se emitió con el proveedor falso o en otro entorno. Marcar la nota REJECTED ocultaría ese problema de entorno.
+
+**Endpoints.**
+- `POST /v2/credit-notes/validate`;
+- `GET /v2/credit-notes/{number}/download-pdf`, con la misma forma Base64 que el PDF de facturas.
+
+**Casos no observados.** El `is_validated: false` y el 409 de notas siguen como **NO VERIFICADOS**: los tests reutilizan la respuesta real con el campo cambiado y el 409 de facturas.
 
 ## Limitaciones
 

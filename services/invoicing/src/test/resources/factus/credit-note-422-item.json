@@ -1,0 +1,12 @@
+{
+  "status": "Validation error",
+  "message": "Error de validación",
+  "data": {
+    "message": "Error de validación",
+    "errors": {
+      "items.0.price": [
+        "El campo precio es obligatorio."
+      ]
+    }
+  }
+}

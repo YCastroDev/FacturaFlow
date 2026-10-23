@@ -68,7 +68,7 @@ La variable `INVOICING_PROVIDER` decide quién emite (ver [ADR 0008](docs/adr/00
 | Valor | Proveedor | Necesita |
 |---|---|---|
 | `fake` (por defecto) | Simulado, sin red ni validez legal | nada |
-| `factus` | Sandbox real de Factus: la DIAN (habilitación) valida cada factura | `FACTUS_CLIENT_ID`, `FACTUS_CLIENT_SECRET`, `FACTUS_USERNAME` y `FACTUS_PASSWORD` en `.env` |
+| `factus` | Sandbox real de Factus: la DIAN (habilitación) valida cada factura y cada nota crédito | `FACTUS_CLIENT_ID`, `FACTUS_CLIENT_SECRET`, `FACTUS_USERNAME`, `FACTUS_PASSWORD` y `FACTUS_CREDIT_NOTE_NUMBERING_RANGE_ID` en `.env` |
 
 Para usar Factus, pon `INVOICING_PROVIDER=factus` en `.env`, o pásalo solo para esa ejecución:
 
@@ -76,7 +76,7 @@ Para usar Factus, pon `INVOICING_PROVIDER=factus` en `.env`, o pásalo solo para
 INVOICING_PROVIDER=factus docker compose --env-file .env -f infra/docker-compose.yml up --build -d
 ```
 
-Si falta una credencial, el servicio no arranca y el log dice cuál. Opcionales: `FACTUS_SEND_EMAIL` (por defecto `false`; en el sandbox, déjalo así) y `FACTUS_NUMBERING_RANGE_ID` (vacío = el rango por defecto de la cuenta). Con Factus, `SIMULAR_RECHAZO` y `SIMULAR_CAIDA` no tienen efecto: los rechazos y las caídas son reales. Las notas crédito con Factus aún no están implementadas: se pueden crear, pero emitirlas responde `503`.
+Si falta una credencial, el servicio no arranca y el log dice cuál. Opcionales: `FACTUS_SEND_EMAIL` (por defecto `false`; en el sandbox, déjalo así) y `FACTUS_NUMBERING_RANGE_ID` (vacío = el rango por defecto de la cuenta). Con Factus, `SIMULAR_RECHAZO` y `SIMULAR_CAIDA` no tienen efecto: los rechazos y las caídas son reales. Para las notas crédito con Factus también se necesita `FACTUS_CREDIT_NOTE_NUMBERING_RANGE_ID`; es obligatorio, y en el sandbox vale `390`.
 
 ### Proveedor de facturación falso
 
@@ -100,7 +100,7 @@ Los ejemplos a crédito usan un vencimiento lejano (`2030-01-31`) porque el venc
 
 ```bash
 ./scripts/mvn.sh invoicing test   # tests del servicio (Maven + Testcontainers + WireMock en Docker)
-# Tests contra el sandbox real de Factus (no corren por defecto; crean una factura real por ejecución)
+# Tests contra el sandbox real de Factus (no corren por defecto; crean 2 facturas y 1 nota crédito reales por ejecución)
 MVN_ENV_FILE=.env ./scripts/mvn.sh invoicing test -Dgroups=sandbox -DexcludedGroups=none
 ./scripts/check-secrets.sh        # escaneo de secretos en todo el repo
 ```

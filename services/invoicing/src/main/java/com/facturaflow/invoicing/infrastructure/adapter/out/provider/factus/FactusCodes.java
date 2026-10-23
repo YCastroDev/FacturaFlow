@@ -1,5 +1,6 @@
 package com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus;
 
+import com.facturaflow.invoicing.domain.model.CreditNoteReason;
 import com.facturaflow.invoicing.domain.model.DocumentType;
 import com.facturaflow.invoicing.domain.model.FiscalResponsibility;
 import com.facturaflow.invoicing.domain.model.PaymentMethod;
@@ -11,7 +12,8 @@ import com.facturaflow.invoicing.domain.model.UnitOfMeasure;
 
 /**
  * Tablas de equivalencia dominio → códigos de Factus/DIAN (ADR 0004, decisión A). Cada código se
- * verificó contra el sandbox en el spike 0001 (sección 9). Los {@code switch} son exhaustivos: si
+ * verificó contra el sandbox: los de facturas en el spike 0001 (sección 9) y los de notas crédito en
+ * el spike 0002 (sección 1). Los {@code switch} son exhaustivos: si
  * el dominio agrega un valor, esto deja de compilar hasta que se le asigne su código.
  */
 final class FactusCodes {
@@ -20,6 +22,8 @@ final class FactusCodes {
     static final String STANDARD_CODE_OWN = "999";
     /** Tributo IVA, que también marca una línea excluida (tarifa 0 con {@code is_excluded}). */
     static final String IVA = "01";
+    /** {@code customization_id} "Nota Crédito que referencia una factura electrónica" (spike 0002). */
+    static final String CREDIT_NOTE_REFERENCING_INVOICE = "20";
 
     private FactusCodes() {
     }
@@ -92,6 +96,14 @@ final class FactusCodes {
             case BANK_TRANSFER -> "47";
             case CREDIT_CARD -> "48";
             case DEBIT_CARD -> "49";
+        };
+    }
+
+    /** {@code correction_concept_code} (spike 0002, sección 1). */
+    static String correctionConcept(CreditNoteReason reason) {
+        return switch (reason) {
+            case PARTIAL_RETURN -> "1";
+            case TOTAL_ANNULMENT -> "2";
         };
     }
 

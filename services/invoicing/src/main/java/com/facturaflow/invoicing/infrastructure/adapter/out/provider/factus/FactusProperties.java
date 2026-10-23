@@ -14,6 +14,8 @@ import org.springframework.validation.annotation.Validated;
  * {@code invoicing.provider=factus}. {@link #toString()} nunca muestra las credenciales.
  *
  * @param numberingRangeId opcional: sin él, Factus usa el rango de facturación por defecto
+ * @param creditNoteNumberingRangeId obligatorio: la cuenta tiene varios rangos de nota crédito y
+ *        Factus exige elegir uno (spike 0002, sorpresa 4)
  * @param tokenRefreshMargin el token se renueva este tiempo antes de que venza
  */
 @Validated
@@ -26,6 +28,7 @@ record FactusProperties(
         @NotBlank String password,
         boolean sendEmail,
         @Positive Integer numberingRangeId,
+        @NotNull @Positive Integer creditNoteNumberingRangeId,
         @NotNull Duration connectTimeout,
         @NotNull Duration readTimeout,
         @NotNull Duration tokenRefreshMargin,
@@ -35,6 +38,7 @@ record FactusProperties(
     public String toString() {
         return "FactusProperties[baseUrl=" + baseUrl + ", clientId=***, clientSecret=***, username=***, "
                 + "password=***, sendEmail=" + sendEmail + ", numberingRangeId=" + numberingRangeId
+                + ", creditNoteNumberingRangeId=" + creditNoteNumberingRangeId
                 + ", connectTimeout=" + connectTimeout + ", readTimeout=" + readTimeout
                 + ", tokenRefreshMargin=" + tokenRefreshMargin + ", userAgent=" + userAgent + "]";
     }

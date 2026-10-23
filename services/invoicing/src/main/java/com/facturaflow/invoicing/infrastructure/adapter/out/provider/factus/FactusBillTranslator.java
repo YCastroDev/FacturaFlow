@@ -50,7 +50,8 @@ final class FactusBillTranslator {
                 List.of(paymentDetail(invoice)));
     }
 
-    private static Customer customer(CustomerSnapshot customer) {
+    /** El cliente de la factura; también lo usa la nota crédito (siempre el de la factura, ADR 0009). */
+    static Customer customer(CustomerSnapshot customer) {
         IdentificationDocument identification = customer.identification();
         return new Customer(
                 FactusCodes.documentType(identification.type()),
@@ -68,7 +69,8 @@ final class FactusBillTranslator {
                 customer.optionalPhone().map(PhoneNumber::value).orElse(null));
     }
 
-    private static Item item(InvoiceLine line) {
+    /** Un ítem a partir de una línea; también lo usa la nota crédito con la línea acreditada. */
+    static Item item(InvoiceLine line) {
         List<ItemTax> taxes = new ArrayList<>();
         if (line.excluded()) {
             taxes.add(new ItemTax(FactusCodes.IVA, BigDecimal.ZERO, true));

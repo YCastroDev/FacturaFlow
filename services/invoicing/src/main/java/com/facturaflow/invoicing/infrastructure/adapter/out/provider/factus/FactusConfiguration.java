@@ -1,6 +1,5 @@
 package com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus;
 
-import com.facturaflow.invoicing.application.port.out.ElectronicCreditNoteProvider;
 import java.time.Clock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,18 +21,13 @@ class FactusConfiguration {
 
     private static final Logger LOG = LoggerFactory.getLogger(FactusConfiguration.class);
 
+    /** Un solo bean para los dos puertos (facturas y notas crédito): comparten cliente HTTP y token. */
     @Bean
     FactusElectronicInvoiceProvider factusElectronicInvoiceProvider(FactusProperties properties, Clock clock) {
-        LOG.info("Proveedor de facturación electrónica: Factus ({}), send_email={}, numbering_range_id={}.",
-                properties.baseUrl(), properties.sendEmail(),
-                properties.numberingRangeId() == null ? "por defecto" : properties.numberingRangeId());
+        LOG.info("Proveedor de facturación electrónica: Factus ({}), send_email={}, numbering_range_id={}, "
+                        + "numbering_range_id de notas crédito={}.", properties.baseUrl(), properties.sendEmail(),
+                properties.numberingRangeId() == null ? "por defecto" : properties.numberingRangeId(),
+                properties.creditNoteNumberingRangeId());
         return FactusElectronicInvoiceProvider.create(properties, clock);
-    }
-
-    /** Temporal hasta que el adaptador de Factus implemente las notas crédito (ADR 0009). */
-    @Bean
-    ElectronicCreditNoteProvider factusElectronicCreditNoteProvider() {
-        LOG.warn("Notas crédito con Factus aún no implementadas: su emisión responde 503.");
-        return new FactusCreditNotesNotYetSupported();
     }
 }

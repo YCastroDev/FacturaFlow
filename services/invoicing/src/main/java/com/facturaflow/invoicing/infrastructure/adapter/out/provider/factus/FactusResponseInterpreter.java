@@ -3,15 +3,20 @@ package com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus;
 import com.facturaflow.invoicing.application.port.out.InvoicePdf;
 import com.facturaflow.invoicing.application.port.out.IssuanceResult;
 import com.facturaflow.invoicing.domain.exception.DomainException;
+import com.facturaflow.invoicing.domain.model.CreditNote;
 import com.facturaflow.invoicing.domain.model.ElectronicDocument;
 import com.facturaflow.invoicing.domain.model.IdentificationDocument;
 import com.facturaflow.invoicing.domain.model.Invoice;
 import com.facturaflow.invoicing.domain.model.Money;
 import com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus.FactusDtos.BillData;
 import com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus.FactusDtos.BillResponse;
+import com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus.FactusDtos.CreditNoteData;
+import com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus.FactusDtos.CreditNoteResponse;
+import com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus.FactusDtos.Links;
 import com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus.FactusDtos.PdfData;
 import com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus.FactusDtos.PdfResponse;
 import com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus.FactusDtos.ResponseCustomer;
+import com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus.FactusDtos.Totals;
 import com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus.FactusDtos.ValidationErrorResponse;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -28,22 +33,31 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.Function;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 
 /**
- * Decide qué significa cada respuesta de Factus (tabla del ADR 0008). Respuestas de negocio:
+ * Decide qué significa cada respuesta de Factus (tabla del ADR 0008), con la MISMA tabla para
+ * facturas y notas crédito. Respuestas de negocio:
  * <ul>
- *   <li>200/201 con {@code is_validated: true} y que corresponde a nuestra factura → {@code Issued}.
- *       {@code data.errors} trae entonces <i>notificaciones</i> de la DIAN, no errores: se registran.</li>
- *   <li>422 por los datos de la factura → {@code Rejected}, con los mensajes de Factus como motivo.</li>
+ *   <li>200/201 con {@code is_validated: true} y que corresponde a nuestro documento → {@code Issued}.
+ *       {@code data.errors} trae entonces <i>notificaciones</i> de la DIAN (un mapa en facturas, una
+ *       lista de textos en notas, p. ej. {@code CBF02}), no errores: se registran.</li>
+ *   <li>422 por los datos del documento → {@code Rejected}, con los mensajes de Factus como motivo.</li>
  * </ul>
- * Todo lo demás es una {@link FactusTechnicalException} y la factura sigue PENDING: {@code is_validated:
- * false}, 409 (pendiente en la DIAN), 401 tras renovar el token, 429, 5xx, otros códigos, cuerpos
- * ilegibles, un 422 por la configuración del adaptador y una respuesta que no corresponde a la
- * factura. Nunca se registra la URL pública ni el cuerpo completo.
+ * Todo lo demás es una {@link FactusTechnicalException} y el documento sigue PENDING: {@code
+ * is_validated: false}, 409 (pendiente en la DIAN), 401 tras renovar el token, 429, 5xx, otros códigos,
+ * cuerpos ilegibles, un 422 por la configuración del adaptador y una respuesta que no corresponde al
+ * documento. Nunca se registra la URL pública ni el cuerpo completo.
+ *
+ * <p>Las diferencias entre los dos documentos (forma de la respuesta, qué identidad verificar, qué
+ * campos del 422 son configuración) viven en {@link Expected} y en los lectores de cada respuesta;
+ * la interpretación es una sola.
  */
 final class FactusResponseInterpreter {
 
@@ -59,18 +73,65 @@ final class FactusResponseInterpreter {
     static final Map<String, String> CONFIGURATION_FIELDS = Map.of(
             "numbering_range_id", "invoicing.factus.numbering-range-id (variable FACTUS_NUMBERING_RANGE_ID)",
             "send_email", "invoicing.factus.send-email (variable FACTUS_SEND_EMAIL)");
+    /**
+     * Lo mismo para las notas crédito. {@code bill_number} ("La factura referenciada no existe", spike
+     * 0002) tampoco es culpa de la nota: la factura que nosotros tenemos ISSUED no existe en esta cuenta
+     * de Factus (p. ej. se emitió con el proveedor falso o en otro entorno).
+     */
+    static final Map<String, String> CREDIT_NOTE_CONFIGURATION_FIELDS = Map.of(
+            "numbering_range_id", "invoicing.factus.credit-note-numbering-range-id (variable "
+                    + "FACTUS_CREDIT_NOTE_NUMBERING_RANGE_ID)",
+            "send_email", "invoicing.factus.send-email (variable FACTUS_SEND_EMAIL)",
+            "bill_number", "que la factura acreditada se haya emitido en esta misma cuenta de Factus (no con el "
+                    + "proveedor falso ni en otro entorno)");
 
     private static final Logger LOG = LoggerFactory.getLogger(FactusResponseInterpreter.class);
     private static final byte[] PDF_SIGNATURE = "%PDF-".getBytes(StandardCharsets.US_ASCII);
+    /** Código de regla al inicio de una notificación en texto: {@code "Regla: CBF02, Notificación: ..."}. */
+    private static final Pattern RULE = Pattern.compile("Regla:\\s*([A-Za-z0-9]+)");
 
-    IssuanceResult issuance(Invoice invoice, FactusResponse response) {
-        return switch (response.status()) {
-            case 200, 201 -> validated(invoice, read(response, BillResponse.class, "la validación").data());
-            case 422 -> rejected(invoice, response);
-            default -> throw technical("validación de la factura " + invoice.id(), response);
-        };
+    /**
+     * Lo que debe cumplir la respuesta para ser NUESTRO documento.
+     *
+     * @param subject        "la factura &lt;id&gt;" o "la nota crédito &lt;id&gt;", para los mensajes
+     * @param noun           "la factura" o "la nota crédito", para el motivo de un rechazo
+     * @param billNumber     número de la factura acreditada que debe venir en {@code bill.number}; {@code null} en facturas
+     */
+    private record Expected(String subject, String noun, String referenceCode, IdentificationDocument customer,
+                            String billNumber, Money total, Map<String, String> configurationFields) {
     }
 
+    /** Vista común de un documento validado, sea factura o nota crédito. */
+    private record Validated(String referenceCode, String number, Boolean isValidated, String validatedAt,
+                             JsonNode errors, ResponseCustomer customer, Totals totals, String uniqueCode,
+                             Links links, String billNumber) {
+    }
+
+    IssuanceResult issuance(Invoice invoice, FactusResponse response) {
+        Expected expected = new Expected("la factura " + invoice.id(), "la factura", invoice.id().value().toString(),
+                invoice.customer().identification(), null, invoice.total(), CONFIGURATION_FIELDS);
+        return issuance(expected, response, body -> {
+            BillData data = read(body, BillResponse.class, "la validación").data();
+            return data == null ? null : new Validated(data.referenceCode(), data.number(), data.isValidated(),
+                    data.validatedAt(), data.errors(), data.customer(), data.totals(), data.cufe(), data.links(), null);
+        });
+    }
+
+    /** La nota debe venir con nuestro {@code reference_code}, el cliente de la factura y {@code bill.number}. */
+    IssuanceResult creditNoteIssuance(CreditNote creditNote, Invoice creditedInvoice, FactusResponse response) {
+        String billNumber = creditedInvoice.electronicDocument().map(ElectronicDocument::number).orElseThrow();
+        Expected expected = new Expected("la nota crédito " + creditNote.id(), "la nota crédito",
+                creditNote.id().value().toString(), creditedInvoice.customer().identification(), billNumber,
+                creditNote.total(), CREDIT_NOTE_CONFIGURATION_FIELDS);
+        return issuance(expected, response, body -> {
+            CreditNoteData data = read(body, CreditNoteResponse.class, "la validación").data();
+            return data == null ? null : new Validated(data.referenceCode(), data.number(), data.isValidated(),
+                    data.validatedAt(), data.errors(), data.customer(), data.totals(), data.cude(), data.links(),
+                    data.bill() == null ? null : data.bill().number());
+        });
+    }
+
+    /** El PDF tiene la misma forma para facturas y notas crédito (spike 0002, sección 8). */
     InvoicePdf pdf(String number, FactusResponse response) {
         if (response.status() != 200) {
             throw technical("descarga del PDF de " + number, response);
@@ -93,51 +154,62 @@ final class FactusResponseInterpreter {
         return new InvoicePdf(fileName, content);
     }
 
+    private IssuanceResult issuance(Expected expected, FactusResponse response,
+                                    Function<FactusResponse, Validated> reader) {
+        return switch (response.status()) {
+            case 200, 201 -> validated(expected, reader.apply(response));
+            case 422 -> rejected(expected, response);
+            default -> throw technical("validación de " + expected.subject(), response);
+        };
+    }
+
     // ----- 200/201 -----
 
-    private IssuanceResult validated(Invoice invoice, BillData data) {
+    private IssuanceResult validated(Expected expected, Validated data) {
         if (data == null) {
-            throw new FactusTechnicalException("Factus respondió la validación de la factura " + invoice.id()
-                    + " sin data");
+            throw new FactusTechnicalException("Factus respondió la validación de " + expected.subject() + " sin data");
         }
         if (!Boolean.TRUE.equals(data.isValidated())) {
-            throw new FactusTechnicalException("Factus registró la factura " + invoice.id() + " (" + data.number()
+            throw new FactusTechnicalException("Factus registró " + expected.subject() + " (" + data.number()
                     + ") pero la DIAN aún no la valida (is_validated=" + data.isValidated() + ")");
         }
-        verifyIdentity(invoice, data);
-        logNotifications(invoice, data);
-        ElectronicDocument document = document(invoice, data);
-        if (!document.officialTotal().equals(invoice.total())) {
-            LOG.warn("El total oficial de la factura {} ({}) difiere del calculado: oficial {}, calculado {}. Se "
-                    + "guarda el oficial; revisar el redondeo.", invoice.id(), document.number(),
-                    document.officialTotal().amount().toPlainString(), invoice.total().amount().toPlainString());
+        verifyIdentity(expected, data);
+        logNotifications(expected, data);
+        ElectronicDocument document = document(expected, data);
+        if (!document.officialTotal().equals(expected.total())) {
+            LOG.warn("El total oficial de {} ({}) difiere del calculado: oficial {}, calculado {}. Se guarda el "
+                    + "oficial; revisar el redondeo.", expected.subject(), document.number(),
+                    document.officialTotal().amount().toPlainString(), expected.total().amount().toPlainString());
         }
         return new IssuanceResult.Issued(document);
     }
 
     /**
-     * La idempotencia de Factus es ciega (spike 0001, sorpresa 1): con un {@code reference_code} ya
-     * usado devuelve el documento existente aunque el contenido sea otro. Si el código o la
-     * identificación del cliente no coinciden, el documento es OTRA factura: no se marca emitida.
-     * El total no entra aquí: si difiere con la misma identidad, es nuestra factura con otro redondeo.
+     * La idempotencia de Factus es ciega (spikes 0001 y 0002): con un {@code reference_code} ya usado
+     * devuelve el documento existente aunque el contenido sea otro. Si el código, la identificación
+     * del cliente o (en una nota) la factura acreditada no coinciden, el documento es OTRO: no se marca
+     * emitido. El total no entra aquí: si difiere con la misma identidad, es el nuestro con otro redondeo.
      */
-    private static void verifyIdentity(Invoice invoice, BillData data) {
+    private static void verifyIdentity(Expected expected, Validated data) {
         List<String> mismatches = new ArrayList<>();
-        String expectedReference = invoice.id().value().toString();
-        if (!expectedReference.equals(data.referenceCode())) {
-            mismatches.add("reference_code esperado " + expectedReference + ", recibido " + data.referenceCode());
+        if (!expected.referenceCode().equals(data.referenceCode())) {
+            mismatches.add("reference_code esperado " + expected.referenceCode() + ", recibido " + data.referenceCode());
         }
-        IdentificationDocument identification = invoice.customer().identification();
+        IdentificationDocument identification = expected.customer();
         String expectedCustomer = FactusCodes.documentType(identification.type()) + " " + identification.number();
         String receivedCustomer = receivedIdentification(data.customer());
         if (!expectedCustomer.equals(receivedCustomer)) {
             mismatches.add("identificación del cliente esperada " + expectedCustomer + ", recibida " + receivedCustomer);
         }
+        if (expected.billNumber() != null && !expected.billNumber().equals(data.billNumber())) {
+            mismatches.add("factura acreditada (bill.number) esperada " + expected.billNumber() + ", recibida "
+                    + data.billNumber());
+        }
         if (!mismatches.isEmpty()) {
-            LOG.error("La respuesta de Factus para la factura {} no corresponde a ella ({}): documento {}. No se "
-                    + "marca emitida; conciliar a mano.", invoice.id(), String.join("; ", mismatches), data.number());
-            throw new FactusTechnicalException("La respuesta de Factus no corresponde a la factura " + invoice.id()
-                    + ": " + String.join("; ", mismatches));
+            LOG.error("La respuesta de Factus para {} no corresponde a ella ({}): documento {}. No se marca "
+                    + "emitida; conciliar a mano.", expected.subject(), String.join("; ", mismatches), data.number());
+            throw new FactusTechnicalException("La respuesta de Factus no corresponde a " + expected.subject() + ": "
+                    + String.join("; ", mismatches));
         }
     }
 
@@ -149,30 +221,47 @@ final class FactusResponseInterpreter {
         return code + " " + (customer.identification() == null ? null : customer.identification().strip());
     }
 
-    private static void logNotifications(Invoice invoice, BillData data) {
-        JsonNode errors = data.errors();
-        if (errors != null && errors.isObject() && !errors.isEmpty()) {
-            LOG.info("La DIAN validó la factura {} ({}) con notificaciones: {}", invoice.id(), data.number(),
-                    String.join(", ", errors.propertyNames()));
+    /** Solo los códigos de regla: un mapa (facturas) o una lista de textos "Regla: X, ..." (notas). */
+    private static void logNotifications(Expected expected, Validated data) {
+        List<String> codes = notificationCodes(data.errors());
+        if (!codes.isEmpty()) {
+            LOG.info("La DIAN validó {} ({}) con notificaciones: {}", expected.subject(), data.number(),
+                    String.join(", ", codes));
         }
     }
 
-    private static ElectronicDocument document(Invoice invoice, BillData data) {
+    static List<String> notificationCodes(JsonNode errors) {
+        List<String> codes = new ArrayList<>();
+        if (errors == null) {
+            return codes;
+        }
+        if (errors.isObject()) {
+            codes.addAll(errors.propertyNames());
+        } else if (errors.isArray()) {
+            for (JsonNode notification : errors) {
+                Matcher rule = RULE.matcher(notification.asString());
+                codes.add(rule.find() ? rule.group(1) : "sin código");
+            }
+        }
+        return codes;
+    }
+
+    private static ElectronicDocument document(Expected expected, Validated data) {
         try {
             Objects.requireNonNull(data.links(), "links");
             Objects.requireNonNull(data.totals(), "totals");
             return new ElectronicDocument(
                     data.number(),
-                    data.cufe(),
+                    data.uniqueCode(),
                     URI.create(Objects.requireNonNull(data.links().qr(), "links.qr")),
                     URI.create(Objects.requireNonNull(data.links().publicUrl(), "links.public_url")),
                     validatedAt(data.validatedAt()),
                     Money.of(Objects.requireNonNull(data.totals().total(), "totals.total")));
         } catch (DomainException | IllegalArgumentException | NullPointerException | DateTimeParseException e) {
-            // La DIAN sí la validó: sigue PENDING y un reintento recupera el mismo documento (idempotencia).
-            LOG.error("La DIAN validó la factura {} ({}) pero el documento que devolvió Factus es ilegible: {}",
-                    invoice.id(), data.number(), e.getClass().getSimpleName());
-            throw new FactusTechnicalException("Documento validado ilegible para la factura " + invoice.id(), e);
+            // La DIAN sí lo validó: sigue PENDING y un reintento recupera el mismo documento (idempotencia).
+            LOG.error("La DIAN validó {} ({}) pero el documento que devolvió Factus es ilegible: {}",
+                    expected.subject(), data.number(), e.getClass().getSimpleName());
+            throw new FactusTechnicalException("Documento validado ilegible para " + expected.subject(), e);
         }
     }
 
@@ -183,20 +272,20 @@ final class FactusResponseInterpreter {
 
     // ----- 422 -----
 
-    private IssuanceResult rejected(Invoice invoice, FactusResponse response) {
+    private IssuanceResult rejected(Expected expected, FactusResponse response) {
         ValidationErrorResponse body = read(response, ValidationErrorResponse.class, "el rechazo");
         Map<String, List<String>> errors = fieldErrors(body);
         List<String> settings = errors.keySet().stream()
-                .map(field -> CONFIGURATION_FIELDS.get(field.split("\\.")[0]))
+                .map(field -> expected.configurationFields().get(field.split("\\.")[0]))
                 .filter(Objects::nonNull).distinct().sorted().toList();
         if (!settings.isEmpty()) {
-            LOG.error("Factus rechazó la configuración del adaptador al validar la factura {}. Revise {}. Respuesta "
-                    + "de Factus: {}. La factura sigue PENDING: corrija la configuración, reinicie el servicio y "
-                    + "reintente la emisión.", invoice.id(), String.join(" y ", settings), errors);
+            LOG.error("Factus rechazó la configuración del adaptador al validar {}. Revise {}. Respuesta de Factus: "
+                    + "{}. El documento sigue PENDING: corrija la configuración, reinicie el servicio y reintente la "
+                    + "emisión.", expected.subject(), String.join(" y ", settings), errors);
             throw new FactusTechnicalException("Factus rechazó la configuración del adaptador (HTTP 422); revisar "
                     + String.join(" y ", settings));
         }
-        StringBuilder reason = new StringBuilder("Factus no validó la factura: ");
+        StringBuilder reason = new StringBuilder("Factus no validó " + expected.noun() + ": ");
         if (errors.isEmpty()) {
             reason.append(body.message() == null ? "error de validación sin detalle" : body.message());
         } else {
@@ -205,7 +294,7 @@ final class FactusResponseInterpreter {
         }
         String text = reason.length() > MAX_REASON_LENGTH ? reason.substring(0, MAX_REASON_LENGTH - 1) + "…"
                 : reason.toString();
-        LOG.info("Factus rechazó la factura {} (422): {}", invoice.id(), errors.keySet());
+        LOG.info("Factus rechazó {} (422): {}", expected.subject(), errors.keySet());
         return new IssuanceResult.Rejected(text);
     }
 
@@ -247,7 +336,7 @@ final class FactusResponseInterpreter {
     private static FactusTechnicalException technical(String operation, FactusResponse response) {
         String meaning = switch (response.status()) {
             case 401 -> "token rechazado incluso después de renovarlo";
-            case 409 -> "Factus tiene la factura pendiente por enviar a la DIAN";
+            case 409 -> "Factus tiene el documento pendiente por enviar a la DIAN";
             case 429 -> "límite de peticiones de Factus alcanzado (Retry-After: "
                     + (response.retryAfter() == null ? "no informado" : response.retryAfter()) + ")";
             default -> response.status() >= 500 ? "error del servidor de Factus" : "respuesta HTTP no esperada";

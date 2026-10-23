@@ -6,7 +6,8 @@ import java.util.List;
 import tools.jackson.databind.JsonNode;
 
 /**
- * Contratos JSON de la API v2 de Factus, tal como se observaron en el spike 0001. Son del
+ * Contratos JSON de la API v2 de Factus, tal como se observaron en los spikes 0001 (facturas) y
+ * 0002 (notas crédito). Son del
  * proveedor y no salen de este paquete (ADR 0008). Los nombres se traducen a snake_case con el
  * {@code JsonMapper} propio del adaptador ({@link FactusJson}); los campos que el adaptador no usa
  * se ignoran.
@@ -77,6 +78,33 @@ final class FactusDtos {
     record Links(String qr, String publicUrl) {
     }
 
+    // ----- POST /v2/credit-notes/validate (spike 0002) -----
+
+    /**
+     * Petición de nota crédito. Reutiliza el cliente, los ítems y los pagos de la factura: Factus exige
+     * todos los datos y no toma nada de la factura referenciada (spike 0002, sección 2).
+     */
+    record CreditNoteRequest(String referenceCode, String correctionConceptCode, String customizationId,
+                             String billNumber, Integer numberingRangeId, String observation, boolean sendEmail,
+                             Customer customer, List<Item> items, List<PaymentDetail> paymentDetails) {
+    }
+
+    record CreditNoteResponse(String status, String message, CreditNoteData data) {
+    }
+
+    /**
+     * Como {@link BillData}, con tres diferencias reales: el código único es {@code cude}, {@code errors}
+     * es una LISTA de textos ({@code "Regla: CBF02, Notificación: ..."}) y {@code bill} identifica la
+     * factura acreditada.
+     */
+    record CreditNoteData(String referenceCode, String number, Boolean isValidated, String validatedAt,
+                          JsonNode errors, ResponseCustomer customer, Totals totals, String cude,
+                          CreditedBill bill, Links links) {
+    }
+
+    record CreditedBill(String referenceCode, String number, String cufe) {
+    }
+
     // ----- 422 (formato de Laravel: ruta del campo -> lista de mensajes) -----
 
     record ValidationErrorResponse(String status, String message, ValidationErrorData data) {
@@ -85,7 +113,7 @@ final class FactusDtos {
     record ValidationErrorData(String message, JsonNode errors) {
     }
 
-    // ----- GET /v2/bills/{number}/download-pdf -----
+    // ----- GET /v2/bills/{number}/download-pdf y /v2/credit-notes/{number}/download-pdf (misma forma) -----
 
     record PdfResponse(String status, String message, PdfData data) {
     }

@@ -1,8 +1,14 @@
 package com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus;
 
+import com.facturaflow.invoicing.domain.model.CreditBalance;
+import com.facturaflow.invoicing.domain.model.CreditNote;
+import com.facturaflow.invoicing.domain.model.CreditNoteId;
+import com.facturaflow.invoicing.domain.model.CreditNoteReason;
+import com.facturaflow.invoicing.domain.model.CreditedQuantity;
 import com.facturaflow.invoicing.domain.model.CustomerSnapshot;
 import com.facturaflow.invoicing.domain.model.DiscountRate;
 import com.facturaflow.invoicing.domain.model.DocumentType;
+import com.facturaflow.invoicing.domain.model.ElectronicDocument;
 import com.facturaflow.invoicing.domain.model.FiscalProfile;
 import com.facturaflow.invoicing.domain.model.IdentificationDocument;
 import com.facturaflow.invoicing.domain.model.Invoice;
@@ -24,16 +30,24 @@ import java.io.UncheckedIOException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
-/** Facturas del dominio equivalentes a las que Factus aceptó en el spike 0001, y sus respuestas reales. */
+/**
+ * Facturas y notas crédito del dominio equivalentes a las que Factus aceptó en los spikes 0001 y 0002,
+ * y sus respuestas reales.
+ */
 final class FactusTestData {
 
     static final LocalDate ISSUE_DATE = LocalDate.of(2026, 10, 21);
     static final String CLIENT_SECRET = "client-secret-de-prueba-123";
     static final String PASSWORD = "password-de-prueba-456";
+    static final String CREDITED_BILL_NUMBER = "SETP990028959";
+    /** Rango NC del sandbox (spike 0002). */
+    static final int CREDIT_NOTE_RANGE = 390;
+    static final LocalDate NOTE_DATE = LocalDate.of(2026, 10, 22);
 
     private FactusTestData() {
     }
@@ -70,6 +84,31 @@ final class FactusTestData {
                 "Spike FacturaFlow: crédito, descuento, IVA + INC y línea excluida");
     }
 
+    /** {@link #creditInvoice} ya emitida con el número y el CUFE reales de {@code SETP990028959} (spike 0002). */
+    static Invoice issuedCreditInvoice(UUID id) {
+        Invoice invoice = creditInvoice(id);
+        invoice.markAsIssued(new ElectronicDocument(CREDITED_BILL_NUMBER,
+                "3404fc52d61f1f64d31156d5a0155be46086a2478895be6722fc99408404c10e61d8a16feaebcd326750ba581f3e866a",
+                URI.create("https://catalogo-vpfe-hab.dian.gov.co/document/searchqr?documentkey=3404fc52"),
+                URI.create("https://app-sandbox.factus.com.co/documents/bills/0000test0000credit"),
+                Instant.parse("2026-10-21T18:33:18Z"), Money.of("147475.01")));
+        return invoice;
+    }
+
+    /** Devolución de 1 de las 3 unidades de SKU-RND: la nota {@code NC1661} del spike 0002 (39.158,33). */
+    static CreditNote partialReturn(UUID id, Invoice issuedInvoice) {
+        return CreditNote.create(new CreditNoteId(id), new ReferenceCode("DEV-1"),
+                CreditBalance.of(issuedInvoice, List.of()), CreditNoteReason.PARTIAL_RETURN,
+                List.of(new CreditedQuantity(1, Quantity.of("1"))), NOTE_DATE, "Devolución de 1 unidad");
+    }
+
+    /** Anulación de toda la factura: la nota {@code NC1663} del spike 0002 (147.475,01). */
+    static CreditNote annulment(UUID id, Invoice issuedInvoice) {
+        return CreditNote.create(new CreditNoteId(id), new ReferenceCode("ANU-1"),
+                CreditBalance.of(issuedInvoice, List.of()), CreditNoteReason.TOTAL_ANNULMENT, List.of(), NOTE_DATE,
+                null);
+    }
+
     static FactusProperties properties(String baseUrl) {
         return properties(baseUrl, false, null, Duration.ofSeconds(2));
     }
@@ -77,8 +116,8 @@ final class FactusTestData {
     static FactusProperties properties(String baseUrl, boolean sendEmail, Integer numberingRangeId,
                                        Duration readTimeout) {
         return new FactusProperties(URI.create(baseUrl), "client-id-de-prueba", CLIENT_SECRET,
-                "usuario@empresa.example", PASSWORD, sendEmail, numberingRangeId, Duration.ofSeconds(2), readTimeout,
-                Duration.ofSeconds(60), "FacturaFlow-Test/1.0");
+                "usuario@empresa.example", PASSWORD, sendEmail, numberingRangeId, CREDIT_NOTE_RANGE,
+                Duration.ofSeconds(2), readTimeout, Duration.ofSeconds(60), "FacturaFlow-Test/1.0");
     }
 
     /** Un archivo de {@code src/test/resources/factus/} con {@code {{REFERENCE_CODE}}} reemplazado. */

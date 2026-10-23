@@ -5,9 +5,11 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import com.facturaflow.invoicing.application.port.out.InvoicePdf;
 import com.facturaflow.invoicing.application.port.out.IssuanceResult;
+import com.facturaflow.invoicing.domain.model.CreditNote;
 import com.facturaflow.invoicing.domain.model.ElectronicDocument;
 import com.facturaflow.invoicing.domain.model.Invoice;
 import com.facturaflow.invoicing.domain.model.InvoiceId;
+import com.facturaflow.invoicing.domain.model.Money;
 import com.facturaflow.invoicing.domain.model.PaymentTerms;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -27,8 +29,9 @@ import org.junit.jupiter.api.Test;
  * <pre>
  *   MVN_ENV_FILE=.env ./scripts/mvn.sh invoicing test -Dgroups=sandbox -DexcludedGroups=none
  * </pre>
- * Cada ejecución crea UNA factura real (con {@code send_email=false}); el rechazo no crea nada (un 422
- * no consume numeración). Nunca borra nada en Factus.
+ * Cada ejecución crea DOS facturas reales y UNA nota crédito real (con {@code send_email=false}); el
+ * rechazo no crea nada (un 422 no consume numeración). Nunca borra nada en Factus. El rango de notas
+ * sale de {@code FACTUS_CREDIT_NOTE_NUMBERING_RANGE_ID}, o es el 390 (NC) del sandbox (spike 0002).
  */
 @Tag("sandbox")
 class FactusSandboxTest {
@@ -44,7 +47,7 @@ class FactusSandboxTest {
         assumeTrue(baseUrl.contains("sandbox"), "Estos tests solo corren contra el sandbox");
         provider = FactusElectronicInvoiceProvider.create(new FactusProperties(URI.create(baseUrl),
                 System.getenv("FACTUS_CLIENT_ID"), System.getenv("FACTUS_CLIENT_SECRET"),
-                System.getenv("FACTUS_USERNAME"), System.getenv("FACTUS_PASSWORD"), false, null,
+                System.getenv("FACTUS_USERNAME"), System.getenv("FACTUS_PASSWORD"), false, null, creditNoteRange(),
                 Duration.ofSeconds(5), Duration.ofSeconds(30), Duration.ofSeconds(60), "FacturaFlow-Invoicing/0.0.1"),
                 Clock.systemUTC());
     }
@@ -83,5 +86,35 @@ class FactusSandboxTest {
 
         assertThat(result).isInstanceOfSatisfying(IssuanceResult.Rejected.class,
                 rejected -> assertThat(rejected.reason()).contains("due_date"));
+    }
+
+    @Test
+    @DisplayName("acredita una factura real con una devolución parcial: CUDE, bill.number, reenvío idempotente y PDF")
+    void issuesPartialReturnOnRealInvoice() {
+        Invoice invoice = FactusTestData.creditInvoice(UUID.randomUUID());
+        IssuanceResult issuedInvoice = provider.issue(invoice);
+        assertThat(issuedInvoice).isInstanceOf(IssuanceResult.Issued.class);
+        invoice.markAsIssued(((IssuanceResult.Issued) issuedInvoice).document());
+        CreditNote note = FactusTestData.partialReturn(UUID.randomUUID(), invoice);
+
+        IssuanceResult first = provider.issue(note, invoice);
+
+        assertThat(first).isInstanceOf(IssuanceResult.Issued.class);
+        ElectronicDocument document = ((IssuanceResult.Issued) first).document();
+        assertThat(document.uniqueCode()).hasSize(96);
+        assertThat(document.officialTotal()).isEqualTo(note.total()).isEqualTo(Money.of("39158.33"));
+
+        // Idempotencia ciega también en notas: el mismo reference_code devuelve la misma nota.
+        IssuanceResult again = provider.issue(note, invoice);
+        assertThat(((IssuanceResult.Issued) again).document().number()).isEqualTo(document.number());
+
+        note.markAsIssued(document);
+        InvoicePdf pdf = provider.downloadPdf(note);
+        assertThat(new String(pdf.content(), 0, 5, StandardCharsets.US_ASCII)).isEqualTo("%PDF-");
+    }
+
+    private static int creditNoteRange() {
+        String value = System.getenv("FACTUS_CREDIT_NOTE_NUMBERING_RANGE_ID");
+        return value == null || value.isBlank() ? FactusTestData.CREDIT_NOTE_RANGE : Integer.parseInt(value.strip());
     }
 }

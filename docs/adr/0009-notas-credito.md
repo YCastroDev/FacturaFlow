@@ -7,7 +7,9 @@ Aceptado — 2026-10-23. Completa los ADR 0005 y 0006:
 - un puerto de salida nuevo;
 - endpoints y filas nuevas en la tabla de errores.
 
-Renombra el CUFE del documento electrónico a un nombre neutro. El adaptador de Factus para notas crédito llega en una fase posterior (ver la decisión 7).
+Renombra el CUFE del documento electrónico a un nombre neutro.
+
+> **Nota posterior (2026-10-23):** el adaptador de Factus para notas crédito ya está implementado (ADR 0008, decisión 10) y reemplaza al temporal de la decisión 7. Se verificó contra el sandbox real.
 
 ## Contexto
 
@@ -161,7 +163,10 @@ Funciona como en las facturas (ADR 0006, decisión 2):
 
 Una emisión falsa tiene el número `FAKE-NC-<referenceCode>`, el CUDE con la marca de 16 ceros, enlaces `.invalid` y un PDF "DOCUMENTO FALSO".
 
-**Factus.** Por ahora `FactusCreditNotesNotYetSupported` responde a la emisión y al PDF de una nota con una falla técnica (503), y nada llega a Factus. Con `invoicing.provider=factus` el servicio arranca y las notas se pueden crear. El adaptador real llega en la fase siguiente, que actualizará este ADR y el 0008.
+**Factus.** Al principio, `FactusCreditNotesNotYetSupported` respondía a la emisión y al PDF de una nota con una falla técnica (503). Hoy lo reemplaza el adaptador real (ADR 0008, decisión 10):
+- `reference_code` = `CreditNoteId`;
+- verificación de `reference_code`, del cliente y de `bill.number` antes de marcar la nota emitida;
+- `credit-note-numbering-range-id` obligatorio.
 
 ### 8. Nombre neutro del código único
 
@@ -250,7 +255,6 @@ Sigue los criterios del ADR 0005 (entidades separadas, mapeo a mano, entity grap
 
 **Otras limitaciones:**
 - La DIAN de habilitación no valida las cantidades acreditadas (spike 0002, sección 5). En producción podría ser más estricta, pero no se puede comprobar en el sandbox. Nuestra regla es más estricta que lo observado.
-- Con Factus, la emisión de notas responde 503 hasta que llegue su adaptador (decisión 7).
 - La regla del saldo no tiene defensa en la base (decisión 3).
 
 ## Alternativas consideradas

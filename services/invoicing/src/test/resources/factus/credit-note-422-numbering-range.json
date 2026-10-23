@@ -1,0 +1,12 @@
+{
+  "status": "Validation error",
+  "message": "Error de validación",
+  "data": {
+    "message": "Error de validación",
+    "errors": {
+      "numbering_range_id": [
+        "El campo id rango de numeración es inválido."
+      ]
+    }
+  }
+}

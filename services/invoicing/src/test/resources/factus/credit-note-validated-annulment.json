@@ -1,0 +1,239 @@
+{
+  "status": "Created",
+  "message": "Documento con el código de referencia {{REFERENCE_CODE}} registrado y validado con éxito",
+  "data": {
+    "reference_code": "{{REFERENCE_CODE}}",
+    "number": "NC1663",
+    "correction_concept": {
+      "code": "2",
+      "name": "Anulación de factura electrónica"
+    },
+    "customization_id": {
+      "code": "20",
+      "name": "Nota Crédito que referencia una factura electrónica."
+    },
+    "payment_details": [
+      {
+        "payment_form": {
+          "code": "1",
+          "name": "Pago de contado"
+        },
+        "payment_method": {
+          "code": "47",
+          "name": "Transferencia"
+        },
+        "reference_code": null,
+        "amount": "147475.01",
+        "due_date": null
+      }
+    ],
+    "billing_period": null,
+    "send_email": false,
+    "is_validated": true,
+    "validated_at": "22-10-2026 03:18:25 PM",
+    "errors": [
+      "Regla: CBF02, Notificación: No se informo el numero de la factura referenciada",
+      "Regla: RUT01, Notificación: La validación del estado del RUT próximamente estará disponible."
+    ],
+    "observation": "Spike FacturaFlow: anulación total de SETP990028959 (que ya tiene devoluciones)",
+    "created_at": "22-10-2026 03:18:24 PM",
+    "health": null,
+    "customer": {
+      "identification_document": {
+        "code": "13",
+        "name": "Cédula ciudadanía"
+      },
+      "identification": "1020304050",
+      "dv": null,
+      "graphic_representation_name": "Ana María Gómez",
+      "trade_name": null,
+      "company": null,
+      "names": "Ana María Gómez",
+      "address": "No informado",
+      "email": "ana.gomez@correo.example",
+      "phone": null,
+      "legal_organization": {
+        "code": "2",
+        "name": "Persona Natural"
+      },
+      "tribute": {
+        "code": "ZZ",
+        "name": "No aplica"
+      },
+      "responsibilities": [
+        {
+          "code": "R-99-PN",
+          "name": "No responsable"
+        }
+      ],
+      "country": {
+        "code": "CO",
+        "name": "Colombia"
+      },
+      "municipality": {
+        "code": "05001",
+        "name": "Medellin",
+        "department": {
+          "code": "05",
+          "name": "Antioquia"
+        }
+      }
+    },
+    "items": [
+      {
+        "note": "",
+        "mandate": null,
+        "additional_properties": [],
+        "code_reference": "SKU-RND",
+        "name": "Producto con centavos",
+        "quantity": "3.00",
+        "unit_measure": {
+          "code": "94",
+          "name": "unidad"
+        },
+        "standard_code": {
+          "code": "999",
+          "name": "Estándar de adopción del contribuyente"
+        },
+        "discount_rate": "7.50",
+        "discount": "7500.00",
+        "gross_value": "25833.33",
+        "taxes": [
+          {
+            "tribute": {
+              "code": "01",
+              "name": "IVA"
+            },
+            "is_excluded": false,
+            "rates": [
+              {
+                "taxable_amount": "92499.99",
+                "tax_amount": "17575.00",
+                "rate": "19.00"
+              }
+            ]
+          },
+          {
+            "tribute": {
+              "code": "04",
+              "name": "INC"
+            },
+            "is_excluded": false,
+            "rates": [
+              {
+                "taxable_amount": "92499.99",
+                "tax_amount": "7400.00",
+                "rate": "8.00"
+              }
+            ]
+          }
+        ],
+        "withholding_taxes": [],
+        "price": "33333.33",
+        "total": "117474.99"
+      },
+      {
+        "note": "",
+        "mandate": null,
+        "additional_properties": [],
+        "code_reference": "SKU-EXC",
+        "name": "Producto excluido de IVA",
+        "quantity": "1.50",
+        "unit_measure": {
+          "code": "94",
+          "name": "unidad"
+        },
+        "standard_code": {
+          "code": "999",
+          "name": "Estándar de adopción del contribuyente"
+        },
+        "discount_rate": "0.00",
+        "discount": "0.00",
+        "gross_value": "20000.01",
+        "taxes": [
+          {
+            "tribute": {
+              "code": "01",
+              "name": "IVA"
+            },
+            "is_excluded": true,
+            "rates": [
+              {
+                "taxable_amount": "30000.02",
+                "tax_amount": "0.00",
+                "rate": "0.00"
+              }
+            ]
+          }
+        ],
+        "withholding_taxes": [],
+        "price": "20000.01",
+        "total": "30000.02"
+      }
+    ],
+    "allowance_charges": [],
+    "taxes": [
+      {
+        "tribute": {
+          "code": "01",
+          "name": "IVA"
+        },
+        "is_excluded": true,
+        "rates": [
+          {
+            "taxable_amount": "30000.02",
+            "tax_amount": "0.00",
+            "rate": "0.00"
+          }
+        ]
+      },
+      {
+        "tribute": {
+          "code": "01",
+          "name": "IVA"
+        },
+        "is_excluded": false,
+        "rates": [
+          {
+            "taxable_amount": "92499.99",
+            "tax_amount": "17575.00",
+            "rate": "19.00"
+          }
+        ]
+      },
+      {
+        "tribute": {
+          "code": "04",
+          "name": "INC"
+        },
+        "is_excluded": false,
+        "rates": [
+          {
+            "taxable_amount": "92499.99",
+            "tax_amount": "7400.00",
+            "rate": "8.00"
+          }
+        ]
+      }
+    ],
+    "withholding_taxes": [],
+    "totals": {
+      "gross_amount": "122500.01",
+      "taxable_amount": "92499.99",
+      "tax_amount": "24975.00",
+      "surcharge_amount": "0.00",
+      "total": "147475.01"
+    },
+    "currency": null,
+    "cude": "f48e40d101c0b52d3fb7e070a2962e45a7307cdfaa7891619ea4f864d340cce513d289a08d641e233b19d3f1fba3f0e9",
+    "bill": {
+      "reference_code": "SPIKE-1021-CRED01",
+      "number": "SETP990028959",
+      "cufe": "3404fc52d61f1f64d31156d5a0155be46086a2478895be6722fc99408404c10e61d8a16feaebcd326750ba581f3e866a"
+    },
+    "links": {
+      "qr": "https://catalogo-vpfe-hab.dian.gov.co/document/searchqr?documentkey=f48e40d101c0b52d3fb7e070a2962e45a7307cdfaa7891619ea4f864d340cce513d289a08d641e233b19d3f1fba3f0e9",
+      "public_url": "https://app-sandbox.factus.com.co/documents/credit-notes/0000test0000annulment"
+    }
+  }
+}

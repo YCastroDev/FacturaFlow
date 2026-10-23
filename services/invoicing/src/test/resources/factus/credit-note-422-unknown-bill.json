@@ -1,0 +1,12 @@
+{
+  "status": "Validation error",
+  "message": "Error de validación",
+  "data": {
+    "message": "Error de validación",
+    "errors": {
+      "bill_number": [
+        "La factura referenciada no existe."
+      ]
+    }
+  }
+}

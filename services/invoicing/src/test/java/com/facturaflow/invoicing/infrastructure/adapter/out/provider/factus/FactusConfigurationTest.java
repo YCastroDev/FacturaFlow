@@ -2,6 +2,7 @@ package com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.facturaflow.invoicing.application.port.out.ElectronicCreditNoteProvider;
 import com.facturaflow.invoicing.application.port.out.ElectronicInvoiceProvider;
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -26,18 +27,21 @@ class FactusConfigurationTest {
             "invoicing.factus.password=clave-que-no-debe-aparecer",
             "invoicing.factus.send-email=false",
             "invoicing.factus.numbering-range-id=",
+            "invoicing.factus.credit-note-numbering-range-id=390",
             "invoicing.factus.connect-timeout=5s",
             "invoicing.factus.read-timeout=30s",
             "invoicing.factus.token-refresh-margin=60s",
             "invoicing.factus.user-agent=FacturaFlow-Test/1.0"};
 
     @Test
-    @DisplayName("con invoicing.provider=factus el puerto lo implementa el adaptador de Factus")
+    @DisplayName("con invoicing.provider=factus los dos puertos (facturas y notas) los implementa el MISMO adaptador")
     void factusProviderIsActive() {
         runner.withPropertyValues(VALID).run(context -> {
             assertThat(context).hasNotFailed();
             assertThat(context.getBean(ElectronicInvoiceProvider.class))
-                    .isInstanceOf(FactusElectronicInvoiceProvider.class);
+                    .isInstanceOf(FactusElectronicInvoiceProvider.class)
+                    .isSameAs(context.getBean(ElectronicCreditNoteProvider.class));
+            assertThat(context.getBean(FactusProperties.class).creditNoteNumberingRangeId()).isEqualTo(390);
             assertThat(context.getBean(FactusProperties.class).numberingRangeId()).isNull();
         });
     }
@@ -60,6 +64,16 @@ class FactusConfigurationTest {
             assertThat(failure).contains("clientSecret");
             assertThat(failure).doesNotContain("clave-que-no-debe-aparecer");
         });
+    }
+
+    @Test
+    @DisplayName("sin el rango de numeración de notas crédito la aplicación no arranca: Factus lo exige")
+    void failsFastWithoutCreditNoteRange() {
+        runner.withPropertyValues(VALID).withPropertyValues("invoicing.factus.credit-note-numbering-range-id=")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(stackTrace(context.getStartupFailure())).contains("creditNoteNumberingRangeId");
+                });
     }
 
     @Test

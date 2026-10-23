@@ -36,6 +36,8 @@ invoicing:
     send-email: ${FACTUS_SEND_EMAIL:false}
     # Vacío: Factus usa su rango de facturación por defecto.
     numbering-range-id: ${FACTUS_NUMBERING_RANGE_ID:}
+    # Obligatorio con Factus: rango de las notas crédito (la cuenta tiene varios; spike 0002).
+    credit-note-numbering-range-id: ${FACTUS_CREDIT_NOTE_NUMBERING_RANGE_ID:}
     connect-timeout: 5s
     # La validación ante la DIAN tardó ~2,3 s en el spike; el resto, menos de 1 s.
     read-timeout: 30s
