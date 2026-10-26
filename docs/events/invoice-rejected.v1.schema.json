@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:facturaflow:event:invoice-rejected:v1",
+  "title": "InvoiceRejected v1",
+  "description": "Una factura quedó rechazada (REJECTED): la DIAN no la validó. Es un estado final: con esos datos no habrá factura. Productor: invoicing. Exchange invoicing.events, routing key invoice.rejected.v1. Se publica para TODAS las facturas. Entrega al menos una vez (ADR 0015).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "eventId",
+    "eventType",
+    "eventVersion",
+    "occurredAt",
+    "producer",
+    "payload"
+  ],
+  "properties": {
+    "eventId": {
+      "description": "Identidad del evento (también es el message_id de AMQP). Un reenvío conserva el mismo eventId.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "eventType": {
+      "const": "InvoiceRejected"
+    },
+    "eventVersion": {
+      "const": 1
+    },
+    "occurredAt": {
+      "description": "Cuándo invoicing guardó el hecho (UTC, ISO-8601), en la misma transacción. No es cuándo se publicó.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "producer": {
+      "const": "invoicing"
+    },
+    "payload": {
+      "$ref": "#/$defs/payload"
+    }
+  },
+  "$defs": {
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "invoiceId",
+        "referenceCode",
+        "customer",
+        "reason",
+        "issueDate"
+      ],
+      "properties": {
+        "invoiceId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "referenceCode": {
+          "description": "Código de referencia de la factura. En las facturas de una venta es el referenceCode de la venta: así se correlacionan (las creadas por la API REST también se publican; un consumidor ignora las que no son suyas).",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,50}$"
+        },
+        "customer": {
+          "$ref": "#/$defs/customer"
+        },
+        "reason": {
+          "description": "Motivo del rechazo, para mostrarlo a quien pidió la factura.",
+          "type": "string",
+          "minLength": 1
+        },
+        "issueDate": {
+          "type": "string",
+          "format": "date"
+        }
+      }
+    },
+    "customer": {
+      "description": "Identificación del cliente de la factura: con ella el consumidor comprueba que la factura es de SU operación (ADR 0015, D1).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "documentType",
+        "documentNumber"
+      ],
+      "properties": {
+        "documentType": {
+          "enum": [
+            "CITIZENSHIP_CARD",
+            "NIT",
+            "FOREIGNER_ID_CARD",
+            "PASSPORT",
+            "IDENTITY_CARD",
+            "CIVIL_REGISTRY",
+            "FOREIGNER_CARD",
+            "FOREIGN_ID_DOCUMENT",
+            "SPECIAL_STAY_PERMIT",
+            "TEMPORARY_PROTECTION_PERMIT",
+            "FOREIGN_NIT"
+          ]
+        },
+        "documentNumber": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20
+        }
+      }
+    }
+  }
+}

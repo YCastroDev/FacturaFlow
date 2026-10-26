@@ -56,8 +56,10 @@ class BrokerDownTest {
                 .as("el indicador de Spring Boot está desactivado").isEqualTo(404);
         String dependencies = fetch("/actuator/health/dependencies").getResponseBody();
         assertThat((String) JsonPath.read(dependencies, "$.components.messaging.status")).isEqualTo("UP");
-        assertThat((String) JsonPath.read(dependencies, "$.components.messaging.details.queue"))
+        assertThat((String) JsonPath.read(dependencies, "$.components.messaging.details.consumer.queue"))
                 .isEqualTo("invoicing.sale-confirmed");
+        assertThat((Integer) JsonPath.read(dependencies, "$.components.messaging.details.outbox.pendingEvents"))
+                .as("la parte del productor (outbox de los eventos de facturación)").isZero();
         assertThat(fetch("/api/v1/invoices/" + UUID.randomUUID()).getStatus().value())
                 .as("la API sigue atendiendo").isEqualTo(404);
     }

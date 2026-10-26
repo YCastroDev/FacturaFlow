@@ -4,6 +4,7 @@ import com.facturaflow.sales.application.port.in.CreateSaleCommand;
 import com.facturaflow.sales.application.port.out.SalePage;
 import com.facturaflow.sales.domain.model.CustomerSnapshot;
 import com.facturaflow.sales.domain.model.DocumentType;
+import com.facturaflow.sales.domain.model.InvoicingOutcome;
 import com.facturaflow.sales.domain.model.PaymentMethod;
 import com.facturaflow.sales.domain.model.PaymentTerms;
 import com.facturaflow.sales.domain.model.Sale;
@@ -69,9 +70,20 @@ final class ApiMapper {
         SaleResponse.Totals totals = new SaleResponse.Totals(sale.subtotal().amount(), sale.totalDiscount().amount(),
                 sale.totalTax(TaxType.IVA).amount(), sale.totalTax(TaxType.INC).amount(), sale.totalTax().amount(),
                 sale.total().amount());
+        SaleResponse.Invoice invoice = null;
+        SaleResponse.InvoiceFailure failure = null;
+        switch (sale.invoicing().orElse(null)) {
+            case null -> {
+            }
+            case InvoicingOutcome.Invoiced invoiced -> invoice = new SaleResponse.Invoice(
+                    invoiced.invoice().invoiceId(), invoiced.invoice().number(), invoiced.invoice().cufe(), invoiced.at());
+            case InvoicingOutcome.Failed failed -> failure = new SaleResponse.InvoiceFailure(failed.reason(),
+                    failed.invoiceId(), failed.at());
+        }
         return new SaleResponse(sale.id().value(), sale.referenceCode().value(),
                 convert(sale.status(), ApiSaleStatus.class), sale.saleDate(), sale.createdAt(), customerDto, lines,
-                convert(sale.paymentMethod(), ApiPaymentMethod.class), terms, sale.observation().orElse(null), totals);
+                convert(sale.paymentMethod(), ApiPaymentMethod.class), terms, sale.observation().orElse(null), totals,
+                invoice, failure);
     }
 
     private static SaleResponse.Line line(int number, SaleLine line) {

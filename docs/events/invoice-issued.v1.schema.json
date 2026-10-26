@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:facturaflow:event:invoice-issued:v1",
+  "title": "InvoiceIssued v1",
+  "description": "Una factura quedó emitida (ISSUED) ante la DIAN. Productor: invoicing. Exchange invoicing.events, routing key invoice.issued.v1. Se publica para TODAS las facturas (también las de la API REST). Entrega al menos una vez: un consumidor descarta duplicados por eventId (ADR 0015). Nunca incluye los enlaces del documento (enlaces-capacidad, ADR 0008).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "eventId",
+    "eventType",
+    "eventVersion",
+    "occurredAt",
+    "producer",
+    "payload"
+  ],
+  "properties": {
+    "eventId": {
+      "description": "Identidad del evento (también es el message_id de AMQP). Un reenvío conserva el mismo eventId.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "eventType": {
+      "const": "InvoiceIssued"
+    },
+    "eventVersion": {
+      "const": 1
+    },
+    "occurredAt": {
+      "description": "Cuándo invoicing guardó el hecho (UTC, ISO-8601), en la misma transacción. No es cuándo se publicó.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "producer": {
+      "const": "invoicing"
+    },
+    "payload": {
+      "$ref": "#/$defs/payload"
+    }
+  },
+  "$defs": {
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "invoiceId",
+        "referenceCode",
+        "customer",
+        "number",
+        "cufe",
+        "officialTotal",
+        "issueDate",
+        "validatedAt"
+      ],
+      "properties": {
+        "invoiceId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "referenceCode": {
+          "description": "Código de referencia de la factura. En las facturas de una venta es el referenceCode de la venta: así se correlacionan (las creadas por la API REST también se publican; un consumidor ignora las que no son suyas).",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,50}$"
+        },
+        "customer": {
+          "$ref": "#/$defs/customer"
+        },
+        "number": {
+          "description": "Número oficial de la factura (prefijo + consecutivo del rango).",
+          "type": "string",
+          "minLength": 1
+        },
+        "cufe": {
+          "description": "Código Único de Factura Electrónica (96 caracteres hexadecimales).",
+          "type": "string",
+          "pattern": "^[0-9a-f]{96}$"
+        },
+        "officialTotal": {
+          "description": "Total oficial validado por la DIAN (COP, 2 decimales): es el que tiene validez legal.",
+          "type": "number",
+          "minimum": 0
+        },
+        "issueDate": {
+          "description": "Fecha de emisión de la factura en Colombia.",
+          "type": "string",
+          "format": "date"
+        },
+        "validatedAt": {
+          "description": "Cuándo la DIAN validó el documento (según el proveedor).",
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "customer": {
+      "description": "Identificación del cliente de la factura: con ella el consumidor comprueba que la factura es de SU operación (ADR 0015, D1).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "documentType",
+        "documentNumber"
+      ],
+      "properties": {
+        "documentType": {
+          "enum": [
+            "CITIZENSHIP_CARD",
+            "NIT",
+            "FOREIGNER_ID_CARD",
+            "PASSPORT",
+            "IDENTITY_CARD",
+            "CIVIL_REGISTRY",
+            "FOREIGNER_CARD",
+            "FOREIGN_ID_DOCUMENT",
+            "SPECIAL_STAY_PERMIT",
+            "TEMPORARY_PROTECTION_PERMIT",
+            "FOREIGN_NIT"
+          ]
+        },
+        "documentNumber": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20
+        }
+      }
+    }
+  }
+}

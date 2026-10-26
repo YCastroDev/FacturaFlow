@@ -50,10 +50,12 @@ rabbitmqadmin --non-interactive --quiet --vhost "$VHOST" declare permissions --u
 
 # --- Un bloque por servicio. Para un servicio nuevo, copia la línea y agrega su variable de contraseña
 # --- al .env, .env.example y docker-compose.yml.
-# sales: solo declara y publica en SU exchange; no lee ninguna cola ('^$' no coincide con ningún nombre).
-create_service_user sales "${SALES_RABBITMQ_PASSWORD:-}" '^sales\.events$' '^sales\.events$' '^$'
-# invoicing (ADR 0014): declara y usa sus propios recursos (cola, esperas, DLQ, exchanges invoicing.*); lee
-# sales.events solo para enlazar su cola (un binding exige read sobre el exchange de origen). No puede
+# sales: declara y usa sus propios recursos (exchange sales.events; cola, esperas y DLQ de los resultados de
+# facturación, ADR 0015); lee invoicing.events solo para enlazar su cola. No puede publicar en invoicing.events.
+create_service_user sales "${SALES_RABBITMQ_PASSWORD:-}" '^sales\..*' '^sales\..*' \
+  '^(sales\..*|invoicing\.events)$'
+# invoicing (ADR 0014 y 0015): declara y usa sus propios recursos (exchange invoicing.events; cola, esperas,
+# DLQ, exchanges invoicing.*); lee sales.events solo para enlazar su cola (un binding exige read sobre el exchange de origen). No puede
 # publicar en sales.events.
 create_service_user invoicing "${INVOICING_RABBITMQ_PASSWORD:-}" '^invoicing\..*' '^invoicing\..*' \
   '^(invoicing\..*|sales\.events)$'
@@ -61,8 +63,10 @@ create_service_user invoicing "${INVOICING_RABBITMQ_PASSWORD:-}" '^invoicing\..*
 # --- Exchanges de los productores (ADR 0014). Cada productor declara el suyo al conectarse; se declaran
 # --- también aquí (mismas propiedades, idempotente) para que los consumidores puedan enlazar sus colas
 # --- sin depender del orden de arranque: un binding a un exchange inexistente falla.
-echo "init: exchange sales.events"
-rabbitmqadmin --non-interactive --quiet --vhost "$VHOST" declare exchange --name sales.events --type topic \
-  --durable true --auto-delete false
+for exchange in sales.events invoicing.events; do
+  echo "init: exchange $exchange"
+  rabbitmqadmin --non-interactive --quiet --vhost "$VHOST" declare exchange --name "$exchange" --type topic \
+    --durable true --auto-delete false
+done
 
 echo "init: listo"

@@ -8,9 +8,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.facturaflow.sales.TestcontainersConfiguration;
 import com.facturaflow.sales.application.exception.DuplicateReferenceCodeException;
+import com.facturaflow.sales.application.exception.SaleConcurrentModificationException;
 import com.facturaflow.sales.application.port.out.RequestHash;
 import com.facturaflow.sales.application.port.out.SalePage;
 import com.facturaflow.sales.application.port.out.StoredSale;
+import com.facturaflow.sales.domain.model.InvoiceReference;
+import com.facturaflow.sales.domain.model.InvoicingOutcome;
 import com.facturaflow.sales.domain.model.LineTax;
 import com.facturaflow.sales.domain.model.Money;
 import com.facturaflow.sales.domain.model.PaymentMethod;
@@ -26,6 +29,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import org.hibernate.SessionFactory;
 import org.hibernate.stat.Statistics;
 import org.junit.jupiter.api.BeforeEach;
@@ -174,5 +178,56 @@ class JpaSaleRepositoryAdapterTest {
 
         assertThatThrownBy(() -> jdbc.sql("UPDATE sales SET due_date = sale_date WHERE id = :id")
                 .param("id", saved.id().value()).update()).hasMessageContaining("ck_sales_payment_terms");
+    }
+
+    @Test
+    @DisplayName("guardar el resultado de la facturación: INVOICED con la factura, luego se reconstruye igual")
+    void savesInvoicedSale() {
+        Sale saved = repository.saveNew(sale("VENTA-1", T0, PaymentTerms.cash()), HASH);
+        InvoiceReference invoice = new InvoiceReference(UUID.randomUUID(), "SETP990000001", "ab".repeat(48));
+
+        Sale invoiced = repository.save(saved.invoiced(invoice, T0.plusSeconds(5)));
+        Sale reloaded = repository.findById(saved.id()).orElseThrow();
+
+        assertThat(invoiced.version()).contains(1L);
+        assertThat(reloaded.status()).isEqualTo(SaleStatus.INVOICED);
+        assertThat(reloaded.invoicing()).contains(new InvoicingOutcome.Invoiced(invoice, T0.plusSeconds(5)));
+        assertThat(reloaded.lines()).isEqualTo(saved.lines());
+    }
+
+    @Test
+    @DisplayName("INVOICE_FAILED guarda el motivo; si luego llega la factura, pasa a INVOICED y el motivo se borra")
+    void savesFailedThenInvoicedSale() {
+        Sale saved = repository.saveNew(sale("VENTA-1", T0, PaymentTerms.cash()), HASH);
+        UUID rejected = UUID.randomUUID();
+
+        Sale failed = repository.save(saved.invoiceFailed("La DIAN no validó el documento", rejected, T0));
+        assertThat(repository.findById(saved.id()).orElseThrow().invoicing())
+                .contains(new InvoicingOutcome.Failed("La DIAN no validó el documento", rejected, T0));
+
+        repository.save(failed.invoiced(new InvoiceReference(UUID.randomUUID(), "SETP2", "cd".repeat(48)), T0));
+        assertThat(jdbc.sql("SELECT invoice_failure_reason IS NULL AND rejected_invoice_id IS NULL FROM sales")
+                .query(Boolean.class).single()).isTrue();
+    }
+
+    @Test
+    @DisplayName("bloqueo optimista: guardar sobre una versión vieja es un conflicto, no pisa el cambio de otro")
+    void staleVersionConflicts() {
+        Sale saved = repository.saveNew(sale("VENTA-1", T0, PaymentTerms.cash()), HASH);
+        repository.save(saved.invoiceFailed("primero", null, T0));
+
+        assertThatThrownBy(() -> repository.save(saved.invoiced(
+                new InvoiceReference(UUID.randomUUID(), "SETP1", "ab".repeat(48)), T0)))
+                .isInstanceOf(SaleConcurrentModificationException.class);
+        assertThat(repository.findById(saved.id()).orElseThrow().status()).isEqualTo(SaleStatus.INVOICE_FAILED);
+    }
+
+    @Test
+    @DisplayName("la base rechaza un estado incoherente con su resultado (defensa en profundidad)")
+    void databaseChecksInvoicingOutcome() {
+        Sale saved = repository.saveNew(sale("VENTA-1", T0, PaymentTerms.cash()), HASH);
+
+        assertThatThrownBy(() -> jdbc.sql("UPDATE sales SET status = 'INVOICED' WHERE id = :id")
+                .param("id", saved.id().value()).update()).hasMessageContaining("ck_sales_invoicing_outcome");
     }
 }

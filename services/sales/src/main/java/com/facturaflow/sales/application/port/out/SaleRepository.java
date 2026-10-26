@@ -20,6 +20,16 @@ public interface SaleRepository {
      */
     Sale saveNew(Sale sale, RequestHash requestHash);
 
+    /**
+     * Guarda el cambio de estado de una venta ya existente (el resultado de su facturación, ADR 0015) con bloqueo
+     * optimista: solo si sigue en la versión que se leyó. Devuelve la venta con su versión nueva.
+     *
+     * @throws com.facturaflow.sales.application.exception.SaleConcurrentModificationException si cambió desde que
+     *         se leyó
+     * @throws IllegalArgumentException si la venta nunca se guardó
+     */
+    Sale save(Sale sale);
+
     Optional<Sale> findById(SaleId id);
 
     Optional<Sale> findByReferenceCode(ReferenceCode referenceCode);

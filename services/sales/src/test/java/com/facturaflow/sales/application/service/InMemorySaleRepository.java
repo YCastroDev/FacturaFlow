@@ -1,6 +1,7 @@
 package com.facturaflow.sales.application.service;
 
 import com.facturaflow.sales.application.exception.DuplicateReferenceCodeException;
+import com.facturaflow.sales.application.exception.SaleConcurrentModificationException;
 import com.facturaflow.sales.application.port.out.RequestHash;
 import com.facturaflow.sales.application.port.out.SalePage;
 import com.facturaflow.sales.application.port.out.SaleRepository;
@@ -25,6 +26,7 @@ public class InMemorySaleRepository implements SaleRepository {
     private StoredSale raceWinner;
     /** Eventos que llegaron con cada venta guardada: lo que el adaptador real escribiría en el outbox. */
     private final List<SaleEvent> savedEvents = new ArrayList<>();
+    private int saves;
 
     void loseNextRaceTo(StoredSale winner) {
         this.raceWinner = winner;
@@ -46,6 +48,26 @@ public class InMemorySaleRepository implements SaleRepository {
         byReference.put(sale.referenceCode().value(), new StoredSale(saved, requestHash));
         savedEvents.addAll(sale.pendingEvents());
         return saved;
+    }
+
+    /** Bloqueo optimista como el adaptador real: solo si sigue en la versión leída; devuelve la versión siguiente. */
+    @Override
+    public Sale save(Sale sale) {
+        StoredSale stored = byReference.get(sale.referenceCode().value());
+        long version = sale.version().orElseThrow(() -> new IllegalArgumentException("nunca se guardó"));
+        if (stored == null || stored.sale().version().orElseThrow() != version) {
+            throw new SaleConcurrentModificationException(sale.id().value(), null);
+        }
+        Sale saved = Sale.reconstitute(sale.id(), sale.referenceCode(), sale.saleDate(), sale.createdAt(),
+                sale.customer(), sale.lines(), sale.paymentMethod(), sale.paymentTerms(),
+                sale.observation().orElse(null), sale.status(), sale.invoicing().orElse(null), version + 1);
+        byReference.put(sale.referenceCode().value(), new StoredSale(saved, stored.requestHash()));
+        saves++;
+        return saved;
+    }
+
+    int saves() {
+        return saves;
     }
 
     @Override

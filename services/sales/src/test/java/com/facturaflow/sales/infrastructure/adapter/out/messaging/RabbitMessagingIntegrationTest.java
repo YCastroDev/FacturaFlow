@@ -45,7 +45,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 @Import(TestcontainersConfiguration.class)
 class RabbitMessagingIntegrationTest {
 
-    private static final String TEST_QUEUE = "test.sales-events";
+    private static final String TEST_QUEUE = "sales.test-events";
     private static final RequestHash HASH = new RequestHash("b".repeat(64));
 
     @Autowired

@@ -5,6 +5,7 @@ import com.facturaflow.sales.application.port.in.GetOutboxStatusUseCase;
 import com.facturaflow.sales.application.port.in.GetSaleUseCase;
 import com.facturaflow.sales.application.port.in.ListSalesUseCase;
 import com.facturaflow.sales.application.port.in.PublishPendingEventsUseCase;
+import com.facturaflow.sales.application.port.in.RecordInvoiceResultUseCase;
 import com.facturaflow.sales.application.port.out.CatalogClient;
 import com.facturaflow.sales.application.port.out.EventPublisher;
 import com.facturaflow.sales.application.port.out.OutboxRepository;
@@ -14,6 +15,7 @@ import com.facturaflow.sales.application.service.GetOutboxStatusService;
 import com.facturaflow.sales.application.service.GetSaleService;
 import com.facturaflow.sales.application.service.ListSalesService;
 import com.facturaflow.sales.application.service.PublishPendingEventsService;
+import com.facturaflow.sales.application.service.RecordInvoiceResultService;
 import java.time.Clock;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -47,5 +49,10 @@ class UseCaseConfiguration {
     @Bean
     GetOutboxStatusUseCase getOutboxStatusUseCase(OutboxRepository outbox) {
         return new GetOutboxStatusService(outbox);
+    }
+
+    @Bean
+    RecordInvoiceResultUseCase recordInvoiceResultUseCase(SaleRepository repository) {
+        return new RecordInvoiceResultService(repository);
     }
 }

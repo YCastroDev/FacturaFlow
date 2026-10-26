@@ -1,6 +1,7 @@
 package com.facturaflow.sales.infrastructure.adapter.out.persistence;
 
 import com.facturaflow.sales.application.exception.DuplicateReferenceCodeException;
+import com.facturaflow.sales.application.exception.SaleConcurrentModificationException;
 import com.facturaflow.sales.application.port.out.OutboxMessage;
 import com.facturaflow.sales.application.port.out.RequestHash;
 import com.facturaflow.sales.application.port.out.SalePage;
@@ -14,6 +15,7 @@ import jakarta.persistence.EntityManager;
 import java.util.Optional;
 import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -72,6 +74,29 @@ class JpaSaleRepositoryAdapter implements SaleRepository {
                 throw new DuplicateReferenceCodeException(sale.referenceCode().value(), e);
             }
             throw e;
+        }
+    }
+
+    /**
+     * Bloqueo optimista en dos niveles, como en invoicing (ADR 0005): la versión que trae la venta debe ser la actual,
+     * y el UPDATE lleva "WHERE version = ?" para una carrera entre esta lectura y el flush.
+     */
+    @Override
+    @Transactional
+    public Sale save(Sale sale) {
+        long expected = sale.version().orElseThrow(() ->
+                new IllegalArgumentException("La venta " + sale.id().value() + " nunca se ha guardado: use saveNew()."));
+        try {
+            SaleEntity entity = jpaRepository.findWithLinesById(sale.id().value())
+                    .orElseThrow(() -> new SaleConcurrentModificationException(sale.id().value(), null));
+            if (entity.version != expected) {
+                throw new SaleConcurrentModificationException(sale.id().value(), null);
+            }
+            mapper.applyMutableState(sale, entity);
+            jpaRepository.flush();   // dentro del try: el conflicto de versión se traduce aquí, no en el commit
+            return mapper.toDomain(entity);
+        } catch (OptimisticLockingFailureException e) {
+            throw new SaleConcurrentModificationException(sale.id().value(), e);
         }
     }
 

@@ -41,6 +41,7 @@ import jakarta.persistence.EntityManagerFactory;
 import java.net.URI;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
 import org.hibernate.SessionFactory;
@@ -59,9 +60,11 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 /**
  * Integración contra un PostgreSQL real (Testcontainers) con las migraciones aplicadas.
  * Sin @Transactional en el test: cada save hace commit de verdad, como en producción.
- * El SQL se registra en el log (org.hibernate.SQL) para poder inspeccionar las consultas.
+ * El SQL se registra en el log (org.hibernate.SQL) para poder inspeccionar las consultas. El relay del outbox
+ * está apagado: los eventos se inspeccionan en la tabla sin que nadie los publique.
  */
 @SpringBootTest(properties = {
+        "invoicing.outbox.relay.enabled=false",
         "spring.jpa.properties.hibernate.generate_statistics=true",
         "logging.level.org.hibernate.SQL=DEBUG",
         "logging.level.org.hibernate.orm.jdbc.bind=TRACE",
@@ -85,6 +88,11 @@ class JpaInvoiceRepositoryAdapterTest {
     @BeforeEach
     void cleanDatabase() {
         jdbc.sql("TRUNCATE TABLE invoices CASCADE").update();
+        jdbc.sql("TRUNCATE TABLE outbox_events").update();
+    }
+
+    private List<String> outboxEventTypes() {
+        return jdbc.sql("SELECT event_type FROM outbox_events ORDER BY occurred_at").query(String.class).list();
     }
 
     private static Invoice newInvoice(String referenceCode, PaymentTerms terms) {
@@ -265,8 +273,8 @@ class JpaInvoiceRepositoryAdapterTest {
     }
 
     @Test
-    @DisplayName("guardar un cambio de estado ejecuta solo una lectura y una actualización (sin N+1)")
-    void updatesAggregateWithTwoStatements() {
+    @DisplayName("guardar un cambio de estado ejecuta una lectura, una actualización y el INSERT de su evento (sin N+1)")
+    void updatesAggregateWithThreeStatements() {
         Invoice saved = repository.saveNew(newInvoice("SALE-1", PaymentTerms.cash()), HASH);
         saved.markAsIssued(electronicDocument("140284.97"));
         Statistics statistics = entityManagerFactory.unwrap(SessionFactory.class).getStatistics();
@@ -275,7 +283,57 @@ class JpaInvoiceRepositoryAdapterTest {
         Invoice issued = repository.save(saved);
 
         assertThat(issued.lines()).hasSize(3);
-        assertThat(statistics.getPrepareStatementCount()).as("SELECT con joins + UPDATE de invoices").isEqualTo(2);
+        assertThat(statistics.getPrepareStatementCount())
+                .as("SELECT con joins + UPDATE de invoices + INSERT en outbox_events").isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("emitir guarda el cambio de estado y el evento InvoiceIssued en la misma transacción")
+    void issuedInvoiceAndEventAreSavedTogether() {
+        Invoice saved = repository.saveNew(newInvoice("SALE-1", PaymentTerms.cash()), HASH);
+        assertThat(outboxEventTypes()).as("crear una factura PENDING no publica nada").isEmpty();
+        saved.markAsIssued(electronicDocument("140284.97"));
+
+        Invoice issued = repository.save(saved);
+
+        assertThat(issued.pendingEvents()).as("la instancia devuelta no repite el evento").isEmpty();
+        Map<String, Object> row = jdbc.sql("""
+                        SELECT aggregate_type, aggregate_id, event_type, routing_key, published_at,
+                               payload::jsonb -> 'payload' ->> 'number' AS number,
+                               payload::jsonb -> 'payload' ->> 'referenceCode' AS reference
+                        FROM outbox_events""").query().singleRow();
+        assertThat(row).containsEntry("aggregate_type", "Invoice").containsEntry("aggregate_id", saved.id().value())
+                .containsEntry("event_type", "InvoiceIssued").containsEntry("routing_key", "invoice.issued.v1")
+                .containsEntry("published_at", null).containsEntry("number", "SETP990000001")
+                .containsEntry("reference", "SALE-1");
+    }
+
+    @Test
+    @DisplayName("rechazar guarda el evento InvoiceRejected con el motivo")
+    void rejectedInvoiceSavesItsEvent() {
+        Invoice saved = repository.saveNew(newInvoice("SALE-1", PaymentTerms.cash()), HASH);
+        saved.markAsRejected("La DIAN no validó el documento");
+
+        repository.save(saved);
+
+        assertThat(outboxEventTypes()).containsExactly("InvoiceRejected");
+        assertThat(jdbc.sql("SELECT payload::jsonb -> 'payload' ->> 'reason' FROM outbox_events").query(String.class)
+                .single()).isEqualTo("La DIAN no validó el documento");
+    }
+
+    @Test
+    @DisplayName("si el guardado falla por un conflicto de versión, el evento de esa copia tampoco queda")
+    void conflictLeavesNoEvent() {
+        Invoice saved = repository.saveNew(newInvoice("SALE-1", PaymentTerms.cash()), HASH);
+        Invoice copyA = repository.findById(saved.id()).orElseThrow();
+        Invoice copyB = repository.findById(saved.id()).orElseThrow();
+        copyA.markAsIssued(electronicDocument("140284.97"));
+        repository.save(copyA);
+        copyB.markAsRejected("rechazo con datos viejos");
+
+        assertThatThrownBy(() -> repository.save(copyB)).isInstanceOf(InvoiceConcurrentModificationException.class);
+
+        assertThat(outboxEventTypes()).as("solo el de la copia que ganó").containsExactly("InvoiceIssued");
     }
 
     @Test

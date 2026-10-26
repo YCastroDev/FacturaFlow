@@ -24,7 +24,22 @@ public record SaleResponse(
         ApiPaymentMethod paymentMethod,
         PaymentTerms paymentTerms,
         String observation,
-        Totals totals) {
+        Totals totals,
+        @Schema(description = "La factura electrónica emitida; solo con status INVOICED")
+        Invoice invoice,
+        @Schema(description = "Por qué no se pudo facturar; solo con status INVOICE_FAILED")
+        InvoiceFailure invoiceFailure) {
+
+    @Schema(description = "Factura emitida por invoicing para la venta (ADR 0015)")
+    public record Invoice(UUID invoiceId, @Schema(example = "SETP990000001") String number, String cufe,
+                          Instant invoicedAt) {
+    }
+
+    @Schema(description = "Motivo por el que la venta no se facturó: rechazo de la DIAN o de la petición (ADR 0015)")
+    public record InvoiceFailure(String reason,
+                                 @Schema(description = "La factura rechazada, si llegó a existir") UUID rejectedInvoiceId,
+                                 Instant failedAt) {
+    }
 
     @Schema(description = "Copia del cliente de catalog al momento de la venta")
     public record Customer(UUID customerId, ApiDocumentType documentType, String documentNumber, Integer checkDigit,

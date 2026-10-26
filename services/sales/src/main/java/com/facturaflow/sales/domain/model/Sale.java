@@ -1,12 +1,15 @@
 package com.facturaflow.sales.domain.model;
 
+import com.facturaflow.sales.domain.exception.InvalidInvoicingOutcomeException;
 import com.facturaflow.sales.domain.exception.InvalidPaymentTermsException;
 import com.facturaflow.sales.domain.exception.InvalidSaleException;
+import com.facturaflow.sales.domain.exception.InvalidSaleStateTransitionException;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.function.Function;
 
 /**
@@ -26,6 +29,10 @@ import java.util.function.Function;
  * {@link #pendingEvents()}; el repositorio los guarda en el outbox en la MISMA transacción que la venta.
  * {@link #reconstitute} no trae eventos (ya se guardaron), así que la instancia que devuelve el repositorio
  * no los repite y el agregado no necesita un método que los "limpie".
+ *
+ * <p>Facturación (ADR 0015): {@link #invoiced} e {@link #invoiceFailed} aplican el resultado que informa invoicing y
+ * devuelven una venta NUEVA (el agregado es inmutable), con el estado y el {@link InvoicingOutcome}. Las
+ * transiciones permitidas son las de {@link SaleStatus#canTransitionTo}.
  */
 public final class Sale {
 
@@ -43,13 +50,14 @@ public final class Sale {
     private final PaymentTerms paymentTerms;
     private final String observation;
     private final SaleStatus status;
+    private final InvoicingOutcome invoicing;
     private final Long version;
     private final List<SaleEvent> pendingEvents;
 
     private Sale(SaleId id, ReferenceCode referenceCode, LocalDate saleDate, Instant createdAt,
                  CustomerSnapshot customer, List<SaleLine> lines, PaymentMethod paymentMethod,
-                 PaymentTerms paymentTerms, String observation, SaleStatus status, Long version,
-                 List<SaleEvent> pendingEvents) {
+                 PaymentTerms paymentTerms, String observation, SaleStatus status, InvoicingOutcome invoicing,
+                 Long version, List<SaleEvent> pendingEvents) {
         this.id = id;
         this.referenceCode = referenceCode;
         this.saleDate = saleDate;
@@ -60,6 +68,7 @@ public final class Sale {
         this.paymentTerms = paymentTerms;
         this.observation = observation;
         this.status = status;
+        this.invoicing = invoicing;
         this.version = version;
         this.pendingEvents = pendingEvents;
     }
@@ -79,7 +88,7 @@ public final class Sale {
             throw InvalidPaymentTermsException.dueDateNotAfterSaleDate(credit.dueDate().toString(), saleDate.toString());
         }
         return new Sale(id, referenceCode, saleDate, createdAt, customer, List.copyOf(lines), paymentMethod,
-                paymentTerms, normalizeObservation(observation), SaleStatus.CONFIRMED, null,
+                paymentTerms, normalizeObservation(observation), SaleStatus.CONFIRMED, null, null,
                 List.of(new SaleEvent.SaleConfirmed(id, createdAt)));
     }
 
@@ -90,12 +99,64 @@ public final class Sale {
     public static Sale reconstitute(SaleId id, ReferenceCode referenceCode, LocalDate saleDate, Instant createdAt,
                                     CustomerSnapshot customer, List<SaleLine> lines, PaymentMethod paymentMethod,
                                     PaymentTerms paymentTerms, String observation, SaleStatus status, long version) {
+        return reconstitute(id, referenceCode, saleDate, createdAt, customer, lines, paymentMethod, paymentTerms,
+                observation, status, null, version);
+    }
+
+    /**
+     * Como el anterior, con el resultado de la facturación, que debe ser coherente con el estado: CONFIRMED sin
+     * resultado; INVOICED con {@link InvoicingOutcome.Invoiced}; INVOICE_FAILED con {@link InvoicingOutcome.Failed}.
+     */
+    public static Sale reconstitute(SaleId id, ReferenceCode referenceCode, LocalDate saleDate, Instant createdAt,
+                                    CustomerSnapshot customer, List<SaleLine> lines, PaymentMethod paymentMethod,
+                                    PaymentTerms paymentTerms, String observation, SaleStatus status,
+                                    InvoicingOutcome invoicing, long version) {
         validate(id, referenceCode, saleDate, createdAt, customer, lines, paymentMethod, paymentTerms);
         if (status == null) {
             throw InvalidSaleException.missing("un estado");
         }
+        requireCoherent(status, invoicing);
         return new Sale(id, referenceCode, saleDate, createdAt, customer, List.copyOf(lines), paymentMethod,
-                paymentTerms, normalizeObservation(observation), status, version, List.of());
+                paymentTerms, normalizeObservation(observation), status, invoicing, version, List.of());
+    }
+
+    // ----- Facturación (ADR 0015) -----
+
+    /** La factura se emitió: la venta pasa a INVOICED (desde CONFIRMED o INVOICE_FAILED). */
+    public Sale invoiced(InvoiceReference invoice, Instant at) {
+        return transitionTo(SaleStatus.INVOICED, new InvoicingOutcome.Invoiced(invoice, at));
+    }
+
+    /**
+     * La venta no se pudo facturar: pasa a INVOICE_FAILED (solo desde CONFIRMED).
+     *
+     * @param rejectedInvoiceId la factura rechazada, o {@code null} si invoicing rechazó la petición
+     */
+    public Sale invoiceFailed(String reason, UUID rejectedInvoiceId, Instant at) {
+        return transitionTo(SaleStatus.INVOICE_FAILED, new InvoicingOutcome.Failed(reason, rejectedInvoiceId, at));
+    }
+
+    private Sale transitionTo(SaleStatus target, InvoicingOutcome outcome) {
+        if (!status.canTransitionTo(target)) {
+            throw new InvalidSaleStateTransitionException(id.value(), status.name(), target.name());
+        }
+        return new Sale(id, referenceCode, saleDate, createdAt, customer, lines, paymentMethod, paymentTerms,
+                observation, target, outcome, version, List.of());
+    }
+
+    private static void requireCoherent(SaleStatus status, InvoicingOutcome invoicing) {
+        boolean coherent = switch (status) {
+            case CONFIRMED -> invoicing == null;
+            case INVOICED -> invoicing instanceof InvoicingOutcome.Invoiced;
+            case INVOICE_FAILED -> invoicing instanceof InvoicingOutcome.Failed;
+        };
+        if (!coherent) {
+            throw InvalidInvoicingOutcomeException.inconsistent(status.name(), switch (status) {
+                case CONFIRMED -> "no tiene resultado de facturación";
+                case INVOICED -> "requiere la factura emitida";
+                case INVOICE_FAILED -> "requiere el motivo del fallo";
+            });
+        }
     }
 
     private static void validate(SaleId id, ReferenceCode referenceCode, LocalDate saleDate, Instant createdAt,
@@ -206,6 +267,11 @@ public final class Sale {
 
     public SaleStatus status() {
         return status;
+    }
+
+    /** El resultado de la facturación; vacío mientras la venta está CONFIRMED (pendiente de facturar). */
+    public Optional<InvoicingOutcome> invoicing() {
+        return Optional.ofNullable(invoicing);
     }
 
     public Optional<Long> version() {

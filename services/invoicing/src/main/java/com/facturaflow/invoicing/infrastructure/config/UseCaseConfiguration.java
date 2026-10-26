@@ -23,6 +23,16 @@ import com.facturaflow.invoicing.application.service.GetInvoiceService;
 import com.facturaflow.invoicing.application.service.IssueCreditNoteService;
 import com.facturaflow.invoicing.application.service.IssueInvoiceService;
 import java.time.Clock;
+import com.facturaflow.invoicing.application.port.in.GetOutboxStatusUseCase;
+import com.facturaflow.invoicing.application.port.in.PublishPendingEventsUseCase;
+import com.facturaflow.invoicing.application.port.in.RejectInvoiceRequestUseCase;
+import com.facturaflow.invoicing.application.port.out.EventPublisher;
+import com.facturaflow.invoicing.application.port.out.InvoiceEventStore;
+import com.facturaflow.invoicing.application.port.out.OutboxRepository;
+import com.facturaflow.invoicing.application.service.GetOutboxStatusService;
+import com.facturaflow.invoicing.application.service.PublishPendingEventsService;
+import com.facturaflow.invoicing.application.service.RejectInvoiceRequestService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -82,5 +92,23 @@ class UseCaseConfiguration {
     @Bean
     GetCreditBalanceUseCase getCreditBalanceUseCase(InvoiceRepository invoices, CreditNoteRepository creditNotes) {
         return new GetCreditBalanceService(invoices, creditNotes);
+    }
+
+    // ----- Eventos de facturación (outbox, ADR 0015) -----
+
+    @Bean
+    RejectInvoiceRequestUseCase rejectInvoiceRequestUseCase(InvoiceEventStore events) {
+        return new RejectInvoiceRequestService(events);
+    }
+
+    @Bean
+    PublishPendingEventsUseCase publishPendingEventsUseCase(OutboxRepository outbox, EventPublisher publisher,
+                                                            @Value("${invoicing.outbox.batch-size}") int batchSize) {
+        return new PublishPendingEventsService(outbox, publisher, batchSize);
+    }
+
+    @Bean
+    GetOutboxStatusUseCase getOutboxStatusUseCase(OutboxRepository outbox) {
+        return new GetOutboxStatusService(outbox);
     }
 }

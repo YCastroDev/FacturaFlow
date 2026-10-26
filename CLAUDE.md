@@ -137,11 +137,11 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 - Health: componente `catalog` siempre UP (`/actuator/health/dependencies`); fuera de liveness/readiness.
 - Idempotencia como invoicing, pero la huella es de la PETICIÓN normalizada (no de los datos de catalog) y se resuelve ANTES de llamar a catalog (un reintento responde 200 con catalog caído). Si se agrega un campo a la petición, agregarlo a `SaleRequestHasher` y a su test.
 - Totales: COPIA deliberada del cálculo de invoicing (`Money`, `Quantity`, `DiscountRate`, `LineTax`, `SaleLine`) con sus tests copiados. Si cambia en un servicio, cambia en el otro.
-- `SaleStatus` solo tiene `CONFIRMED`; `INVOICED`/`INVOICE_FAILED` llegan con los eventos (Fase 3: valor + `canTransitionTo` + migración). El riesgo del vencimiento vs. fecha de emisión se acepta en el ADR 0013 (decisión 10): si la factura se rechaza, la venta queda `INVOICE_FAILED`.
+- `SaleStatus`: `CONFIRMED` (pendiente de facturar) → `INVOICED` | `INVOICE_FAILED`; `INVOICE_FAILED` → `INVOICED`; `INVOICED` final (ADR 0015, sección propia abajo). Un estado nuevo exige su caso en `canTransitionTo`, migración (CHECK de estado y de coherencia) y su fila en la tabla del ADR 0015.
 - El snapshot del cliente solo se valida en estructura (las reglas fiscales las validan catalog e invoicing).
 - Puerto local `127.0.0.1:8083`; base `sales_db` / usuario `sales_user` (`SALES_DB_PASSWORD`); `SALES_CATALOG_BASE_URL` (por defecto `http://catalog:8080`); RabbitMQ con el usuario `sales` (`SALES_RABBITMQ_PASSWORD`).
 
-## Mensajería y outbox (ADR 0013)
+## Mensajería y outbox (ADR 0013; en invoicing, copia en el ADR 0015)
 
 - RabbitMQ, coreografía (sin orquestador). Un exchange topic durable por servicio productor (`sales.events`), routing key `<agregado>.<hecho>.v<n>` (`sale.confirmed.v1`), una cola por consumidor (Fase 2). Sin `mandatory`.
 - **Transactional outbox, propio en cada servicio (sin código compartido).** En sales: el agregado registra el evento (`Sale.confirm` → `SaleEvent.SaleConfirmed` en `pendingEvents()`; `reconstitute` no trae eventos) y `SaleRepository.saveNew` guarda venta + eventos en la MISMA transacción (`outbox_events`). **Nunca publicar directo desde un caso de uso ni después del commit.**
@@ -150,7 +150,7 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 - Mensajes persistentes, `message_id` = `eventId`, `type`, `app_id`, `timestamp`, cabecera `eventVersion`.
 - **Al menos una vez:** puede haber duplicados y no hay orden garantizado; los maneja el consumidor (por `eventId` / `referenceCode`). En la Fase 2, el `referenceCode` de la venta es el de la factura.
 - **Contrato:** JSON Schema en `docs/events/<evento>.v<n>.schema.json`, validado por los tests de cada servicio leyendo ESE archivo (`EventContracts` en sales; `mvn.sh` monta la raíz del repo). Cambiar un campo del mensaje exige cambiar el esquema y su test; un cambio incompatible es una versión nueva (reglas en `docs/events/README.md`). `totals` es INFORMATIVO: invoicing no lo usa para calcular (en la Fase 2 lo compara y registra un WARN si difiere).
-- **Health:** `management.health.rabbit.enabled: false` (el indicador de Spring Boot bajaría el health); el componente `messaging` es informativo, siempre UP, en `/actuator/health/dependencies`, fuera de liveness/readiness. Métricas `sales.outbox.pending` y `sales.outbox.oldest.pending.age`. El relay solo registra cambios de estado (WARN al fallar, INFO al recuperarse).
+- **Health:** `management.health.rabbit.enabled: false` (el indicador de Spring Boot bajaría el health); en cada servicio UN componente `messaging` informativo, siempre UP, en `/actuator/health/dependencies`, fuera de liveness/readiness, con las partes `outbox` y `consumer` (`MessagingHealthPart`, interfaz pública en `infrastructure/config` que aporta cada adaptador; el indicador las reúne). Métricas `<servicio>.outbox.pending` y `<servicio>.outbox.oldest.pending.age`. El relay solo registra cambios de estado (WARN al fallar, INFO al recuperarse).
 - ArchUnit regla 11: Spring AMQP y el cliente de RabbitMQ solo dentro de `adapter/out/messaging` (package-private), y nada de ese paquete sale de él.
 - **Seguridad:** administrador solo para consola e init; un usuario por servicio en el vhost `facturaflow` con permisos mínimos (sales: configure/write `^sales\.events$`, read `^$`), creado por `infra/rabbitmq/init/create-service-users.sh` (contenedor `rabbitmq-init`, idempotente, sin contraseñas en argumentos). Un servicio nuevo que publique o consuma necesita su línea en ese script y su variable en `.env.example` y compose. Solo la consola se publica (`127.0.0.1:15672`); el 5672 no.
 - RabbitMQ 4.3 no admite colas transitorias no exclusivas: las colas de tests y de depuración son durables.
@@ -160,14 +160,25 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 
 - `infrastructure/adapter/in/messaging` (ACL, package-private; ArchUnit reglas 10 y 11: nada sale del paquete y Spring AMQP/`com.rabbitmq` solo ahí). Traduce `SaleConfirmed` v1 al MISMO `CreateInvoiceCommand` de la API y llama a `CreateInvoiceUseCase` e `IssueInvoiceUseCase` **sin modificarlos**. Lector tolerante (`SaleConfirmedJson`); validación estructural en el traductor; el JSON Schema se valida en los tests (`EventContracts`, copia propia de la de sales).
 - Idempotencia: `referenceCode` de la venta = de la factura. Solo se emite si la factura está `PENDING`; un duplicado de una `ISSUED`/`REJECTED` es ack sin llamar al proveedor. Sin tabla inbox de `eventId` (decisión documentada).
-- `SaleConfirmedProcessor` clasifica (sin AMQP): `Completed` (ISSUED, REJECTED, duplicado, `InvoiceAlreadyRejected`) → ack; `RetryLater` (`ElectronicInvoiceProviderUnavailable`, `InvoiceConcurrentModification`, cualquier excepción inesperada) → espera y reintento; `Invalid` (JSON/contrato, `DomainException`, `ReferenceCodeConflict`) → DLQ sin reintentos. Una clasificación nueva exige su fila en la tabla del ADR 0014 y su test.
+- `SaleConfirmedProcessor` clasifica (sin AMQP): `Completed` (ISSUED, REJECTED, duplicado, `InvoiceAlreadyRejected`) → ack; `RetryLater` (`ElectronicInvoiceProviderUnavailable`, `InvoiceConcurrentModification`, cualquier excepción inesperada) → espera y reintento; `Invalid` (JSON/contrato, `DomainException`, `ReferenceCodeConflict`) → registra `InvoiceRequestRejected` (si el `referenceCode` es legible; si registrarlo falla → `RetryLater`) y luego DLQ sin reintentos. Una falla técnica NUNCA registra un rechazo. Una clasificación nueva exige su fila en la tabla del ADR 0014 y su test.
 - Ack MANUAL y solo después de procesar o de republicar CON confirmación (`ConfirmedRepublisher`); si republicar falla → `basicNack(requeue=true)`. Nunca hacer ack antes.
 - Topología (la declara invoicing; `sales.events` NO, lo declaran sales y `rabbitmq-init`): `invoicing.sale-confirmed` ← `sales.events`/`sale.confirmed.v1`; `invoicing.retry` → `invoicing.sale-confirmed.wait-<duración>` (TTL por cola; el nombre lleva la duración); al vencer vuelven por `invoicing.requeue` (NUNCA por el exchange por defecto: exigiría write sobre `amq.default`); `invoicing.dlx` → `invoicing.sale-confirmed.dlq`. Cabecera `x-attempt`; la DLQ lleva `x-failure-category`, `x-failure-reason`, `x-attempts-made`, `x-failed-at` y no `x-attempt`.
 - `invoicing.messaging.retry-delays: 10s,1m,5m`; 1 consumidor, prefetch 1 (limitador de Factus y sin duplicados en paralelo).
 - Totales del evento: informativos; WARN con ambos valores solo al CREAR la factura (`SaleTotalsCheck`).
-- Health: `management.health.rabbit.enabled: false`; componente `messaging` (siempre UP) en `/actuator/health/dependencies`; métrica `invoicing.sale_confirmed.processed{outcome}`. Sin RabbitMQ, invoicing arranca y su API funciona.
+- Health: parte `consumer` del componente `messaging` (`/actuator/health/dependencies`); métrica `invoicing.sale_confirmed.processed{outcome}`. Sin RabbitMQ, invoicing arranca y su API funciona.
 - Usuario `invoicing` (`INVOICING_RABBITMQ_PASSWORD`): configure/write `^invoicing\..*`, read `^(invoicing\..*|sales\.events)$`. **Los tests de invoicing ejecutan el script de init real en Testcontainers** y se conectan como `invoicing` (publican como `sales` con `TestcontainersConfiguration.salesTemplate`): un permiso que falte debe fallar en los tests.
-- Reprocesar la DLQ: `./scripts/rabbitmq-dlq.sh requeue` (shovel dinámico) o "Move messages" en la consola, solo tras corregir la causa.
+- Reprocesar la DLQ: `./scripts/rabbitmq-dlq.sh invoicing requeue` (shovel dinámico) o "Move messages" en la consola, solo tras corregir la causa.
+
+## Cierre de la Saga: resultados de facturación (ADR 0015)
+
+- **Invoicing publica** en `invoicing.events` (outbox propio, V7; copia del de sales: relay, SKIP LOCKED, confirms; `adapter/out/messaging`, `adapter/in/outbox`; `invoicing.publishing.*`, `invoicing.outbox.*`): `InvoiceIssued` (`invoice.issued.v1`), `InvoiceRejected` (`invoice.rejected.v1`), `InvoiceRequestRejected` (`invoice-request.rejected.v1`). Esquemas en `docs/events/invoice-*.v1.schema.json`, validados por los tests de LOS DOS servicios. Nunca `publicUrl` ni `qrUrl`.
+- `Invoice.markAsIssued`/`markAsRejected` registran `InvoiceEvent` en `pendingEvents()`; `InvoiceRepository.save` guarda estado + eventos en la MISMA transacción (instante = el del guardado, con el `Clock` del adaptador; el dominio no lee el reloj). `IssueInvoiceService` no cambia. `InvoiceRequestRejected` lo registra `RejectInvoiceRequestUseCase` → `InvoiceEventStore` (sin agregado). Cada `event_type` nuevo exige migración (CHECK) y su serialización en `InvoiceEventMessages` (único lugar con el contrato).
+- Se publican eventos de TODAS las facturas (también REST). Sales correlaciona por `referenceCode` y comprueba el documento del cliente (o el `saleId` en `InvoiceRequestRejected`); lo que no es suyo: ack e ignorar.
+- **Sales consume** en `adapter/in/messaging` (ACL, regla 12; mismo mecanismo que el ADR 0014): `sales.invoice-results` ← `invoicing.events` (3 routing keys), `sales.retry` → `wait-*`, `sales.requeue`, `sales.dlx` → `.dlq`; `sales.invoice-results.*`. `RecordInvoiceResultUseCase` aplica la tabla del ADR 0015: "el éxito gana y el fallo no deshace"; repetidos = no-op. `Sale.invoiced`/`invoiceFailed` devuelven una venta NUEVA con `InvoicingOutcome`; `SaleRepository.save` con bloqueo optimista (`SaleConcurrentModificationException` → reintento).
+- DLQ de invoicing: inválido → `InvoiceRequestRejected` → venta `INVOICE_FAILED` (incluido el vencimiento); técnica → SIN evento, la venta sigue `CONFIRMED` y se reprocesa.
+- `GET /api/v1/sales/{id}`: `status`, `invoice {invoiceId, number, cufe, invoicedAt}`, `invoiceFailure {reason, rejectedInvoiceId, failedAt}`.
+- Permisos: `sales` configure/write `^sales\..*`, read `^(sales\..*|invoicing\.events)$`. Los tests de sales también ejecutan el script de init real y se conectan como `sales` (publican resultados como invoicing con `TestcontainersConfiguration.invoicingTemplate`); sus colas de prueba llevan el prefijo `sales.`.
+- ArchUnit en los dos: regla 11 (AMQP solo en `adapter/in/messaging` y `adapter/out/messaging`; nada de `out/messaging` sale) y regla 12 (el ACL del otro adaptador de mensajería).
 
 ## Convenciones
 
@@ -218,10 +229,10 @@ curl -s http://localhost:8083/actuator/health/dependencies   # circuito hacia ca
 # los eventos de sales se usa una cola de depuración temporal (se borra sola tras 1 h sin uso)
 ./scripts/rabbitmq-debug-queue.sh create   # o peek / delete
 # Consumidor de invoicing: colas, esperas y DLQ; reprocesar la DLQ (shovel)
-./scripts/rabbitmq-dlq.sh status           # o peek / requeue / purge --yes
-curl -s http://localhost:8081/actuator/health/dependencies          # componente messaging del consumidor
+./scripts/rabbitmq-dlq.sh invoicing status   # o sales; y peek / requeue / purge --yes
+curl -s http://localhost:8081/actuator/health/dependencies          # messaging: outbox y consumidor de invoicing
 curl -s "http://localhost:8081/actuator/metrics/invoicing.sale_confirmed.processed?tag=outcome:issued"
-curl -s http://localhost:8083/actuator/health/dependencies          # componente messaging (outbox y relay)
+curl -s http://localhost:8083/actuator/health/dependencies          # messaging: outbox y consumidor de sales
 curl -s http://localhost:8083/actuator/metrics/sales.outbox.pending
 
 # Swagger UI (API documentada con ejemplos)

@@ -1,20 +1,25 @@
 package com.facturaflow.sales.domain.model;
 
 /**
- * Estado de la venta. Hoy una venta nace y queda {@link #CONFIRMED}: no hay carrito ni borrador.
- *
- * <p>Preparado para la tarea de eventos (ADR 0012): cuando invoicing informe el resultado llegarán
- * {@code INVOICED} (factura emitida) e {@code INVOICE_FAILED} (rechazada), ambos desde CONFIRMED. Para
- * agregarlos: el valor aquí, su caso en {@link #canTransitionTo}, la migración (CHECK) y el método de
- * {@link Sale} que haga la transición.
+ * Estado de la venta (ADR 0012 y 0015). Nace {@link #CONFIRMED} (pendiente de facturar) y lo cambian los eventos de
+ * invoicing:
+ * <ul>
+ *   <li>CONFIRMED → {@link #INVOICED} (factura emitida) o {@link #INVOICE_FAILED} (rechazada o petición rechazada);</li>
+ *   <li>INVOICE_FAILED → INVOICED: "el éxito gana". Una factura emitida es un hecho legal y llega a ocurrir (p. ej.
+ *       tras reprocesar), aunque antes llegara un fallo;</li>
+ *   <li>INVOICED es final: un fallo tardío no deshace una factura emitida.</li>
+ * </ul>
  */
 public enum SaleStatus {
-    CONFIRMED;
+    CONFIRMED,
+    INVOICED,
+    INVOICE_FAILED;
 
-    /** Transiciones permitidas. Hoy ninguna: CONFIRMED es el único estado. */
     public boolean canTransitionTo(SaleStatus target) {
         return switch (this) {
-            case CONFIRMED -> false;
+            case CONFIRMED -> target == INVOICED || target == INVOICE_FAILED;
+            case INVOICE_FAILED -> target == INVOICED;
+            case INVOICED -> false;
         };
     }
 }

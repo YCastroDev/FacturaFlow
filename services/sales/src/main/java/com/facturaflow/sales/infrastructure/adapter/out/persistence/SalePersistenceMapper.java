@@ -6,6 +6,8 @@ import com.facturaflow.sales.domain.model.CustomerSnapshot;
 import com.facturaflow.sales.domain.model.DiscountRate;
 import com.facturaflow.sales.domain.model.DocumentType;
 import com.facturaflow.sales.domain.model.FiscalResponsibility;
+import com.facturaflow.sales.domain.model.InvoiceReference;
+import com.facturaflow.sales.domain.model.InvoicingOutcome;
 import com.facturaflow.sales.domain.model.LineTax;
 import com.facturaflow.sales.domain.model.Money;
 import com.facturaflow.sales.domain.model.PaymentMethod;
@@ -90,7 +92,47 @@ class SalePersistenceMapper {
         return Sale.reconstitute(new SaleId(entity.id), new ReferenceCode(entity.referenceCode), entity.saleDate,
                 entity.createdAt, customer, entity.lines.stream().map(this::toDomain).toList(),
                 PaymentMethod.valueOf(entity.paymentMethod), terms, entity.observation,
-                SaleStatus.valueOf(entity.status), entity.version);
+                SaleStatus.valueOf(entity.status), invoicing(entity), entity.version);
+    }
+
+    /** El resultado de la facturación según las columnas que estén llenas (el CHECK garantiza la coherencia). */
+    private static InvoicingOutcome invoicing(SaleEntity entity) {
+        if (entity.invoiceId != null) {
+            return new InvoicingOutcome.Invoiced(new InvoiceReference(entity.invoiceId, entity.invoiceNumber,
+                    entity.invoiceCufe), entity.invoicedAt);
+        }
+        if (entity.invoiceFailureReason != null) {
+            return new InvoicingOutcome.Failed(entity.invoiceFailureReason, entity.rejectedInvoiceId,
+                    entity.invoiceFailedAt);
+        }
+        return null;
+    }
+
+    /** Copia a la entidad lo único que cambia de una venta guardada: el estado y el resultado de la facturación. */
+    void applyMutableState(Sale sale, SaleEntity entity) {
+        entity.status = sale.status().name();
+        entity.invoiceId = null;
+        entity.invoiceNumber = null;
+        entity.invoiceCufe = null;
+        entity.invoicedAt = null;
+        entity.invoiceFailureReason = null;
+        entity.invoiceFailedAt = null;
+        entity.rejectedInvoiceId = null;
+        switch (sale.invoicing().orElse(null)) {
+            case null -> {
+            }
+            case InvoicingOutcome.Invoiced invoiced -> {
+                entity.invoiceId = invoiced.invoice().invoiceId();
+                entity.invoiceNumber = invoiced.invoice().number();
+                entity.invoiceCufe = invoiced.invoice().cufe();
+                entity.invoicedAt = invoiced.at();
+            }
+            case InvoicingOutcome.Failed failed -> {
+                entity.invoiceFailureReason = failed.reason();
+                entity.invoiceFailedAt = failed.at();
+                entity.rejectedInvoiceId = failed.invoiceId();
+            }
+        }
     }
 
     private SaleLineEntity toEntity(SaleLine line) {

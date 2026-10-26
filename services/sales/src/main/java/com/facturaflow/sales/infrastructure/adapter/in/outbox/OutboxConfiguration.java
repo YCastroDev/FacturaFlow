@@ -18,8 +18,8 @@ class OutboxConfiguration {
     }
 
     @Bean
-    MessagingHealthIndicator messagingHealthIndicator(GetOutboxStatusUseCase outbox, RelayState state) {
-        return new MessagingHealthIndicator(outbox, state);
+    OutboxHealthPart outboxHealthPart(GetOutboxStatusUseCase outbox, RelayState state) {
+        return new OutboxHealthPart(outbox, state);
     }
 
     @Bean

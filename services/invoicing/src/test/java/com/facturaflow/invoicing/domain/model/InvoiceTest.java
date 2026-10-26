@@ -312,4 +312,59 @@ class InvoiceTest {
             assertThat(pendingInvoice().hasOfficialTotalDiscrepancy()).isFalse();
         }
     }
+
+    @Nested
+    @DisplayName("Eventos de dominio")
+    class Events {
+
+        @Test
+        @DisplayName("una factura nueva no tiene eventos; emitirla registra InvoiceIssued")
+        void issuingRegistersInvoiceIssued() {
+            Invoice invoice = pendingInvoice();
+            assertThat(invoice.pendingEvents()).isEmpty();
+
+            invoice.markAsIssued(electronicDocument("119000.00"));
+
+            assertThat(invoice.pendingEvents()).containsExactly(new InvoiceEvent.InvoiceIssued(INVOICE_ID));
+        }
+
+        @Test
+        @DisplayName("rechazarla registra InvoiceRejected")
+        void rejectingRegistersInvoiceRejected() {
+            Invoice invoice = pendingInvoice();
+
+            invoice.markAsRejected("La DIAN no validó el documento");
+
+            assertThat(invoice.pendingEvents()).containsExactly(new InvoiceEvent.InvoiceRejected(INVOICE_ID));
+        }
+
+        @Test
+        @DisplayName("una transición inválida no registra ningún evento")
+        void invalidTransitionRegistersNothing() {
+            Invoice invoice = pendingInvoice();
+            invoice.markAsRejected("rechazada");
+
+            assertThatThrownBy(() -> invoice.markAsIssued(electronicDocument("119000.00")))
+                    .isInstanceOf(InvalidInvoiceStateTransitionException.class);
+            assertThat(invoice.pendingEvents()).containsExactly(new InvoiceEvent.InvoiceRejected(INVOICE_ID));
+        }
+
+        @Test
+        @DisplayName("los eventos pendientes no se pueden modificar desde fuera del agregado")
+        void pendingEventsAreACopy() {
+            Invoice invoice = pendingInvoice();
+            invoice.markAsIssued(electronicDocument("119000.00"));
+
+            assertThatThrownBy(() -> invoice.pendingEvents().clear()).isInstanceOf(UnsupportedOperationException.class);
+        }
+
+        @Test
+        @DisplayName("una petición rechazada exige código de referencia y motivo")
+        void requestRejectedRequiresReferenceAndReason() {
+            assertThatThrownBy(() -> new InvoiceEvent.InvoiceRequestRejected(" ", null, null, "motivo"))
+                    .isInstanceOf(InvalidInvoiceException.class);
+            assertThatThrownBy(() -> new InvoiceEvent.InvoiceRequestRejected("VENTA-1", null, null, null))
+                    .isInstanceOf(InvalidInvoiceException.class);
+        }
+    }
 }

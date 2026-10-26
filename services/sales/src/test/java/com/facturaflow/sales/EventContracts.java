@@ -11,6 +11,7 @@ import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -21,10 +22,16 @@ import tools.jackson.databind.json.JsonMapper;
  */
 public final class EventContracts {
 
-    public static final Path SALE_CONFIRMED_V1 = Path.of("../../docs/events/sale-confirmed.v1.schema.json");
+    private static final Path EVENTS = Path.of("../../docs/events");
+    public static final Path SALE_CONFIRMED_V1 = EVENTS.resolve("sale-confirmed.v1.schema.json");
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private static final Schema SALE_CONFIRMED_V1_SCHEMA = load(SALE_CONFIRMED_V1);
+    /** Los resultados de facturación que consume sales (ADR 0015), por {@code eventType}. */
+    private static final Map<String, Schema> INVOICE_RESULTS = Map.of(
+            "InvoiceIssued", load(EVENTS.resolve("invoice-issued.v1.schema.json")),
+            "InvoiceRejected", load(EVENTS.resolve("invoice-rejected.v1.schema.json")),
+            "InvoiceRequestRejected", load(EVENTS.resolve("invoice-request-rejected.v1.schema.json")));
 
     private EventContracts() {
     }
@@ -36,6 +43,16 @@ public final class EventContracts {
 
     public static List<String> saleConfirmedV1Violations(JsonNode message) {
         return SALE_CONFIRMED_V1_SCHEMA.validate(message).stream().map(Error::toString).toList();
+    }
+
+    /** Violaciones de un resultado de facturación v1 contra el esquema de su {@code eventType}. */
+    public static List<String> invoiceResultViolations(String message) {
+        JsonNode json = JSON.readTree(message);
+        Schema schema = INVOICE_RESULTS.get(json.path("eventType").asString(""));
+        if (schema == null) {
+            return List.of("eventType desconocido: " + json.path("eventType"));
+        }
+        return schema.validate(json).stream().map(Error::toString).toList();
     }
 
     private static Schema load(Path path) {

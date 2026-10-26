@@ -130,7 +130,8 @@ class InvoicePersistenceMapperTest {
 
         Invoice restored = roundTrip(original);
 
-        assertThat(restored).usingRecursiveComparison().ignoringFields("version").isEqualTo(original);
+        // La original registró InvoiceIssued al emitirse; la reconstruida no trae eventos (ya se guardaron, ADR 0015).
+        assertThat(restored).usingRecursiveComparison().ignoringFields("version", "pendingEvents").isEqualTo(original);
     }
 
     @Test

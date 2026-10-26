@@ -22,6 +22,7 @@ import com.jayway.jsonpath.JsonPath;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -86,6 +87,7 @@ class SaleConfirmedConsumerIntegrationTest {
     @BeforeEach
     void setUp() {
         jdbc.sql("TRUNCATE TABLE invoices CASCADE").update();
+        jdbc.sql("TRUNCATE TABLE outbox_events").update();
         for (String queue : new String[] {QUEUE, DLQ, QUEUE + ".wait-200ms", QUEUE + ".wait-400ms",
                 QUEUE + ".wait-600ms"}) {
             admin.purgeQueue(queue, false);
@@ -128,6 +130,12 @@ class SaleConfirmedConsumerIntegrationTest {
         return await().atMost(WAIT).until(() -> rabbit.receive(DLQ, 200), message -> message != null);
     }
 
+    /** Tipos de los eventos de facturación guardados para una venta (publicados o no: el relay corre solo). */
+    private List<String> outboxEvents(String referenceCode) {
+        return jdbc.sql("SELECT event_type FROM outbox_events WHERE payload::jsonb -> 'payload' ->> 'referenceCode' = :r")
+                .param("r", referenceCode).query(String.class).list();
+    }
+
     private long invoiceCount() {
         return jdbc.sql("SELECT count(*) FROM invoices").query(Long.class).single();
     }
@@ -140,6 +148,7 @@ class SaleConfirmedConsumerIntegrationTest {
         awaitStatus("VENTA-EVT-1", "ISSUED");
         verify(provider, times(1)).issue(any(Invoice.class));
         assertThat(rabbit.receive(DLQ, 200)).isNull();
+        assertThat(outboxEvents("VENTA-EVT-1")).as("el resultado vuelve a sales (ADR 0015)").containsExactly("InvoiceIssued");
     }
 
     @Test
@@ -187,6 +196,8 @@ class SaleConfirmedConsumerIntegrationTest {
         assertThat(new String(dead.getBody(), StandardCharsets.UTF_8)).isEqualTo(event);
         assertThat(status("VENTA-EVT-CAIDA")).as("la factura queda PENDING").contains("PENDING");
         verify(provider, times(4)).issue(any(Invoice.class));
+        assertThat(outboxEvents("VENTA-EVT-CAIDA")).as("una falla técnica no es un resultado: se puede reprocesar")
+                .isEmpty();
     }
 
     @Test
@@ -205,6 +216,8 @@ class SaleConfirmedConsumerIntegrationTest {
         assertThat(processed("retried")).isEqualTo(retriedBefore);
         assertThat(invoiceCount()).isZero();
         verify(provider, times(0)).issue(any(Invoice.class));
+        assertThat(outboxEvents("VENTA-EVT-ROTA")).as("rechazo definitivo: sales marcará la venta INVOICE_FAILED")
+                .containsExactly("InvoiceRequestRejected");
     }
 
     @Test
@@ -215,6 +228,7 @@ class SaleConfirmedConsumerIntegrationTest {
         publishValid(sale("VENTA-EVT-RECHAZO", "SIMULAR_RECHAZO"));
 
         awaitStatus("VENTA-EVT-RECHAZO", "REJECTED");
+        assertThat(outboxEvents("VENTA-EVT-RECHAZO")).containsExactly("InvoiceRejected");
         verify(provider, times(1)).issue(any(Invoice.class));
         assertThat(processed("retried")).isEqualTo(retriedBefore);
         assertThat(rabbit.receive(DLQ, 500)).isNull();

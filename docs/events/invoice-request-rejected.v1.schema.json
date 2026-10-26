@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:facturaflow:event:invoice-request-rejected:v1",
+  "title": "InvoiceRequestRejected v1",
+  "description": "Una petición de factura (un SaleConfirmed) no se convirtió en factura y no se convertirá con esos datos: el dominio los rechazó (p. ej. un vencimiento ya no posterior a la fecha de emisión), el referenceCode ya lo usa otra factura con otro contenido, o la petición no cumplía el contrato. No hay factura. Una falla TÉCNICA nunca produce este evento: se reintenta. Productor: invoicing. Exchange invoicing.events, routing key invoice-request.rejected.v1. Entrega al menos una vez (ADR 0015, D2).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "eventId",
+    "eventType",
+    "eventVersion",
+    "occurredAt",
+    "producer",
+    "payload"
+  ],
+  "properties": {
+    "eventId": {
+      "description": "Identidad del evento (también es el message_id de AMQP). Un reenvío conserva el mismo eventId.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "eventType": {
+      "const": "InvoiceRequestRejected"
+    },
+    "eventVersion": {
+      "const": 1
+    },
+    "occurredAt": {
+      "description": "Cuándo invoicing guardó el hecho (UTC, ISO-8601), en la misma transacción. No es cuándo se publicó.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "producer": {
+      "const": "invoicing"
+    },
+    "payload": {
+      "$ref": "#/$defs/payload"
+    }
+  },
+  "$defs": {
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "referenceCode",
+        "saleId",
+        "sourceEventId",
+        "reason"
+      ],
+      "properties": {
+        "referenceCode": {
+          "description": "El referenceCode de la petición (el de la venta). Texto tal como llegó: si no cumple el formato, no corresponde a ninguna venta.",
+          "type": "string",
+          "minLength": 1
+        },
+        "saleId": {
+          "description": "El saleId de la petición, si se pudo leer (trazabilidad).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "sourceEventId": {
+          "description": "El eventId del SaleConfirmed que pidió la factura, si se pudo leer (trazabilidad).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "reason": {
+          "description": "Por qué no se facturó, para mostrarlo en la venta.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

@@ -8,6 +8,9 @@ import com.facturaflow.invoicing.application.port.out.StoredInvoice;
 import com.facturaflow.invoicing.domain.model.Invoice;
 import com.facturaflow.invoicing.domain.model.InvoiceId;
 import com.facturaflow.invoicing.domain.model.ReferenceCode;
+import jakarta.persistence.EntityManager;
+import java.time.Clock;
+import java.time.Instant;
 import java.util.Optional;
 import java.util.function.Supplier;
 import org.hibernate.exception.ConstraintViolationException;
@@ -21,6 +24,10 @@ import org.springframework.transaction.annotation.Transactional;
  * Cada {@code saveNew}/{@code save} es una transacción que guarda el agregado completo. Ninguna
  * excepción de Spring o Hibernate sale de aquí: se traducen a las del puerto.
  *
+ * <p>Transactional outbox (ADR 0015): {@link #save} guarda el cambio de estado y los eventos pendientes de la
+ * factura ({@code InvoiceIssued}, {@code InvoiceRejected}) en la misma transacción: nunca queda una factura emitida
+ * sin su evento ni un evento sin su factura. El instante del hecho es el del guardado (el dominio no lee el reloj).
+ *
  * <p>Este es el único lugar del servicio con transacciones (ADR 0006, regla de ArchUnit): los
  * casos de uso nunca abren una, así que una llamada a un sistema externo entre dos operaciones
  * del repositorio ocurre siempre fuera de la base de datos.
@@ -32,10 +39,17 @@ class JpaInvoiceRepositoryAdapter implements InvoiceRepository {
 
     private final InvoiceJpaRepository jpaRepository;
     private final InvoicePersistenceMapper mapper;
+    private final EntityManager entityManager;
+    private final InvoiceEventMessages messages;
+    private final Clock clock;
 
-    JpaInvoiceRepositoryAdapter(InvoiceJpaRepository jpaRepository, InvoicePersistenceMapper mapper) {
+    JpaInvoiceRepositoryAdapter(InvoiceJpaRepository jpaRepository, InvoicePersistenceMapper mapper,
+                                EntityManager entityManager, InvoiceEventMessages messages, Clock clock) {
         this.jpaRepository = jpaRepository;
         this.mapper = mapper;
+        this.entityManager = entityManager;
+        this.messages = messages;
+        this.clock = clock;
     }
 
     @Override
@@ -57,7 +71,14 @@ class JpaInvoiceRepositoryAdapter implements InvoiceRepository {
         if (invoice.version().isEmpty()) {
             throw new IllegalArgumentException("La factura " + invoice.id() + " nunca se ha guardado: use saveNew().");
         }
-        return persist(invoice, () -> update(invoice));
+        return persist(invoice, () -> {
+            InvoiceEntity entity = update(invoice);
+            Instant occurredAt = clock.instant();
+            // persist (no save): el id del evento ya viene asignado y save() haría un merge con SELECT previo.
+            invoice.pendingEvents().forEach(event -> entityManager.persist(JpaOutboxAdapter.entity(
+                    messages.toMessage(event, invoice, occurredAt), InvoiceEventMessages.INVOICE, invoice.id().value())));
+            return entity;
+        });
     }
 
     @Override

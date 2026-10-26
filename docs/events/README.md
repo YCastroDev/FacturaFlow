@@ -1,6 +1,6 @@
 # Catálogo de eventos
 
-Los eventos que los servicios de FacturaFlow publican en RabbitMQ y el contrato de cada uno. Las decisiones de fondo están en el [ADR 0013](../adr/0013-mensajeria-y-outbox.md) (productor: RabbitMQ, coreografía, transactional outbox, entrega al menos una vez) y en el [ADR 0014](../adr/0014-consumo-de-sale-confirmed.md) (consumidor: clasificación, reintentos con espera, DLQ y reprocesamiento).
+Los eventos que los servicios de FacturaFlow publican en RabbitMQ y el contrato de cada uno. Las decisiones de fondo están en el [ADR 0013](../adr/0013-mensajeria-y-outbox.md) (productor: RabbitMQ, coreografía, transactional outbox, entrega al menos una vez) en el [ADR 0014](../adr/0014-consumo-de-sale-confirmed.md) (consumidor: clasificación, reintentos con espera, DLQ y reprocesamiento) y en el [ADR 0015](../adr/0015-cierre-de-la-saga-de-facturacion.md) (eventos de resultado y estado de la venta; incluye el **diagrama de secuencia** del flujo completo).
 
 Cada contrato es un **JSON Schema** (draft 2020-12) en esta carpeta. Es la única fuente de verdad: el productor y cada consumidor lo validan en sus propios tests, leyendo **este mismo archivo**, sin copiarlo ni empaquetarlo en una librería compartida (ADR 0001).
 
@@ -9,6 +9,11 @@ Cada contrato es un **JSON Schema** (draft 2020-12) en esta carpeta. Es la únic
 | Evento | Versión | Productor | Exchange | Routing key | Esquema | Consumidores |
 |---|---|---|---|---|---|---|
 | `SaleConfirmed` | 1 | sales | `sales.events` | `sale.confirmed.v1` | [sale-confirmed.v1.schema.json](sale-confirmed.v1.schema.json) | invoicing: cola `invoicing.sale-confirmed` (crea y emite la factura) |
+| `InvoiceIssued` | 1 | invoicing | `invoicing.events` | `invoice.issued.v1` | [invoice-issued.v1.schema.json](invoice-issued.v1.schema.json) | sales: cola `sales.invoice-results` (venta → `INVOICED`) |
+| `InvoiceRejected` | 1 | invoicing | `invoicing.events` | `invoice.rejected.v1` | [invoice-rejected.v1.schema.json](invoice-rejected.v1.schema.json) | sales: `sales.invoice-results` (venta → `INVOICE_FAILED`) |
+| `InvoiceRequestRejected` | 1 | invoicing | `invoicing.events` | `invoice-request.rejected.v1` | [invoice-request-rejected.v1.schema.json](invoice-request-rejected.v1.schema.json) | sales: `sales.invoice-results` (venta → `INVOICE_FAILED`) |
+
+La Saga completa: `SaleConfirmed` → invoicing crea y emite la factura → uno de los tres eventos de resultado → sales actualiza la venta. El diagrama de secuencia está en el [ADR 0015](../adr/0015-cierre-de-la-saga-de-facturacion.md).
 
 ### `SaleConfirmed` v1
 
@@ -61,6 +66,31 @@ Cada contrato es un **JSON Schema** (draft 2020-12) en esta carpeta. Es la únic
   }
 }
 ```
+
+### Eventos de resultado de invoicing v1 (ADR 0015)
+
+**Cuándo se publican:**
+- `InvoiceIssued` y `InvoiceRejected`: al guardar el cambio de estado de **cualquier** factura (también las de la API REST), en la misma transacción.
+- `InvoiceRequestRejected`: cuando un `SaleConfirmed` no se puede convertir en factura con esos datos. Pasa con una regla del dominio, como el vencimiento ya no posterior a la fecha de emisión; con un `referenceCode` ya usado por otra factura con otro contenido; o con un mensaje fuera del contrato que aún deja leer su `referenceCode`.
+- **Una falla técnica nunca publica un fallo:** la venta sigue `CONFIRMED` y el mensaje se reprocesa desde la DLQ.
+
+**Qué llevan:**
+- `referenceCode`: el de la venta. Es la correlación.
+- `customer {documentType, documentNumber}` en las facturas: el consumidor comprueba que sean de SU operación.
+- `InvoiceIssued` agrega `number`, `cufe`, `officialTotal` (el legal), `issueDate` y `validatedAt`.
+- El motivo (`reason`) en los rechazos.
+- **Nunca** los enlaces del documento, porque son enlaces-capacidad (ADR 0008).
+
+**Qué hace sales:**
+
+| Venta \ evento | `InvoiceIssued` | `InvoiceRejected` / `InvoiceRequestRejected` |
+|---|---|---|
+| `CONFIRMED` | → `INVOICED` | → `INVOICE_FAILED` |
+| `INVOICED` | duplicado u otra factura: no-op | ignorar (el fallo no deshace) |
+| `INVOICE_FAILED` | → `INVOICED` (el éxito gana) | duplicado: no-op |
+
+- Una factura sin venta (p. ej. de la API REST) o de otro cliente: ack, se ignora.
+- Un evento fuera del contrato: va a `sales.invoice-results.dlq`.
 
 ## Convenciones (todos los eventos)
 
@@ -127,9 +157,9 @@ Un esquema publicado no se edita de forma incompatible, igual que una migración
 5. Si lo publica un servicio nuevo: su exchange, y su usuario de RabbitMQ en `infra/rabbitmq/init/create-service-users.sh` (y la declaración de su exchange allí).
 6. Para cada consumidor: su cola, sus esperas y su DLQ con el prefijo del consumidor, permiso de `read` sobre el exchange del productor, y un test que valide sus eventos de prueba contra el esquema.
 
-## Consumidores: cola, reintentos y DLQ (ADR 0014)
+## Consumidores: cola, reintentos y DLQ (ADR 0014 y 0015)
 
-Cada consumidor declara su propia topología con el prefijo de su servicio. Para invoicing:
+Cada consumidor declara su propia topología con el prefijo de su servicio. Sales repite la misma forma para los resultados (`sales.invoice-results`, `sales.retry` → `wait-*`, `sales.requeue`, `sales.dlx` → `sales.invoice-results.dlq`). Para invoicing:
 
 | Recurso | Para qué |
 |---|---|
@@ -141,7 +171,7 @@ Cada consumidor declara su propia topología con el prefijo de su servicio. Para
 Los mensajes de la DLQ conservan el cuerpo y el `message_id`, y llevan `x-failure-category` (`technical`/`invalid`), `x-failure-reason`, `x-attempts-made` y `x-failed-at`.
 
 **Reprocesar la DLQ** (tras corregir la causa):
-- `./scripts/rabbitmq-dlq.sh requeue`, o "Move messages" en la consola;
+- `./scripts/rabbitmq-dlq.sh <invoicing|sales> requeue`, o "Move messages" en la consola;
 - los mensajes vuelven con todos sus intentos;
 - con `status` y `peek` se ve qué hay sin sacarlo.
 

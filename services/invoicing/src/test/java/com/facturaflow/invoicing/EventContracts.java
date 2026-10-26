@@ -11,20 +11,30 @@ import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Los contratos de eventos de {@code docs/events/} (ADR 0013 y 0014), leídos del MISMO archivo que valida el
- * productor (sales): sin copias ni librería compartida (ADR 0001). Esta clase sí es una copia deliberada de la
+ * Los contratos de eventos de {@code docs/events/} (ADR 0013, 0014 y 0015), leídos del MISMO archivo que valida
+ * la otra parte (sales): sin copias ni librería compartida (ADR 0001). Esta clase sí es una copia deliberada de la
  * de sales (unas líneas de test). La ruta es relativa a {@code services/invoicing}: funciona con
  * {@code ./scripts/mvn.sh}, que monta el repo completo, y desde un IDE abierto en el servicio.
  */
 public final class EventContracts {
 
-    public static final Path SALE_CONFIRMED_V1 = Path.of("../../docs/events/sale-confirmed.v1.schema.json");
+    private static final Path EVENTS = Path.of("../../docs/events");
+    public static final Path SALE_CONFIRMED_V1 = EVENTS.resolve("sale-confirmed.v1.schema.json");
+    public static final Path INVOICE_ISSUED_V1 = EVENTS.resolve("invoice-issued.v1.schema.json");
+    public static final Path INVOICE_REJECTED_V1 = EVENTS.resolve("invoice-rejected.v1.schema.json");
+    public static final Path INVOICE_REQUEST_REJECTED_V1 = EVENTS.resolve("invoice-request-rejected.v1.schema.json");
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private static final Schema SALE_CONFIRMED_V1_SCHEMA = load(SALE_CONFIRMED_V1);
+    private static final Map<String, Schema> BY_EVENT_TYPE = Map.of(
+            "InvoiceIssued", load(INVOICE_ISSUED_V1),
+            "InvoiceRejected", load(INVOICE_REJECTED_V1),
+            "InvoiceRequestRejected", load(INVOICE_REQUEST_REJECTED_V1));
 
     private EventContracts() {
     }
@@ -32,6 +42,16 @@ public final class EventContracts {
     /** Violaciones de {@code SaleConfirmed} v1; vacía si el mensaje cumple el contrato. */
     public static List<String> saleConfirmedV1Violations(String message) {
         return SALE_CONFIRMED_V1_SCHEMA.validate(JSON.readTree(message)).stream().map(Error::toString).toList();
+    }
+
+    /** Violaciones de un evento de facturación v1 contra el esquema de su {@code eventType}; vacía si lo cumple. */
+    public static List<String> invoiceEventViolations(String message) {
+        JsonNode json = JSON.readTree(message);
+        Schema schema = BY_EVENT_TYPE.get(json.path("eventType").asString(""));
+        if (schema == null) {
+            return List.of("eventType desconocido: " + json.path("eventType"));
+        }
+        return schema.validate(json).stream().map(Error::toString).toList();
     }
 
     private static Schema load(Path path) {

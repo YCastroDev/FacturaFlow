@@ -4,6 +4,7 @@ import com.facturaflow.invoicing.domain.exception.InvalidInvoiceException;
 import com.facturaflow.invoicing.domain.exception.InvalidInvoiceStateTransitionException;
 import com.facturaflow.invoicing.domain.exception.InvalidPaymentTermsException;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -20,6 +21,11 @@ import java.util.function.Function;
  * <p>{@link #version()} es un token de concurrencia opaco (ADR 0005): el dominio no lo
  * interpreta, solo lo transporta para que la persistencia detecte modificaciones
  * concurrentes. Vacío en una factura nueva; lo asigna el repositorio al guardar.
+ *
+ * <p>Eventos de dominio (ADR 0015): {@link #markAsIssued} y {@link #markAsRejected} registran
+ * {@link InvoiceEvent.InvoiceIssued} o {@link InvoiceEvent.InvoiceRejected} en {@link #pendingEvents()}; el
+ * repositorio los guarda en el outbox en la MISMA transacción que el cambio de estado. Una factura recién creada
+ * o reconstituida no trae eventos, así que la instancia que devuelve el repositorio no los repite.
  */
 public final class Invoice {
 
@@ -39,6 +45,7 @@ public final class Invoice {
     private InvoiceStatus status;
     private ElectronicDocument electronicDocument;
     private String rejectionReason;
+    private final List<InvoiceEvent> pendingEvents = new ArrayList<>();
 
     private Invoice(InvoiceId id, ReferenceCode referenceCode, CustomerSnapshot customer, List<InvoiceLine> lines,
                     PaymentMethod paymentMethod, PaymentTerms paymentTerms, LocalDate issueDate, String observation,
@@ -132,6 +139,7 @@ public final class Invoice {
         }
         this.electronicDocument = document;
         this.status = InvoiceStatus.ISSUED;
+        pendingEvents.add(new InvoiceEvent.InvoiceIssued(id));
     }
 
     public void markAsRejected(String reason) {
@@ -141,6 +149,7 @@ public final class Invoice {
         }
         this.rejectionReason = reason.strip();
         this.status = InvoiceStatus.REJECTED;
+        pendingEvents.add(new InvoiceEvent.InvoiceRejected(id));
     }
 
     /**
@@ -196,6 +205,11 @@ public final class Invoice {
 
     public Optional<String> rejectionReason() {
         return Optional.ofNullable(rejectionReason);
+    }
+
+    /** Eventos registrados por esta instancia y aún no guardados (copia inmutable). */
+    public List<InvoiceEvent> pendingEvents() {
+        return List.copyOf(pendingEvents);
     }
 
     /** Token de concurrencia opaco; vacío si la factura nunca se ha guardado. */

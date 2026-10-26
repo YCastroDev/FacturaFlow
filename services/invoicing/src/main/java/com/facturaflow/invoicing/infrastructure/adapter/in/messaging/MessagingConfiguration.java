@@ -2,6 +2,7 @@ package com.facturaflow.invoicing.infrastructure.adapter.in.messaging;
 
 import com.facturaflow.invoicing.application.port.in.CreateInvoiceUseCase;
 import com.facturaflow.invoicing.application.port.in.IssueInvoiceUseCase;
+import com.facturaflow.invoicing.application.port.in.RejectInvoiceRequestUseCase;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
 import org.springframework.amqp.core.Declarables;
@@ -28,17 +29,17 @@ class MessagingConfiguration {
 
     @Bean
     SaleConfirmedListener saleConfirmedListener(CreateInvoiceUseCase createInvoice, IssueInvoiceUseCase issueInvoice,
-                                                RabbitTemplate template, MessagingProperties properties,
-                                                ConsumerState state, Clock clock) {
+                                                RejectInvoiceRequestUseCase rejectRequest, RabbitTemplate template,
+                                                MessagingProperties properties, ConsumerState state, Clock clock) {
         SaleConfirmedProcessor processor = new SaleConfirmedProcessor(new SaleConfirmedTranslator(),
-                new SaleTotalsCheck(), createInvoice, issueInvoice);
+                new SaleTotalsCheck(), createInvoice, issueInvoice, rejectRequest);
         return new SaleConfirmedListener(processor, new ConfirmedRepublisher(template, properties.confirmTimeout()),
                 properties, state, clock);
     }
 
     @Bean
-    MessagingHealthIndicator messagingHealthIndicator(RabbitListenerEndpointRegistry listeners,
-                                                      MessagingProperties properties, ConsumerState state) {
-        return new MessagingHealthIndicator(listeners, properties, state);
+    ConsumerHealthPart consumerHealthPart(RabbitListenerEndpointRegistry listeners, MessagingProperties properties,
+                                          ConsumerState state) {
+        return new ConsumerHealthPart(listeners, properties, state);
     }
 }

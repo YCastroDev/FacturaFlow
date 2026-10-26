@@ -24,8 +24,10 @@ public interface InvoiceRepository {
     Invoice saveNew(Invoice invoice, RequestHash requestHash);
 
     /**
-     * Guarda los cambios de una factura ya existente de forma atómica. Devuelve la factura
-     * con su nueva versión: quien llama debe seguir trabajando con la instancia devuelta.
+     * Guarda los cambios de una factura ya existente de forma atómica, junto con sus eventos pendientes
+     * ({@link Invoice#pendingEvents()}) en el outbox: o se guardan el cambio de estado y sus eventos, o nada
+     * (ADR 0015). Devuelve la factura con su nueva versión y sin eventos pendientes: quien llama debe seguir
+     * trabajando con la instancia devuelta.
      *
      * @throws InvoiceConcurrentModificationException si la factura cambió desde que se leyó
      * @throws IllegalArgumentException si la factura nunca se ha guardado (use {@link #saveNew})

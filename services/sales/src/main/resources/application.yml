@@ -25,8 +25,15 @@ spring:
     password: ${SALES_RABBITMQ_PASSWORD}
     # Con el broker caído, cada ciclo del relay falla rápido en vez de quedarse esperando.
     connection-timeout: 2s
-    # Publisher confirms por mensaje (CorrelationData): se marca publicado solo lo que el broker confirmó.
+    # Publisher confirms por mensaje (CorrelationData): se marca publicado solo lo que el broker confirmó (y, en el
+    # consumidor, se confirma el original solo tras republicarlo en una espera o en la DLQ).
     publisher-confirm-type: correlated
+    listener:
+      simple:
+        # Un mensaje a la vez por consumidor (ADR 0015).
+        prefetch: 1
+        # Si la cola aún no existe (RabbitMQ recién levantado), el consumidor reintenta en vez de detenerse.
+        missing-queues-fatal: false
   jackson:
     deserialization:
       # Un campo mal escrito (p. ej. "cantidad") da 400 en vez de ignorarse sin aviso.
@@ -66,6 +73,19 @@ sales:
     # Un lote de 50 mensajes pequeños se confirma en milisegundos; 5 s solo se agotan si el broker está en
     # problemas. Lo no confirmado a tiempo queda pendiente (y puede publicarse dos veces: al menos una vez).
     confirm-timeout: 5s
+  # Consumo de los resultados de facturación de invoicing (ADR 0015). Mismos valores y razones que el consumidor de
+  # invoicing (ADR 0014): esperas crecientes, 1 consumidor (solo actualiza ventas: rápido y sin duplicados en paralelo).
+  invoice-results:
+    queue: sales.invoice-results
+    source-exchange: invoicing.events
+    routing-keys: invoice.issued.v1,invoice.rejected.v1,invoice-request.rejected.v1
+    retry-exchange: sales.retry
+    # Por aquí el broker devuelve a la cola un mensaje cuya espera venció (no por el exchange por defecto).
+    requeue-exchange: sales.requeue
+    dead-letter-exchange: sales.dlx
+    retry-delays: 10s,1m,5m
+    confirm-timeout: 5s
+    concurrency: 1
   # Relay del outbox (ADR 0013).
   outbox:
     # Cada cuánto se revisan los pendientes. 1 s: la factura empieza a crearse casi enseguida y, sin eventos,
@@ -98,7 +118,7 @@ management:
       show-components: never
       group:
         # /actuator/health/dependencies: los componentes informativos "catalog" (estado del circuito, ADR 0012)
-        # y "messaging" (outbox y relay hacia RabbitMQ, ADR 0013). Siempre UP: una dependencia caída no baja
+        # y "messaging" (outbox y relay, ADR 0013; consumidor de resultados de facturación, ADR 0015). Siempre UP: una dependencia caída no baja
         # el health de sales ni entra en liveness/readiness.
         dependencies:
           include: catalog,messaging

@@ -95,6 +95,14 @@ invoicing:
         # Esperar un permiso como máximo 2 s; si no llega, 503 (sin reintentos).
         timeout: 2s
 
+  # Publicación de los eventos de facturación (ADR 0015): exchange del servicio y espera de las confirmaciones.
+  publishing:
+    exchange: invoicing.events
+    confirm-timeout: 5s
+  # Relay del outbox (ADR 0015; mismos valores y razones que el de sales, ADR 0013).
+  outbox:
+    poll-interval: 1s
+    batch-size: 50
   # Consumo de SaleConfirmed de sales (ADR 0014).
   messaging:
     queue: invoicing.sale-confirmed
@@ -148,8 +156,9 @@ management:
           include: factus
           show-details: always
           show-components: always
-        # /actuator/health/dependencies: el componente informativo "messaging" (consumidor de SaleConfirmed,
-        # ADR 0014). Siempre UP: RabbitMQ caído no baja el health ni entra en liveness/readiness.
+        # /actuator/health/dependencies: el componente informativo "messaging" (outbox de los eventos de facturación
+        # y consumidor de SaleConfirmed, ADR 0014 y 0015). Siempre UP: RabbitMQ caído no baja el health ni entra en
+        # liveness/readiness.
         dependencies:
           include: messaging
           show-details: always

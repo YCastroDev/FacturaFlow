@@ -79,8 +79,8 @@ class SaleTest {
         }
 
         @Test
-        @DisplayName("CONFIRMED todavía no tiene transiciones: INVOICED e INVOICE_FAILED llegarán con los eventos")
-        void noTransitionsYet() {
+        @DisplayName("una venta no vuelve a CONFIRMED (las transiciones de la facturación están en SaleInvoicingTest)")
+        void neverBackToConfirmed() {
             assertThat(SaleStatus.CONFIRMED.canTransitionTo(SaleStatus.CONFIRMED)).isFalse();
         }
     }

@@ -14,12 +14,15 @@ import com.facturaflow.invoicing.application.port.in.CreateInvoiceCommand;
 import com.facturaflow.invoicing.application.port.in.CreateInvoiceResult;
 import com.facturaflow.invoicing.application.port.in.CreateInvoiceUseCase;
 import com.facturaflow.invoicing.application.port.in.IssueInvoiceUseCase;
+import com.facturaflow.invoicing.application.port.in.RejectInvoiceRequestCommand;
 import com.facturaflow.invoicing.domain.exception.InvalidInvoiceException;
 import com.facturaflow.invoicing.domain.model.Invoice;
 import com.facturaflow.invoicing.domain.model.InvoiceStatus;
+import com.jayway.jsonpath.JsonPath;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.function.Function;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -52,8 +55,15 @@ class SaleConfirmedProcessorTest {
         issued.add(invoice);
         return issueBehaviour.apply(invoice);
     };
+    private final List<RejectInvoiceRequestCommand> rejectedRequests = new ArrayList<>();
+    private RuntimeException rejectFailure;
     private final SaleConfirmedProcessor processor = new SaleConfirmedProcessor(new SaleConfirmedTranslator(),
-            new SaleTotalsCheck(), createInvoice, issueInvoice);
+            new SaleTotalsCheck(), createInvoice, issueInvoice, command -> {
+                if (rejectFailure != null) {
+                    throw rejectFailure;
+                }
+                rejectedRequests.add(command);
+            });
 
     private SaleConfirmedOutcome process(String event) {
         return processor.process(event.getBytes(StandardCharsets.UTF_8));
@@ -198,5 +208,59 @@ class SaleConfirmedProcessorTest {
         process(withSalesTotal(sale("VENTA-1"), "1.00"));
 
         assertThat(output).doesNotContain("Totales distintos");
+    }
+
+    @Test
+    @DisplayName("un mensaje inválido registra el rechazo definitivo de la petición, con la venta y el evento de origen")
+    void invalidMessageNotifiesRejection() {
+        createBehaviour = command -> {
+            throw InvalidInvoiceException.noLines();
+        };
+        String event = sale("VENTA-RECHAZADA");
+
+        process(event);
+
+        assertThat(rejectedRequests).singleElement().satisfies(request -> {
+            assertThat(request.referenceCode()).isEqualTo("VENTA-RECHAZADA");
+            assertThat(request.sourceId()).isEqualTo(UUID.fromString(JsonPath.read(event, "$.payload.saleId")));
+            assertThat(request.sourceEventId()).isEqualTo(UUID.fromString(JsonPath.read(event, "$.eventId")));
+            assertThat(request.reason()).isNotBlank();
+        });
+    }
+
+    @Test
+    @DisplayName("un mensaje fuera del contrato pero con referenceCode legible también avisa del rechazo")
+    void contractViolationWithReadableReferenceNotifies() {
+        process(SaleConfirmedEvents.modified(sale("VENTA-BITCOIN"),
+                json -> SaleConfirmedEvents.payload(json).put("paymentMethod", "BITCOIN")));
+
+        assertThat(rejectedRequests).extracting(RejectInvoiceRequestCommand::referenceCode)
+                .containsExactly("VENTA-BITCOIN");
+        assertThat(rejectedRequests.getFirst().reason()).contains("BITCOIN");
+    }
+
+    @Test
+    @DisplayName("sin referenceCode legible no hay a quién avisar; una falla técnica nunca se registra como rechazo")
+    void noNotificationWithoutReferenceOrOnTechnicalFailure() {
+        process("no es json");
+        issueBehaviour = invoice -> {
+            throw ElectronicInvoiceProviderUnavailableException.of(ElectronicInvoiceProviderUnavailableException.Document.INVOICE,
+                    invoice.id().value(), "caído", null, ElectronicInvoiceProviderUnavailableException.Reason.FAILURE, null);
+        };
+        process(sale("VENTA-CAIDA"));
+
+        assertThat(rejectedRequests).isEmpty();
+    }
+
+    @Test
+    @DisplayName("si no se puede registrar el rechazo (p. ej. la base), el mensaje se reintenta en vez de perderse")
+    void failingToRecordRejectionIsRetried() {
+        createBehaviour = command -> {
+            throw InvalidInvoiceException.noLines();
+        };
+        rejectFailure = new IllegalStateException("base caída");
+
+        assertThat(process(sale("VENTA-1"))).isInstanceOfSatisfying(SaleConfirmedOutcome.RetryLater.class,
+                retry -> assertThat(retry.reason()).contains("No se pudo registrar el rechazo"));
     }
 }

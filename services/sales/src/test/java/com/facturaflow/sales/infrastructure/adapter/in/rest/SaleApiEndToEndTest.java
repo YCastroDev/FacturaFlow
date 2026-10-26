@@ -196,7 +196,7 @@ class SaleApiEndToEndTest {
     @Test
     @DisplayName("una venta creada por la API publica SaleConfirmed en RabbitMQ, que cumple el contrato, y el outbox queda vacío")
     void saleConfirmedReachesRabbitMq() {
-        String queue = "test.e2e-sales-events";
+        String queue = "sales.test-e2e-events";
         rabbitAdmin.declareQueue(new Queue(queue, true, false, false));
         rabbitAdmin.declareBinding(BindingBuilder.bind(new Queue(queue)).to(salesEvents).with("sale.confirmed.*"));
         rabbitAdmin.purgeQueue(queue, false);
@@ -219,8 +219,8 @@ class SaleApiEndToEndTest {
                 "SELECT count(*) FROM outbox_events WHERE published_at IS NULL").query(Long.class).single()).isZero());
         String dependencies = fetch("/actuator/health/dependencies").getResponseBody();
         assertThat((String) JsonPath.read(dependencies, "$.components.messaging.status")).isEqualTo("UP");
-        assertThat((String) JsonPath.read(dependencies, "$.components.messaging.details.relay")).isEqualTo("OK");
-        assertThat((Integer) JsonPath.read(dependencies, "$.components.messaging.details.pendingEvents")).isZero();
+        assertThat((String) JsonPath.read(dependencies, "$.components.messaging.details.outbox.relay")).isEqualTo("OK");
+        assertThat((Integer) JsonPath.read(dependencies, "$.components.messaging.details.outbox.pendingEvents")).isZero();
         assertThat((Double) JsonPath.read(fetch("/actuator/metrics/sales.outbox.pending").getResponseBody(),
                 "$.measurements[0].value")).isZero();
     }

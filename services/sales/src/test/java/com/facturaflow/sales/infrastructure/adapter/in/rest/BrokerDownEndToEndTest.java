@@ -109,9 +109,9 @@ class BrokerDownEndToEndTest {
                 .as("el indicador de Spring Boot está desactivado").isEqualTo(404);
         String dependencies = fetch("/actuator/health/dependencies").getResponseBody();
         assertThat((String) JsonPath.read(dependencies, "$.components.messaging.status")).isEqualTo("UP");
-        assertThat((String) JsonPath.read(dependencies, "$.components.messaging.details.relay")).isEqualTo("FAILING");
-        assertThat((Integer) JsonPath.read(dependencies, "$.components.messaging.details.pendingEvents")).isEqualTo(1);
-        assertThat((String) JsonPath.read(dependencies, "$.components.messaging.details.lastFailure"))
+        assertThat((String) JsonPath.read(dependencies, "$.components.messaging.details.outbox.relay")).isEqualTo("FAILING");
+        assertThat((Integer) JsonPath.read(dependencies, "$.components.messaging.details.outbox.pendingEvents")).isEqualTo(1);
+        assertThat((String) JsonPath.read(dependencies, "$.components.messaging.details.outbox.lastFailure"))
                 .startsWith("No se pudo enviar a RabbitMQ");
         assertThat((Double) JsonPath.read(fetch("/actuator/metrics/sales.outbox.pending").getResponseBody(),
                 "$.measurements[0].value")).isEqualTo(1.0);

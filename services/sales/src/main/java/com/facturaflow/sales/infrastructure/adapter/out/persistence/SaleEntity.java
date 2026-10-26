@@ -20,7 +20,7 @@ import org.hibernate.type.SqlTypes;
 /**
  * Fila de {@code sales}. Detalle de persistencia, distinto del agregado: solo la conoce
  * {@link SalePersistenceMapper}. Los enums se guardan como texto. Todo es de solo inserción salvo el
- * estado (que cambiará con los eventos) y la versión.
+ * estado, el resultado de la facturación (ADR 0015) y la versión.
  */
 @Entity
 @Table(name = "sales")
@@ -99,6 +99,29 @@ class SaleEntity {
 
     @Column(name = "customer_email", updatable = false, length = 254)
     String customerEmail;
+
+    // ----- Resultado de la facturación (ADR 0015): una de las dos partes, según el estado -----
+
+    @Column(name = "invoice_id")
+    UUID invoiceId;
+
+    @Column(name = "invoice_number")
+    String invoiceNumber;
+
+    @Column(name = "invoice_cufe")
+    String invoiceCufe;
+
+    @Column(name = "invoiced_at")
+    Instant invoicedAt;
+
+    @Column(name = "invoice_failure_reason", length = 1000)
+    String invoiceFailureReason;
+
+    @Column(name = "invoice_failed_at")
+    Instant invoiceFailedAt;
+
+    @Column(name = "rejected_invoice_id")
+    UUID rejectedInvoiceId;
 
     /** Lista indexada por {@code line_index}: conserva el orden de las líneas de la venta. */
     @OneToMany(cascade = CascadeType.ALL, orphanRemoval = true)

@@ -118,16 +118,34 @@ class HexagonalArchitectureTest {
                     + "el contrato de catalog se filtraría al resto de sales; todo pasa por el puerto CatalogClient "
                     + "(ADR 0012)");
 
-    // Regla 11: el broker es un detalle del adaptador de mensajería (ADR 0013).
+    // Regla 11: el broker es un detalle de los adaptadores de mensajería (ADR 0013 y 0015), y la publicación no
+    // sale del suyo.
     @ArchTest
-    static final ArchRule amqp_stays_inside_messaging_adapter = noClasses()
+    static final ArchRule amqp_stays_inside_messaging_adapters = noClasses()
             .that().resideOutsideOfPackage(BASE + ".infrastructure.adapter.out.messaging..")
-            .should().dependOnClassesThat().resideInAnyPackage(
-                    "org.springframework.amqp..", "com.rabbitmq..", BASE + ".infrastructure.adapter.out.messaging..")
+            .and().resideOutsideOfPackage(BASE + ".infrastructure.adapter.in.messaging..")
+            .should().dependOnClassesThat().resideInAnyPackage("org.springframework.amqp..", "com.rabbitmq..")
             .allowEmptyShould(true)
-            .because("RabbitMQ (Spring AMQP, el cliente de RabbitMQ) y el formato de sus mensajes son detalles del "
-                    + "adaptador de mensajería: el resto del servicio publica solo a través del puerto "
-                    + "EventPublisher, y el outbox no sabe a qué broker van sus eventos (ADR 0013)");
+            .because("RabbitMQ (Spring AMQP, el cliente de RabbitMQ) solo existe para publicar SaleConfirmed y recibir "
+                    + "los resultados de facturación: los casos de uso, el outbox y los demás adaptadores no saben a "
+                    + "qué broker van sus eventos ni de dónde llega un resultado (ADR 0013 y 0015)");
+
+    @ArchTest
+    static final ArchRule publishing_stays_inside_its_adapter = noClasses()
+            .that().resideOutsideOfPackage(BASE + ".infrastructure.adapter.out.messaging..")
+            .should().dependOnClassesThat().resideInAPackage(BASE + ".infrastructure.adapter.out.messaging..")
+            .allowEmptyShould(true)
+            .because("el formato AMQP de los mensajes es un detalle del adaptador: el resto del servicio publica solo a "
+                    + "través del puerto EventPublisher (ADR 0013)");
+
+    // Regla 12: Anti-Corruption Layer de los eventos de invoicing (ADR 0015).
+    @ArchTest
+    static final ArchRule invoice_results_stay_inside_their_adapter = noClasses()
+            .that().resideOutsideOfPackage(BASE + ".infrastructure.adapter.in.messaging..")
+            .should().dependOnClassesThat().resideInAPackage(BASE + ".infrastructure.adapter.in.messaging..")
+            .allowEmptyShould(true)
+            .because("los DTOs de los eventos de invoicing, su traducción y la topología de colas son detalles del "
+                    + "contrato con invoicing: el adaptador entra por el caso de uso RecordInvoiceResult (ADR 0015)");
 
     // Regla 10: ningún código de otro servicio (ADR 0001).
     @ArchTest

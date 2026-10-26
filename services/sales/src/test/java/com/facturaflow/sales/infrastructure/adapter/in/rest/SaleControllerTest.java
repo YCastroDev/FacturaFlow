@@ -219,6 +219,6 @@ class SaleControllerTest {
         assertThat(result).bodyJson().extractingPath("$.totalPages").isEqualTo(2);
         verify(listSales).list(new ListSalesQuery(SaleStatus.CONFIRMED, 1, 5));
         assertProblem(mvc.get().uri(URL + "?size=101").exchange(), HttpStatus.BAD_REQUEST, "invalid-parameter");
-        assertProblem(mvc.get().uri(URL + "?status=INVOICED").exchange(), HttpStatus.BAD_REQUEST, "invalid-parameter");
+        assertProblem(mvc.get().uri(URL + "?status=CANCELLED").exchange(), HttpStatus.BAD_REQUEST, "invalid-parameter");
     }
 }
