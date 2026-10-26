@@ -14,13 +14,16 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 
 - **Cada servicio usa la arquitectura que necesita:**
   - invoicing, hexagonal: integra un proveedor externo intercambiable;
-  - sales, hexagonal: tiene reglas de negocio, llama a catalog y pronto publicará eventos;
+  - sales, hexagonal: tiene reglas de negocio, llama a catalog y publica eventos;
   - catalog, en capas (controller → service → repository): es casi un CRUD.
 
   Las dos se validan con ArchUnit.
 - **Base de datos por servicio:** un PostgreSQL con una base y un usuario por servicio; el esquema lo gestiona Flyway.
 - **Sin código compartido entre servicios:** los conceptos repetidos, como el DV del NIT, se duplican a propósito.
-- **Comunicación entre servicios** solo por HTTP o eventos (RabbitMQ, más adelante). Hoy sales consulta catalog por HTTP al crear una venta (2 llamadas por venta, con circuit breaker); en la siguiente tarea, invoicing facturará las ventas a partir de un evento.
+- **Comunicación entre servicios** solo por HTTP o eventos:
+  - sales consulta catalog por HTTP al crear una venta (2 llamadas por venta, con circuit breaker);
+  - sales publica el evento `SaleConfirmed` en RabbitMQ con un *transactional outbox*: la venta y su evento se guardan en la misma transacción y se publican con confirmación del broker, aunque RabbitMQ esté caído al vender ([ADR 0013](docs/adr/0013-mensajeria-y-outbox.md)). El contrato está en el [catálogo de eventos](docs/events/README.md);
+  - en la siguiente fase, invoicing facturará las ventas a partir de ese evento.
 - **Todo corre en Docker:** no se necesita Java ni Maven instalados.
 
 Las decisiones y sus motivos están en los [ADRs](docs/adr/README.md).
@@ -38,11 +41,12 @@ Requisito: Docker Engine con Docker Compose.
    cp .env.example .env
    ```
    El `.env` está en `.gitignore`: nunca se sube al repositorio.
-3. **Levantar el entorno** (PostgreSQL, invoicing, catalog y sales):
+3. **Levantar el entorno** (PostgreSQL, RabbitMQ, invoicing, catalog y sales):
    ```bash
    docker compose --env-file .env -f infra/docker-compose.yml up --build -d
-   docker compose --env-file .env -f infra/docker-compose.yml ps     # los cuatro "healthy"
+   docker compose --env-file .env -f infra/docker-compose.yml ps     # los cinco "healthy"
    ```
+   `rabbitmq-init` aparece como terminado (`Exited (0)`): es un contenedor de un solo uso que crea el usuario de RabbitMQ de cada servicio.
 4. **Comprobar** que los tres servicios responden:
    ```bash
    curl http://localhost:8081/actuator/health    # invoicing: {"status":"UP",...}
@@ -53,6 +57,10 @@ Requisito: Docker Engine con Docker Compose.
    ```bash
    ./scripts/seed-catalog.sh
    ```
+
+### Si ya tenías el entorno levantado antes de RabbitMQ
+
+Agrega a tu `.env` `RABBITMQ_ADMIN_USER`, `RABBITMQ_ADMIN_PASSWORD` y `SALES_RABBITMQ_PASSWORD` (ver `.env.example`) y vuelve a levantar todo con el comando del paso 3. RabbitMQ empieza con su volumen vacío y `rabbitmq-init` crea el vhost y los usuarios. La migración V2 de sales (el outbox) se aplica sola.
 
 ### Si ya tenías el entorno levantado antes de catalog o sales
 
@@ -218,6 +226,39 @@ curl -s http://localhost:8083/actuator/health/dependencies   # "circuitBreaker":
 docker compose --env-file .env -f infra/docker-compose.yml logs sales | grep "Circuito de catalog"
 docker compose --env-file .env -f infra/docker-compose.yml start catalog
 # A los 30 s el circuito deja pasar una prueba (HALF_OPEN → CLOSED) y las ventas vuelven a crearse.
+```
+
+### Eventos: ver `SaleConfirmed` en RabbitMQ
+
+Consola de RabbitMQ: **http://localhost:15672**, con el usuario `RABBITMQ_ADMIN_USER` y la contraseña `RABBITMQ_ADMIN_PASSWORD` de tu `.env`. Ahí se ven el exchange `sales.events` y las conexiones.
+
+Todavía no hay consumidores (invoicing llegará en la Fase 2), así que el exchange descartaría cada mensaje. Para verlos, se crea una **cola de depuración temporal** enlazada a `sales.events`. Se borra sola tras 1 h sin uso y guarda como máximo 100 mensajes.
+
+```bash
+./scripts/rabbitmq-debug-queue.sh create
+# Confirmar una venta en Swagger (ejemplo de contado, con un referenceCode nuevo) → 201
+./scripts/rabbitmq-debug-queue.sh peek     # el mensaje SaleConfirmed, sin sacarlo de la cola
+# O en la consola: Queues and Streams → debug.sales-events → Get messages → Get Message(s)
+curl -s http://localhost:8083/actuator/health/dependencies      # "messaging": relay OK, pendingEvents 0
+./scripts/rabbitmq-debug-queue.sh delete   # al terminar
+```
+
+### RabbitMQ caído: demostración
+
+```bash
+./scripts/rabbitmq-debug-queue.sh create
+docker compose --env-file .env -f infra/docker-compose.yml stop rabbitmq
+# Confirmar una venta nueva en Swagger → 201: vender no depende del broker
+curl -s http://localhost:8083/actuator/health                    # sigue {"status":"UP",...}
+curl -s http://localhost:8083/actuator/health/dependencies       # "relay":"FAILING", "pendingEvents":1
+curl -s http://localhost:8083/actuator/metrics/sales.outbox.pending
+curl -s http://localhost:8083/actuator/metrics/sales.outbox.oldest.pending.age
+docker compose --env-file .env -f infra/docker-compose.yml start rabbitmq
+# En segundos: "relay":"OK", "pendingEvents":0, y el mensaje está en la cola de depuración
+./scripts/rabbitmq-debug-queue.sh peek
+docker compose --env-file .env -f infra/docker-compose.yml logs sales | grep "Outbox:"
+#   WARN ... no se pudieron publicar eventos ...    (una sola línea al empezar a fallar)
+#   INFO ... publicación restablecida tras N ciclo(s) fallido(s); 1 evento(s) publicado(s)
 ```
 
 ## Otros comandos

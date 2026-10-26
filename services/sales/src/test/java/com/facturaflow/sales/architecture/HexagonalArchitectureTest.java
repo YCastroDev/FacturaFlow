@@ -118,6 +118,17 @@ class HexagonalArchitectureTest {
                     + "el contrato de catalog se filtraría al resto de sales; todo pasa por el puerto CatalogClient "
                     + "(ADR 0012)");
 
+    // Regla 11: el broker es un detalle del adaptador de mensajería (ADR 0013).
+    @ArchTest
+    static final ArchRule amqp_stays_inside_messaging_adapter = noClasses()
+            .that().resideOutsideOfPackage(BASE + ".infrastructure.adapter.out.messaging..")
+            .should().dependOnClassesThat().resideInAnyPackage(
+                    "org.springframework.amqp..", "com.rabbitmq..", BASE + ".infrastructure.adapter.out.messaging..")
+            .allowEmptyShould(true)
+            .because("RabbitMQ (Spring AMQP, el cliente de RabbitMQ) y el formato de sus mensajes son detalles del "
+                    + "adaptador de mensajería: el resto del servicio publica solo a través del puerto "
+                    + "EventPublisher, y el outbox no sabe a qué broker van sus eventos (ADR 0013)");
+
     // Regla 10: ningún código de otro servicio (ADR 0001).
     @ArchTest
     static final ArchRule no_code_from_other_services = noClasses()

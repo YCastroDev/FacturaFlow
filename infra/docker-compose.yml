@@ -28,6 +28,50 @@ services:
     restart: unless-stopped
     # Sin "ports": PostgreSQL solo es accesible dentro de la red de Docker.
 
+  # Broker de eventos entre servicios (ADR 0013). Imagen oficial con la consola de administración.
+  rabbitmq:
+    image: rabbitmq:4.3.6-management-alpine
+    # Nombre de nodo fijo (rabbit@rabbitmq): RabbitMQ guarda sus datos bajo ese nombre; si cambiara con
+    # cada contenedor, el volumen quedaría huérfano y se perderían exchanges y mensajes.
+    hostname: rabbitmq
+    environment:
+      # Administrador: solo para la consola y el script de init. Los servicios usan su propio usuario.
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_ADMIN_USER:?Define RABBITMQ_ADMIN_USER en .env}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_ADMIN_PASSWORD:?Define RABBITMQ_ADMIN_PASSWORD en .env}
+      RABBITMQ_DEFAULT_VHOST: facturaflow
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    ports:
+      # Solo la consola (http://localhost:15672). El 5672 (AMQP) no se publica: los servicios lo usan
+      # dentro de la red de Docker y los tests levantan su propio RabbitMQ con Testcontainers.
+      - "127.0.0.1:15672:15672"
+    healthcheck:
+      # Nodo arriba y escuchando en todos sus puertos (AMQP y la API HTTP que usa rabbitmq-init).
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+  # Contenedor de un solo uso: crea el vhost y el usuario de cada servicio con permisos mínimos y termina
+  # (script idempotente, como el de PostgreSQL). Se repite en cada "up".
+  rabbitmq-init:
+    image: rabbitmq:4.3.6-management-alpine
+    entrypoint: ["sh", "/init/create-service-users.sh"]
+    environment:
+      RABBITMQADMIN_BASE_URI: http://rabbitmq:15672/api
+      RABBITMQADMIN_USERNAME: ${RABBITMQ_ADMIN_USER:?Define RABBITMQ_ADMIN_USER en .env}
+      RABBITMQADMIN_PASSWORD: ${RABBITMQ_ADMIN_PASSWORD:?Define RABBITMQ_ADMIN_PASSWORD en .env}
+      RABBITMQ_VHOST: facturaflow
+      SALES_RABBITMQ_PASSWORD: ${SALES_RABBITMQ_PASSWORD:?Define SALES_RABBITMQ_PASSWORD en .env}
+    volumes:
+      - ./rabbitmq/init:/init:ro
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    restart: "no"
+
   invoicing:
     build:
       context: ../services/invoicing
@@ -88,6 +132,12 @@ services:
       SALES_DB_PASSWORD: ${SALES_DB_PASSWORD:?Define SALES_DB_PASSWORD en .env}
       # URL de catalog (no es un secreto). Se puede apuntar a otra para demostraciones.
       SALES_CATALOG_BASE_URL: ${SALES_CATALOG_BASE_URL:-http://catalog:8080}
+      # Publicación de eventos (ADR 0013): usuario propio, solo puede publicar en sales.events.
+      SALES_RABBITMQ_HOST: rabbitmq
+      SALES_RABBITMQ_PORT: 5672
+      SALES_RABBITMQ_VHOST: facturaflow
+      SALES_RABBITMQ_USER: sales
+      SALES_RABBITMQ_PASSWORD: ${SALES_RABBITMQ_PASSWORD:?Define SALES_RABBITMQ_PASSWORD en .env}
     ports:
       - "127.0.0.1:8083:8080"
     depends_on:
@@ -95,6 +145,10 @@ services:
         condition: service_healthy
       # Solo "iniciado", no "sano": sales arranca aunque catalog esté caído (su health no depende de catalog).
       catalog:
+        condition: service_started
+      # Igual con RabbitMQ: sales arranca y vende sin él; los eventos esperan en el outbox (ADR 0013).
+      # Tampoco espera a rabbitmq-init: si su usuario aún no existe, el publicador reintenta solo.
+      rabbitmq:
         condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q UP"]
@@ -106,3 +160,4 @@ services:
 
 volumes:
   postgres-data:
+  rabbitmq-data:

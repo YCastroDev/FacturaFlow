@@ -6,16 +6,26 @@ import static com.github.tomakehurst.wiremock.client.WireMock.okJson;
 import static com.github.tomakehurst.wiremock.client.WireMock.post;
 import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMockConfig;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 
+import com.facturaflow.sales.EventContracts;
 import com.facturaflow.sales.TestcontainersConfiguration;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.jayway.jsonpath.JsonPath;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.amqp.core.AmqpAdmin;
+import org.springframework.amqp.core.BindingBuilder;
+import org.springframework.amqp.core.Message;
+import org.springframework.amqp.core.Queue;
+import org.springframework.amqp.core.TopicExchange;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureRestTestClient;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -29,9 +39,11 @@ import org.springframework.test.web.servlet.client.RestTestClient;
 
 /**
  * Punta a punta: HTTP → controlador → caso de uso → adaptador de catalog (contra WireMock, que responde
- * como catalog) → JPA → PostgreSQL (Testcontainers). Sin @Transactional: cada operación confirma.
+ * como catalog) → JPA → PostgreSQL (Testcontainers), y el evento: outbox → relay → RabbitMQ
+ * (Testcontainers). Sin @Transactional: cada operación confirma.
  */
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+        properties = "sales.outbox.poll-interval=200ms")
 @AutoConfigureRestTestClient
 @Import(TestcontainersConfiguration.class)
 class SaleApiEndToEndTest {
@@ -76,9 +88,18 @@ class SaleApiEndToEndTest {
     @Autowired
     private CircuitBreakerRegistry circuitBreakers;
 
+    @Autowired
+    private RabbitTemplate rabbit;
+
+    @Autowired
+    private AmqpAdmin rabbitAdmin;
+
+    @Autowired
+    private TopicExchange salesEvents;
+
     @BeforeEach
     void setUp() {
-        jdbc.sql("TRUNCATE sale_line_taxes, sale_lines, sales").update();
+        jdbc.sql("TRUNCATE sale_line_taxes, sale_lines, sales, outbox_events").update();
         CATALOG.resetAll();
         circuitBreakers.circuitBreaker("catalog").reset();
     }
@@ -170,6 +191,38 @@ class SaleApiEndToEndTest {
         assertThat((String) JsonPath.read(dependencies, "$.components.catalog.details.circuitBreaker")).isEqualTo("OPEN");
         assertThat((String) JsonPath.read(fetch("/actuator/circuitbreakers").getResponseBody(),
                 "$.circuitBreakers.catalog.state")).isEqualTo("OPEN");
+    }
+
+    @Test
+    @DisplayName("una venta creada por la API publica SaleConfirmed en RabbitMQ, que cumple el contrato, y el outbox queda vacío")
+    void saleConfirmedReachesRabbitMq() {
+        String queue = "test.e2e-sales-events";
+        rabbitAdmin.declareQueue(new Queue(queue, true, false, false));
+        rabbitAdmin.declareBinding(BindingBuilder.bind(new Queue(queue)).to(salesEvents).with("sale.confirmed.*"));
+        rabbitAdmin.purgeQueue(queue, false);
+        catalogUp();
+
+        String saleId = JsonPath.read(createSale("VENTA-E2E-EVT").getResponseBody(), "$.id");
+
+        // El relay corre en segundo plano (cada 200 ms): se espera el mensaje de ESTA venta.
+        String body = await().atMost(Duration.ofSeconds(10)).until(() -> {
+            Message message = rabbit.receive(queue, 500);
+            return message == null ? null : new String(message.getBody(), StandardCharsets.UTF_8);
+        }, received -> received != null && saleId.equals(JsonPath.read(received, "$.payload.saleId")));
+        assertThat(EventContracts.saleConfirmedV1Violations(body)).isEmpty();
+        assertThat((String) JsonPath.read(body, "$.payload.referenceCode")).isEqualTo("VENTA-E2E-EVT");
+        assertThat((String) JsonPath.read(body, "$.payload.customer.companyName")).isEqualTo("Cliente Ejemplo S.A.S.");
+        assertThat((String) JsonPath.read(body, "$.payload.lines[0].name")).isEqualTo("Café molido 500 g");
+        assertThat((Double) JsonPath.read(body, "$.payload.totals.total")).as("informativo").isEqualTo(34965.00);
+
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> assertThat(jdbc.sql(
+                "SELECT count(*) FROM outbox_events WHERE published_at IS NULL").query(Long.class).single()).isZero());
+        String dependencies = fetch("/actuator/health/dependencies").getResponseBody();
+        assertThat((String) JsonPath.read(dependencies, "$.components.messaging.status")).isEqualTo("UP");
+        assertThat((String) JsonPath.read(dependencies, "$.components.messaging.details.relay")).isEqualTo("OK");
+        assertThat((Integer) JsonPath.read(dependencies, "$.components.messaging.details.pendingEvents")).isZero();
+        assertThat((Double) JsonPath.read(fetch("/actuator/metrics/sales.outbox.pending").getResponseBody(),
+                "$.measurements[0].value")).isZero();
     }
 
     @Test

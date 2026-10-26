@@ -22,12 +22,15 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 | Escaneo de secretos | gitleaks v8.30.1 (vía Docker) |
 | Mock HTTP (tests del adaptador de Factus) | WireMock 3.13.1 (`wiremock-standalone`) |
 | Resiliencia (llamadas a Factus) | Resilience4j 2.4.0 (`resilience4j-spring-boot4`, versión fijada en el pom) |
+| Mensajería | RabbitMQ 4.3.6 (`rabbitmq:4.3.6-management-alpine`, en compose y Testcontainers) + `spring-boot-starter-amqp` |
+| Validación de contratos de eventos (tests) | `com.networknt:json-schema-validator` 3.0.8 (Jackson 3; solo test) |
 
 ## Estructura
 
 - `services/<servicio>/` — un proyecto Spring Boot independiente por servicio: `invoicing` (hexagonal, ADR 0002), `catalog` (en capas, ADR 0011) y `sales` (hexagonal, ADR 0012).
-- `infra/` — `docker-compose.yml` y scripts de init de PostgreSQL.
-- `scripts/` — utilidades (`mvn.sh`, `check-secrets.sh`, `seed-catalog.sh`).
+- `infra/` — `docker-compose.yml` y scripts de init de PostgreSQL (`postgres/init`) y de RabbitMQ (`rabbitmq/init`).
+- `scripts/` — utilidades (`mvn.sh`, `check-secrets.sh`, `seed-catalog.sh`, `rabbitmq-debug-queue.sh`).
+- `docs/events/` — catálogo y contratos (JSON Schema) de los eventos entre servicios (ADR 0013).
 - `.githooks/` — hook pre-commit con gitleaks.
 - `docs/adr/` — Architecture Decision Records.
 - `docs/spikes/` y `scripts/spikes/` — investigaciones contra sistemas externos (hallazgos y scripts reproducibles).
@@ -134,9 +137,24 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 - Health: componente `catalog` siempre UP (`/actuator/health/dependencies`); fuera de liveness/readiness.
 - Idempotencia como invoicing, pero la huella es de la PETICIÓN normalizada (no de los datos de catalog) y se resuelve ANTES de llamar a catalog (un reintento responde 200 con catalog caído). Si se agrega un campo a la petición, agregarlo a `SaleRequestHasher` y a su test.
 - Totales: COPIA deliberada del cálculo de invoicing (`Money`, `Quantity`, `DiscountRate`, `LineTax`, `SaleLine`) con sus tests copiados. Si cambia en un servicio, cambia en el otro.
-- `SaleStatus` solo tiene `CONFIRMED`; `INVOICED`/`INVOICE_FAILED` llegan con los eventos (valor + `canTransitionTo` + migración). Punto abierto en el ADR 0012: vencimiento vs. fecha de emisión de la factura.
+- `SaleStatus` solo tiene `CONFIRMED`; `INVOICED`/`INVOICE_FAILED` llegan con los eventos (Fase 3: valor + `canTransitionTo` + migración). El riesgo del vencimiento vs. fecha de emisión se acepta en el ADR 0013 (decisión 10): si la factura se rechaza, la venta queda `INVOICE_FAILED`.
 - El snapshot del cliente solo se valida en estructura (las reglas fiscales las validan catalog e invoicing).
-- Puerto local `127.0.0.1:8083`; base `sales_db` / usuario `sales_user` (`SALES_DB_PASSWORD`); `SALES_CATALOG_BASE_URL` (por defecto `http://catalog:8080`).
+- Puerto local `127.0.0.1:8083`; base `sales_db` / usuario `sales_user` (`SALES_DB_PASSWORD`); `SALES_CATALOG_BASE_URL` (por defecto `http://catalog:8080`); RabbitMQ con el usuario `sales` (`SALES_RABBITMQ_PASSWORD`).
+
+## Mensajería y outbox (ADR 0013)
+
+- RabbitMQ, coreografía (sin orquestador). Un exchange topic durable por servicio productor (`sales.events`), routing key `<agregado>.<hecho>.v<n>` (`sale.confirmed.v1`), una cola por consumidor (Fase 2). Sin `mandatory`.
+- **Transactional outbox, propio en cada servicio (sin código compartido).** En sales: el agregado registra el evento (`Sale.confirm` → `SaleEvent.SaleConfirmed` en `pendingEvents()`; `reconstitute` no trae eventos) y `SaleRepository.saveNew` guarda venta + eventos en la MISMA transacción (`outbox_events`). **Nunca publicar directo desde un caso de uso ni después del commit.**
+- El mensaje se serializa al guardar, en `SaleEventMessages` (adaptador de persistencia): es el ÚNICO lugar que conoce el contrato. `payload` es `TEXT` con `IS JSON OBJECT` (no JSONB: reordena claves). Cada `event_type` nuevo exige migración (CHECK).
+- Relay: `OutboxRelayScheduler` (`adapter/in/outbox`, `fixedDelay` `sales.outbox.poll-interval`) → `PublishPendingEventsUseCase` → `OutboxRepository.publishPending` (`FOR UPDATE SKIP LOCKED`, lote `batch-size`, transacción abierta mientras se publica: excepción documentada) → `EventPublisher` (`RabbitEventPublisher`, confirms `correlated`). Se marca publicado SOLO lo confirmado (ack); lo demás suma `attempts`/`last_error`. El publicador nunca lanza por fallas del broker.
+- Mensajes persistentes, `message_id` = `eventId`, `type`, `app_id`, `timestamp`, cabecera `eventVersion`.
+- **Al menos una vez:** puede haber duplicados y no hay orden garantizado; los maneja el consumidor (por `eventId` / `referenceCode`). En la Fase 2, el `referenceCode` de la venta es el de la factura.
+- **Contrato:** JSON Schema en `docs/events/<evento>.v<n>.schema.json`, validado por los tests de cada servicio leyendo ESE archivo (`EventContracts` en sales; `mvn.sh` monta la raíz del repo). Cambiar un campo del mensaje exige cambiar el esquema y su test; un cambio incompatible es una versión nueva (reglas en `docs/events/README.md`). `totals` es INFORMATIVO: invoicing no lo usa para calcular (en la Fase 2 lo compara y registra un WARN si difiere).
+- **Health:** `management.health.rabbit.enabled: false` (el indicador de Spring Boot bajaría el health); el componente `messaging` es informativo, siempre UP, en `/actuator/health/dependencies`, fuera de liveness/readiness. Métricas `sales.outbox.pending` y `sales.outbox.oldest.pending.age`. El relay solo registra cambios de estado (WARN al fallar, INFO al recuperarse).
+- ArchUnit regla 11: Spring AMQP y el cliente de RabbitMQ solo dentro de `adapter/out/messaging` (package-private), y nada de ese paquete sale de él.
+- **Seguridad:** administrador solo para consola e init; un usuario por servicio en el vhost `facturaflow` con permisos mínimos (sales: configure/write `^sales\.events$`, read `^$`), creado por `infra/rabbitmq/init/create-service-users.sh` (contenedor `rabbitmq-init`, idempotente, sin contraseñas en argumentos). Un servicio nuevo que publique o consuma necesita su línea en ese script y su variable en `.env.example` y compose. Solo la consola se publica (`127.0.0.1:15672`); el 5672 no.
+- RabbitMQ 4.3 no admite colas transitorias no exclusivas: las colas de tests y de depuración son durables.
+- Tests: los que inspeccionan el outbox apagan el relay (`sales.outbox.relay.enabled=false`) y lo invocan a mano; `TestcontainersConfiguration` levanta PostgreSQL y RabbitMQ.
 
 ## Convenciones
 
@@ -165,7 +183,7 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 ./scripts/mvn.sh sales test
 ./scripts/mvn.sh sales test -Dtest=HexagonalArchitectureTest
 
-# Levantar el entorno (PostgreSQL + invoicing + catalog + sales)
+# Levantar el entorno (PostgreSQL + RabbitMQ + invoicing + catalog + sales; rabbitmq-init termina en Exited (0))
 docker compose --env-file .env -f infra/docker-compose.yml up --build -d
 
 # Estado, logs y apagado
@@ -182,6 +200,12 @@ curl -s http://localhost:8083/actuator/health/dependencies   # circuito hacia ca
 
 # Sembrar en catalog los datos de los ejemplos de Swagger de sales (idempotente)
 ./scripts/seed-catalog.sh
+
+# RabbitMQ: consola http://localhost:15672 (RABBITMQ_ADMIN_USER del .env). Sin consumidores todavía, para VER
+# los eventos de sales se usa una cola de depuración temporal (se borra sola tras 1 h sin uso)
+./scripts/rabbitmq-debug-queue.sh create   # o peek / delete
+curl -s http://localhost:8083/actuator/health/dependencies          # componente messaging (outbox y relay)
+curl -s http://localhost:8083/actuator/metrics/sales.outbox.pending
 
 # Swagger UI (API documentada con ejemplos)
 # invoicing: http://localhost:8081/swagger-ui.html   catalog: http://localhost:8082/swagger-ui.html

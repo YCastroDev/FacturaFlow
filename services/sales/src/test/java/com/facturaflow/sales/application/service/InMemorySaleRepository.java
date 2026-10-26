@@ -7,6 +7,7 @@ import com.facturaflow.sales.application.port.out.SaleRepository;
 import com.facturaflow.sales.application.port.out.StoredSale;
 import com.facturaflow.sales.domain.model.ReferenceCode;
 import com.facturaflow.sales.domain.model.Sale;
+import com.facturaflow.sales.domain.model.SaleEvent;
 import com.facturaflow.sales.domain.model.SaleId;
 import com.facturaflow.sales.domain.model.SaleStatus;
 import java.util.ArrayList;
@@ -22,6 +23,8 @@ public class InMemorySaleRepository implements SaleRepository {
     private final Map<String, StoredSale> byReference = new LinkedHashMap<>();
     /** Simula una carrera: el próximo saveNew falla como si otra petición hubiera guardado esta venta antes. */
     private StoredSale raceWinner;
+    /** Eventos que llegaron con cada venta guardada: lo que el adaptador real escribiría en el outbox. */
+    private final List<SaleEvent> savedEvents = new ArrayList<>();
 
     void loseNextRaceTo(StoredSale winner) {
         this.raceWinner = winner;
@@ -41,6 +44,7 @@ public class InMemorySaleRepository implements SaleRepository {
                 sale.customer(), sale.lines(), sale.paymentMethod(), sale.paymentTerms(),
                 sale.observation().orElse(null), sale.status(), 0);
         byReference.put(sale.referenceCode().value(), new StoredSale(saved, requestHash));
+        savedEvents.addAll(sale.pendingEvents());
         return saved;
     }
 
@@ -71,5 +75,9 @@ public class InMemorySaleRepository implements SaleRepository {
 
     int count() {
         return byReference.size();
+    }
+
+    List<SaleEvent> savedEvents() {
+        return List.copyOf(savedEvents);
     }
 }

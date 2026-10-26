@@ -140,4 +140,44 @@ class SaleTest {
             assertThat(sale.total()).isEqualTo(Money.of("0.33"));
         }
     }
+
+    @Nested
+    @DisplayName("Eventos de dominio")
+    class Events {
+
+        @Test
+        @DisplayName("confirmar una venta registra SaleConfirmed con su id, ocurrido al crearse")
+        void confirmRegistersSaleConfirmed() {
+            Sale sale = sale(PaymentTerms.cash(), null);
+
+            assertThat(sale.pendingEvents()).containsExactly(new SaleEvent.SaleConfirmed(SALE_ID, CREATED_AT));
+        }
+
+        @Test
+        @DisplayName("una venta reconstituida no trae eventos: ya se guardaron con la venta y no se repiten")
+        void reconstitutedSaleHasNoEvents() {
+            Sale sale = Sale.reconstitute(SALE_ID, new ReferenceCode("VENTA-0001"), SALE_DATE, CREATED_AT, customer(),
+                    List.of(line("1", "1000", "0", "19")), PaymentMethod.CASH, PaymentTerms.cash(), null,
+                    SaleStatus.CONFIRMED, 0);
+
+            assertThat(sale.pendingEvents()).isEmpty();
+        }
+
+        @Test
+        @DisplayName("los eventos pendientes no se pueden modificar desde fuera del agregado")
+        void pendingEventsAreImmutable() {
+            Sale sale = sale(PaymentTerms.cash(), null);
+
+            assertThatThrownBy(() -> sale.pendingEvents().clear()).isInstanceOf(UnsupportedOperationException.class);
+        }
+
+        @Test
+        @DisplayName("un evento exige el id de la venta y el instante en que ocurrió")
+        void eventRequiresSaleIdAndInstant() {
+            assertThatThrownBy(() -> new SaleEvent.SaleConfirmed(null, CREATED_AT))
+                    .isInstanceOf(InvalidSaleException.class);
+            assertThatThrownBy(() -> new SaleEvent.SaleConfirmed(SALE_ID, null))
+                    .isInstanceOf(InvalidSaleException.class);
+        }
+    }
 }

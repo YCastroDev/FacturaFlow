@@ -21,6 +21,11 @@ import java.util.function.Function;
  *
  * <p>{@link #version()} es un token opaco del adaptador de persistencia (como en invoicing): vacío
  * hasta que se guarda.
+ *
+ * <p>Eventos de dominio (ADR 0013): {@link #confirm} registra {@link SaleEvent.SaleConfirmed} en
+ * {@link #pendingEvents()}; el repositorio los guarda en el outbox en la MISMA transacción que la venta.
+ * {@link #reconstitute} no trae eventos (ya se guardaron), así que la instancia que devuelve el repositorio
+ * no los repite y el agregado no necesita un método que los "limpie".
  */
 public final class Sale {
 
@@ -39,10 +44,12 @@ public final class Sale {
     private final String observation;
     private final SaleStatus status;
     private final Long version;
+    private final List<SaleEvent> pendingEvents;
 
     private Sale(SaleId id, ReferenceCode referenceCode, LocalDate saleDate, Instant createdAt,
                  CustomerSnapshot customer, List<SaleLine> lines, PaymentMethod paymentMethod,
-                 PaymentTerms paymentTerms, String observation, SaleStatus status, Long version) {
+                 PaymentTerms paymentTerms, String observation, SaleStatus status, Long version,
+                 List<SaleEvent> pendingEvents) {
         this.id = id;
         this.referenceCode = referenceCode;
         this.saleDate = saleDate;
@@ -54,10 +61,12 @@ public final class Sale {
         this.observation = observation;
         this.status = status;
         this.version = version;
+        this.pendingEvents = pendingEvents;
     }
 
     /**
-     * Confirma una venta nueva.
+     * Confirma una venta nueva y registra el evento {@link SaleEvent.SaleConfirmed} (ocurrido en
+     * {@code createdAt}).
      *
      * @param saleDate  fecha de la venta en Colombia (la pone el caso de uso con su reloj)
      * @param createdAt instante de creación (para ordenar el listado)
@@ -70,7 +79,8 @@ public final class Sale {
             throw InvalidPaymentTermsException.dueDateNotAfterSaleDate(credit.dueDate().toString(), saleDate.toString());
         }
         return new Sale(id, referenceCode, saleDate, createdAt, customer, List.copyOf(lines), paymentMethod,
-                paymentTerms, normalizeObservation(observation), SaleStatus.CONFIRMED, null);
+                paymentTerms, normalizeObservation(observation), SaleStatus.CONFIRMED, null,
+                List.of(new SaleEvent.SaleConfirmed(id, createdAt)));
     }
 
     /**
@@ -85,7 +95,7 @@ public final class Sale {
             throw InvalidSaleException.missing("un estado");
         }
         return new Sale(id, referenceCode, saleDate, createdAt, customer, List.copyOf(lines), paymentMethod,
-                paymentTerms, normalizeObservation(observation), status, version);
+                paymentTerms, normalizeObservation(observation), status, version, List.of());
     }
 
     private static void validate(SaleId id, ReferenceCode referenceCode, LocalDate saleDate, Instant createdAt,
@@ -200,5 +210,10 @@ public final class Sale {
 
     public Optional<Long> version() {
         return Optional.ofNullable(version);
+    }
+
+    /** Eventos registrados por esta instancia y aún no guardados (inmutable; vacío en una venta reconstituida). */
+    public List<SaleEvent> pendingEvents() {
+        return pendingEvents;
     }
 }

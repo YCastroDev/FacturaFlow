@@ -50,6 +50,8 @@ fi
 # --group-add         : permite usar docker.sock (Testcontainers) sin ser root.
 # --network host      : el contenedor comparte la red del host, así ve en localhost
 #                       los puertos que publican los contenedores de Testcontainers.
+# -v repo / -w        : se monta la RAÍZ del repo y se trabaja en services/<servicio>, así los tests leen
+#                       contratos compartidos como docs/events/*.schema.json (ADR 0013) sin copiarlos.
 # HOME / user.home    : ~/.m2 (dependencias y distribución del wrapper) vive en el volumen.
 #                       Java toma user.home de /etc/passwd, no de HOME, por eso se fuerzan ambos.
 # MAVEN_CONFIG vacío  : la imagen oficial la define y mvnw la pasaría como argumento.
@@ -65,7 +67,7 @@ exec docker run --rm "${tty_flags[@]}" "${env_file_flags[@]}" \
   -e TESTCONTAINERS_RYUK_DISABLED="${TESTCONTAINERS_RYUK_DISABLED:-false}" \
   -v "$M2_VOLUME:/home/maven" \
   -v "$docker_sock:$docker_sock" \
-  -v "$service_dir:/workspace" \
-  -w /workspace \
+  -v "$repo_root:/repo" \
+  -w "/repo/services/$service" \
   --entrypoint ./mvnw \
   "$MAVEN_IMAGE" "$@"

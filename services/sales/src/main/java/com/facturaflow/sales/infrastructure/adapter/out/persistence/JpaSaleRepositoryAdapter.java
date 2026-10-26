@@ -1,6 +1,7 @@
 package com.facturaflow.sales.infrastructure.adapter.out.persistence;
 
 import com.facturaflow.sales.application.exception.DuplicateReferenceCodeException;
+import com.facturaflow.sales.application.port.out.OutboxMessage;
 import com.facturaflow.sales.application.port.out.RequestHash;
 import com.facturaflow.sales.application.port.out.SalePage;
 import com.facturaflow.sales.application.port.out.SaleRepository;
@@ -9,6 +10,7 @@ import com.facturaflow.sales.domain.model.ReferenceCode;
 import com.facturaflow.sales.domain.model.Sale;
 import com.facturaflow.sales.domain.model.SaleId;
 import com.facturaflow.sales.domain.model.SaleStatus;
+import jakarta.persistence.EntityManager;
 import java.util.Optional;
 import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -22,6 +24,9 @@ import org.springframework.transaction.annotation.Transactional;
  * Adaptador de salida: implementa {@link SaleRepository} con Spring Data JPA. Cada operación es una
  * transacción corta; ninguna excepción de Spring o Hibernate sale de aquí. Es el único lugar del
  * servicio con transacciones: las llamadas a catalog ocurren siempre fuera de la base.
+ *
+ * <p>Transactional outbox (ADR 0013): {@link #saveNew} inserta la venta y sus eventos pendientes en la
+ * misma transacción, así nunca queda una venta sin su evento ni un evento sin su venta.
  */
 @Component
 class JpaSaleRepositoryAdapter implements SaleRepository {
@@ -32,10 +37,15 @@ class JpaSaleRepositoryAdapter implements SaleRepository {
 
     private final SaleJpaRepository jpaRepository;
     private final SalePersistenceMapper mapper;
+    private final EntityManager entityManager;
+    private final SaleEventMessages messages;
 
-    JpaSaleRepositoryAdapter(SaleJpaRepository jpaRepository, SalePersistenceMapper mapper) {
+    JpaSaleRepositoryAdapter(SaleJpaRepository jpaRepository, SalePersistenceMapper mapper,
+                             EntityManager entityManager, SaleEventMessages messages) {
         this.jpaRepository = jpaRepository;
         this.mapper = mapper;
+        this.entityManager = entityManager;
+        this.messages = messages;
     }
 
     @Override
@@ -47,6 +57,13 @@ class JpaSaleRepositoryAdapter implements SaleRepository {
         try {
             SaleEntity entity = mapper.toNewEntity(sale, requestHash);
             jpaRepository.save(entity);   // versión nula => persist; Hibernate la inicializa en 0
+            // persist (no save): el id del evento ya viene asignado y save() haría un merge con SELECT previo.
+            sale.pendingEvents().forEach(event -> {
+                OutboxMessage message = messages.toMessage(event, sale);
+                entityManager.persist(new OutboxEventEntity(message.eventId(), SaleEventMessages.AGGREGATE_TYPE,
+                        sale.id().value(), message.eventType(), message.eventVersion(), message.routingKey(),
+                        message.payload(), message.occurredAt()));
+            });
             // flush() DENTRO del try: si no, el UNIQUE saltaría en el commit y no podríamos traducirlo.
             jpaRepository.flush();
             return mapper.toDomain(entity);

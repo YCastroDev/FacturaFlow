@@ -10,8 +10,10 @@ import java.util.Optional;
 public interface SaleRepository {
 
     /**
-     * Inserta una venta que nunca se ha guardado, de forma atómica, con la huella de su petición.
-     * Devuelve la venta tal como quedó persistida, con su versión inicial.
+     * Inserta una venta que nunca se ha guardado, de forma atómica, con la huella de su petición y sus
+     * eventos pendientes ({@link Sale#pendingEvents()}) en el outbox: o se guardan la venta y sus eventos,
+     * o nada (ADR 0013). Devuelve la venta tal como quedó persistida, con su versión inicial y sin eventos
+     * pendientes.
      *
      * @throws com.facturaflow.sales.application.exception.DuplicateReferenceCodeException si otra venta ya
      *         usa su código de referencia

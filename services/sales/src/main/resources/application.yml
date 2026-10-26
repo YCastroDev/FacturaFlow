@@ -16,6 +16,17 @@ spring:
         default_batch_fetch_size: 100
   flyway:
     locations: classpath:db/migration
+  # RabbitMQ (ADR 0013). Conexión SOLO desde variables de entorno; la contraseña sin valor por defecto.
+  rabbitmq:
+    host: ${SALES_RABBITMQ_HOST:localhost}
+    port: ${SALES_RABBITMQ_PORT:5672}
+    virtual-host: ${SALES_RABBITMQ_VHOST:facturaflow}
+    username: ${SALES_RABBITMQ_USER:sales}
+    password: ${SALES_RABBITMQ_PASSWORD}
+    # Con el broker caído, cada ciclo del relay falla rápido en vez de quedarse esperando.
+    connection-timeout: 2s
+    # Publisher confirms por mensaje (CorrelationData): se marca publicado solo lo que el broker confirmó.
+    publisher-confirm-type: correlated
   jackson:
     deserialization:
       # Un campo mal escrito (p. ej. "cantidad") da 400 en vez de ignorarse sin aviso.
@@ -49,6 +60,20 @@ sales:
         wait-duration-in-open-state: 30s
         permitted-number-of-calls-in-half-open-state: 2
 
+  # Eventos (ADR 0013): exchange del servicio y espera de las confirmaciones del broker.
+  messaging:
+    exchange: sales.events
+    # Un lote de 50 mensajes pequeños se confirma en milisegundos; 5 s solo se agotan si el broker está en
+    # problemas. Lo no confirmado a tiempo queda pendiente (y puede publicarse dos veces: al menos una vez).
+    confirm-timeout: 5s
+  # Relay del outbox (ADR 0013).
+  outbox:
+    # Cada cuánto se revisan los pendientes. 1 s: la factura empieza a crearse casi enseguida y, sin eventos,
+    # cada consulta es una lectura vacía del índice parcial.
+    poll-interval: 1s
+    # Eventos por ciclo (y por transacción). Rendimiento máximo por instancia ~ batch-size / poll-interval.
+    batch-size: 50
+
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
@@ -72,13 +97,18 @@ management:
       show-details: never
       show-components: never
       group:
-        # /actuator/health/dependencies: el componente informativo "catalog" (estado del circuito). Siempre UP:
-        # catalog caído no baja el health de sales ni entra en liveness/readiness (ADR 0012).
+        # /actuator/health/dependencies: los componentes informativos "catalog" (estado del circuito, ADR 0012)
+        # y "messaging" (outbox y relay hacia RabbitMQ, ADR 0013). Siempre UP: una dependencia caída no baja
+        # el health de sales ni entra en liveness/readiness.
         dependencies:
-          include: catalog
+          include: catalog,messaging
           show-details: always
           show-components: always
   health:
     # El indicador de Resilience4j bajaría el health con el circuito abierto; se usa el componente propio.
     circuitbreakers:
+      enabled: false
+    # Spring Boot agrega solo el indicador "rabbit" al ver RabbitMQ en el classpath, y con el broker caído
+    # pondría /actuator/health en DOWN. Se reemplaza por el componente informativo "messaging" (ADR 0013).
+    rabbit:
       enabled: false

@@ -20,6 +20,7 @@ import com.facturaflow.sales.domain.model.LineTax;
 import com.facturaflow.sales.domain.model.Money;
 import com.facturaflow.sales.domain.model.PaymentMethod;
 import com.facturaflow.sales.domain.model.Sale;
+import com.facturaflow.sales.domain.model.SaleEvent;
 import com.facturaflow.sales.domain.model.SaleLine;
 import com.facturaflow.sales.domain.model.SaleStatus;
 import com.facturaflow.sales.domain.model.TaxType;
@@ -92,6 +93,17 @@ class CreateSaleServiceTest {
         // 2 x 18.500 = 37.000 - 10% = 33.300 + 5% (1.665) = 34.965; arroz 1,5 x 4.200 = 6.300 excluido.
         assertThat(sale.total()).isEqualTo(Money.of("41265.00"));
         assertThat(repository.count()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("la venta llega al repositorio con su evento SaleConfirmed; un reintento no genera otro evento")
+    void savesSaleConfirmedEventOnce() {
+        CreateSaleResult created = service.create(cash("VENTA-1", line("cafe-500", "2", "10")));
+        service.create(cash("VENTA-1", line("cafe-500", "2", "10")));
+
+        assertThat(repository.savedEvents())
+                .containsExactly(new SaleEvent.SaleConfirmed(created.sale().id(), CLOCK.instant()));
+        assertThat(created.sale().pendingEvents()).as("la venta devuelta es la guardada, sin eventos").isEmpty();
     }
 
     @Test

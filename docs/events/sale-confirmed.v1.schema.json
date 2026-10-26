@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:facturaflow:event:sale-confirmed:v1",
+  "title": "SaleConfirmed v1",
+  "description": "Una venta quedó confirmada en sales. Lleva todo lo que invoicing necesita para crear la factura sin consultar a catalog (ADR 0012, D3), con los nombres de POST /api/v1/invoices. Productor: sales. Exchange sales.events, routing key sale.confirmed.v1. Entrega al menos una vez: un consumidor descarta duplicados por eventId (ADR 0013).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["eventId", "eventType", "eventVersion", "occurredAt", "producer", "payload"],
+  "properties": {
+    "eventId": {
+      "description": "Identidad del evento (también es el message_id de AMQP). Un reenvío del mismo evento conserva el mismo eventId.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "eventType": { "const": "SaleConfirmed" },
+    "eventVersion": { "const": 1 },
+    "occurredAt": {
+      "description": "Cuándo se confirmó la venta (UTC, ISO-8601). No es cuándo se publicó.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "producer": { "const": "sales" },
+    "payload": { "$ref": "#/$defs/payload" }
+  },
+  "$defs": {
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["saleId", "referenceCode", "saleDate", "customer", "lines", "paymentMethod", "paymentTerms",
+                   "observation", "totals"],
+      "properties": {
+        "saleId": { "type": "string", "format": "uuid" },
+        "referenceCode": {
+          "description": "Código de la venta. Será el referenceCode de la factura: la idempotencia de invoicing evita facturar dos veces la misma venta.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,50}$"
+        },
+        "saleDate": {
+          "description": "Fecha de la venta en Colombia (America/Bogota).",
+          "type": "string",
+          "format": "date"
+        },
+        "customer": { "$ref": "#/$defs/customer" },
+        "lines": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "items": { "$ref": "#/$defs/line" }
+        },
+        "paymentMethod": {
+          "enum": ["CASH", "BANK_TRANSFER", "BANK_DEPOSIT", "DEBIT_CARD", "CREDIT_CARD", "CHECK"]
+        },
+        "paymentTerms": { "$ref": "#/$defs/paymentTerms" },
+        "observation": { "type": ["string", "null"], "maxLength": 250 },
+        "totals": { "$ref": "#/$defs/totals" }
+      }
+    },
+    "customer": {
+      "description": "Copia de los datos del cliente en catalog al confirmar la venta.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["customerId", "documentType", "documentNumber", "checkDigit", "personType", "companyName", "names",
+                   "taxScheme", "fiscalResponsibilities", "email", "municipalityCode", "address", "phone"],
+      "properties": {
+        "customerId": { "description": "Id del cliente en catalog (trazabilidad).", "type": "string", "format": "uuid" },
+        "documentType": {
+          "enum": ["CITIZENSHIP_CARD", "NIT", "FOREIGNER_ID_CARD", "PASSPORT", "IDENTITY_CARD", "CIVIL_REGISTRY",
+                   "FOREIGNER_CARD", "FOREIGN_ID_DOCUMENT", "SPECIAL_STAY_PERMIT", "TEMPORARY_PROTECTION_PERMIT",
+                   "FOREIGN_NIT"]
+        },
+        "documentNumber": { "type": "string", "minLength": 1, "maxLength": 20 },
+        "checkDigit": { "description": "Solo para NIT.", "type": ["integer", "null"], "minimum": 0, "maximum": 9 },
+        "personType": { "enum": ["NATURAL_PERSON", "LEGAL_ENTITY"] },
+        "companyName": { "description": "Razón social (LEGAL_ENTITY).", "type": ["string", "null"], "minLength": 1 },
+        "names": { "description": "Nombres (NATURAL_PERSON).", "type": ["string", "null"], "minLength": 1 },
+        "taxScheme": { "enum": ["IVA", "NOT_APPLICABLE"] },
+        "fiscalResponsibilities": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["LARGE_TAXPAYER", "SELF_WITHHOLDER", "VAT_WITHHOLDING_AGENT", "SIMPLE_TAX_REGIME",
+                     "NOT_RESPONSIBLE"]
+          }
+        },
+        "email": { "type": ["string", "null"], "minLength": 1, "maxLength": 254 },
+        "municipalityCode": {
+          "description": "Código DIVIPOLA (DANE) del municipio.",
+          "type": ["string", "null"],
+          "pattern": "^[0-9]{5}$"
+        },
+        "address": { "type": ["string", "null"], "minLength": 1, "maxLength": 250 },
+        "phone": { "type": ["string", "null"], "minLength": 1, "maxLength": 16 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "personType": { "const": "LEGAL_ENTITY" } } },
+          "then": { "properties": { "companyName": { "type": "string" } } }
+        },
+        {
+          "if": { "properties": { "personType": { "const": "NATURAL_PERSON" } } },
+          "then": { "properties": { "names": { "type": "string" } } }
+        }
+      ]
+    },
+    "line": {
+      "description": "Copia del producto de catalog más la cantidad y el descuento de la venta. Los montos son COP con 2 decimales.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["productId", "code", "name", "quantity", "unitPrice", "discountRate", "unit", "ivaExcluded", "taxes"],
+      "properties": {
+        "productId": { "description": "Id del producto en catalog (trazabilidad).", "type": "string", "format": "uuid" },
+        "code": { "type": "string", "minLength": 1, "maxLength": 50 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "quantity": { "type": "number", "exclusiveMinimum": 0 },
+        "unitPrice": { "description": "Precio unitario SIN impuestos ni descuentos.", "type": "number", "exclusiveMinimum": 0 },
+        "discountRate": { "description": "Porcentaje (10 = 10 %).", "type": "number", "minimum": 0, "maximum": 100 },
+        "unit": { "enum": ["UNIT", "KILOGRAM", "GRAM", "POUND", "LITER", "MILLILITER", "GALLON", "METER"] },
+        "ivaExcluded": { "description": "Excluida de IVA: no lleva un impuesto de tipo IVA.", "type": "boolean" },
+        "taxes": {
+          "description": "Sin tipos repetidos; vacía si no aplica ningún impuesto.",
+          "type": "array",
+          "maxItems": 2,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "rate"],
+            "properties": {
+              "type": { "$ref": "#/$defs/taxType" },
+              "rate": { "description": "Tarifa en porcentaje (19 = 19 %).", "type": "number", "minimum": 0, "maximum": 100 }
+            }
+          }
+        }
+      }
+    },
+    "paymentTerms": {
+      "description": "Contado (sin vencimiento) o crédito (con vencimiento posterior a saleDate).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "dueDate"],
+      "properties": {
+        "type": { "enum": ["CASH", "CREDIT"] },
+        "dueDate": { "type": ["string", "null"], "format": "date" }
+      },
+      "oneOf": [
+        { "properties": { "type": { "const": "CASH" }, "dueDate": { "type": "null" } } },
+        { "properties": { "type": { "const": "CREDIT" }, "dueDate": { "type": "string" } } }
+      ]
+    },
+    "totals": {
+      "description": "INFORMATIVO. Totales según la copia del cálculo que tiene sales (ADR 0012, D7). Invoicing NO los usa para calcular: es la autoridad y calcula los suyos; los compara con estos y registra un WARN si difieren, para detectar que las dos copias del cálculo divergieron (ADR 0013).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["subtotal", "totalDiscount", "taxes", "totalTax", "total"],
+      "properties": {
+        "subtotal": { "description": "Suma de cantidad x precio, antes de descuentos e impuestos.", "type": "number", "minimum": 0 },
+        "totalDiscount": { "type": "number", "minimum": 0 },
+        "taxes": {
+          "description": "Desglose por tipo: solo los tipos presentes en alguna línea (como la respuesta de invoicing).",
+          "type": "array",
+          "maxItems": 2,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "amount"],
+            "properties": {
+              "type": { "$ref": "#/$defs/taxType" },
+              "amount": { "type": "number", "minimum": 0 }
+            }
+          }
+        },
+        "totalTax": { "type": "number", "minimum": 0 },
+        "total": { "description": "subtotal - totalDiscount + totalTax.", "type": "number", "minimum": 0 }
+      }
+    },
+    "taxType": { "enum": ["IVA", "INC"] }
+  }
+}

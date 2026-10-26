@@ -144,6 +144,8 @@ No copia por tercera vez las reglas fiscales: catalog las validó al guardar e i
 - **El evento** sale completo del agregado `Sale`, sin consultar a catalog.
 - **Publicación:** lo previsible es un *transactional outbox* (escribir el evento en la misma transacción que la venta), para no perder eventos si RabbitMQ no responde. Se decidirá en esa tarea.
 
+  > **Nota (2026-10-26):** resuelto en el [ADR 0013](0013-mensajeria-y-outbox.md): outbox en sales, `SaleConfirmed` v1 y su contrato en `docs/events/`. El punto abierto del vencimiento se acepta como riesgo allí (decisión 10): si la factura se rechaza, la venta quedará `INVOICE_FAILED` (Fase 3).
+
 **Punto abierto (para la tarea de eventos), sin resolver aquí:** sales valida que el vencimiento de una venta a crédito sea posterior a **la fecha de la venta**. Invoicing lo compara con **la fecha de emisión de la factura**. Cuando la factura se cree de forma asíncrona, días después de la venta (cola detenida, reintentos), un vencimiento cercano podría quedar igual o anterior a esa fecha, e invoicing rechazaría la factura con un 422. Opciones a evaluar entonces:
 - que la factura use la fecha de la venta como fecha de emisión, si la DIAN lo permite;
 - que sales exija un margen mínimo de días;

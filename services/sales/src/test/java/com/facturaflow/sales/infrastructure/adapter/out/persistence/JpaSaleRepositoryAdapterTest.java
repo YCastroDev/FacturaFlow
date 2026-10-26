@@ -21,9 +21,11 @@ import com.facturaflow.sales.domain.model.SaleId;
 import com.facturaflow.sales.domain.model.SaleStatus;
 import com.facturaflow.sales.domain.model.TaxType;
 import jakarta.persistence.EntityManagerFactory;
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import org.hibernate.SessionFactory;
 import org.hibernate.stat.Statistics;
 import org.junit.jupiter.api.BeforeEach;
@@ -34,8 +36,12 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
-/** El adaptador contra PostgreSQL real (Testcontainers), con estadísticas de Hibernate para contar sentencias. */
-@SpringBootTest(properties = "spring.jpa.properties.hibernate.generate_statistics=true")
+/**
+ * El adaptador contra PostgreSQL real (Testcontainers), con estadísticas de Hibernate para contar sentencias.
+ * El relay del outbox está apagado: los eventos se inspeccionan en la tabla sin que nadie los publique.
+ */
+@SpringBootTest(properties = {"spring.jpa.properties.hibernate.generate_statistics=true",
+        "sales.outbox.relay.enabled=false"})
 @Import(TestcontainersConfiguration.class)
 class JpaSaleRepositoryAdapterTest {
 
@@ -56,7 +62,7 @@ class JpaSaleRepositoryAdapterTest {
 
     @BeforeEach
     void clean() {
-        jdbc.sql("TRUNCATE sale_line_taxes, sale_lines, sales").update();
+        jdbc.sql("TRUNCATE sale_line_taxes, sale_lines, sales, outbox_events").update();
         statistics = entityManagerFactory.unwrap(SessionFactory.class).getStatistics();
     }
 
@@ -94,6 +100,41 @@ class JpaSaleRepositoryAdapterTest {
 
         assertThatThrownBy(() -> repository.saveNew(sale("VENTA-1", T0, PaymentTerms.cash()), HASH))
                 .isInstanceOf(DuplicateReferenceCodeException.class);
+    }
+
+    @Test
+    @DisplayName("la venta y su evento SaleConfirmed se guardan juntos; el evento queda pendiente de publicar")
+    void saleAndEventAreSavedTogether() {
+        Sale saved = repository.saveNew(sale("VENTA-1", T0, PaymentTerms.cash()), HASH);
+
+        assertThat(saved.pendingEvents()).as("la instancia devuelta no repite el evento").isEmpty();
+        Map<String, Object> row = jdbc.sql("""
+                        SELECT aggregate_type, aggregate_id, event_type, event_version, routing_key, occurred_at,
+                               published_at, attempts, payload::jsonb -> 'payload' ->> 'referenceCode' AS reference
+                        FROM outbox_events""").query().singleRow();
+        assertThat(row.get("aggregate_type")).isEqualTo("Sale");
+        assertThat(row.get("aggregate_id")).isEqualTo(saved.id().value());
+        assertThat(row.get("event_type")).isEqualTo("SaleConfirmed");
+        assertThat(row.get("event_version")).isEqualTo(1);
+        assertThat(row.get("routing_key")).isEqualTo("sale.confirmed.v1");
+        assertThat(((Timestamp) row.get("occurred_at")).toInstant()).isEqualTo(T0);
+        assertThat(row.get("published_at")).isNull();
+        assertThat(row.get("attempts")).isEqualTo(0);
+        assertThat(row.get("reference")).isEqualTo("VENTA-1");
+    }
+
+    @Test
+    @DisplayName("si falla el guardado de la venta, su evento tampoco queda (misma transacción)")
+    void failedSaleLeavesNoEvent() {
+        repository.saveNew(sale("VENTA-1", T0, PaymentTerms.cash()), HASH);
+        Sale duplicate = sale("VENTA-1", T0, PaymentTerms.cash());
+
+        assertThatThrownBy(() -> repository.saveNew(duplicate, HASH)).isInstanceOf(DuplicateReferenceCodeException.class);
+
+        assertThat(jdbc.sql("SELECT count(*) FROM outbox_events").query(Long.class).single())
+                .as("solo el evento de la primera venta").isEqualTo(1);
+        assertThat(jdbc.sql("SELECT count(*) FROM outbox_events WHERE aggregate_id = :id")
+                .param("id", duplicate.id().value()).query(Long.class).single()).isZero();
     }
 
     @Test
