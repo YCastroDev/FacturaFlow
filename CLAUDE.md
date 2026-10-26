@@ -25,16 +25,16 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 
 ## Estructura
 
-- `services/<servicio>/` — un proyecto Spring Boot independiente por servicio: `invoicing` (hexagonal, ADR 0002) y `catalog` (en capas, ADR 0011).
+- `services/<servicio>/` — un proyecto Spring Boot independiente por servicio: `invoicing` (hexagonal, ADR 0002), `catalog` (en capas, ADR 0011) y `sales` (hexagonal, ADR 0012).
 - `infra/` — `docker-compose.yml` y scripts de init de PostgreSQL.
-- `scripts/` — utilidades (`mvn.sh`, `check-secrets.sh`).
+- `scripts/` — utilidades (`mvn.sh`, `check-secrets.sh`, `seed-catalog.sh`).
 - `.githooks/` — hook pre-commit con gitleaks.
 - `docs/adr/` — Architecture Decision Records.
 - `docs/spikes/` y `scripts/spikes/` — investigaciones contra sistemas externos (hallazgos y scripts reproducibles).
 
-## Reglas de arquitectura (invoicing)
+## Reglas de arquitectura (invoicing y sales)
 
-- Estructura hexagonal obligatoria en invoicing (ADR 0002); catalog es en capas (ADR 0011, sección propia abajo), bajo `com.facturaflow.<servicio>`:
+- Estructura hexagonal obligatoria en invoicing y sales (ADR 0002, ADR 0012); catalog es en capas (ADR 0011, sección propia abajo), bajo `com.facturaflow.<servicio>`:
   `domain/{model,exception}`, `application/{port/in,port/out,service}`, `infrastructure/{adapter/in/...,adapter/out/...,config}`.
 - **Nada de anotaciones ni imports de Spring, JPA o Jackson en `domain/`.** El dominio es Java puro.
 - Las dependencias apuntan hacia adentro: `infrastructure → application → domain`. `application` no conoce adaptadores concretos.
@@ -124,6 +124,19 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 - Listados: `page`/`size` (1–100)/`q`/`active`, orden fijo y estable, DTO `PageResponse` propio; colecciones EAGER cargadas por lotes (`default_batch_fetch_size`): 3 sentencias por página (`QueryCountIntegrationTest`).
 - Problem Details con el mismo formato que invoicing; una excepción nueva necesita su fila en la tabla del ADR 0011 y su test en el test del controlador.
 - Puerto local `127.0.0.1:8082`; base `catalog_db` / usuario `catalog_user` (`CATALOG_DB_PASSWORD`).
+- Consulta por lote `POST /api/v1/products/lookup` (1–100 códigos, activos o no; la usa sales). Es una lectura: no cambiarla sin revisar el adaptador de catalog en sales.
+
+## Servicio sales (ADR 0012)
+
+- Hexagonal con las mismas reglas de ArchUnit que invoicing (`HexagonalArchitectureTest`), más: nada de `adapter/out/catalog` sale de su paquete (ACL) y ningún código de otro servicio.
+- La petición solo trae `referenceCode`, documento del cliente (tipo + número), líneas (código, cantidad, descuento), pago y observación. Precios, nombres, impuestos y datos fiscales salen SIEMPRE de catalog y la venta guarda un snapshot con los mismos nombres que pide invoicing (lo que llevará `SaleConfirmed`). Cliente o producto inexistente o inactivo → 422 `catalog-reference-invalid` con todos los problemas.
+- 2 llamadas a catalog por venta (cliente + lote de productos), nunca una por línea. Toda llamada nueva a catalog pasa por `CatalogHttp` → `CatalogResilience` (Retry → CircuitBreaker): 1 reintento solo si la petición no salió o ante 502/503/504; nunca tras un timeout de lectura; el 404 no es falla. Catalog caído o circuito abierto → 503 `catalog-unavailable` con `Retry-After`; la venta no se crea.
+- Health: componente `catalog` siempre UP (`/actuator/health/dependencies`); fuera de liveness/readiness.
+- Idempotencia como invoicing, pero la huella es de la PETICIÓN normalizada (no de los datos de catalog) y se resuelve ANTES de llamar a catalog (un reintento responde 200 con catalog caído). Si se agrega un campo a la petición, agregarlo a `SaleRequestHasher` y a su test.
+- Totales: COPIA deliberada del cálculo de invoicing (`Money`, `Quantity`, `DiscountRate`, `LineTax`, `SaleLine`) con sus tests copiados. Si cambia en un servicio, cambia en el otro.
+- `SaleStatus` solo tiene `CONFIRMED`; `INVOICED`/`INVOICE_FAILED` llegan con los eventos (valor + `canTransitionTo` + migración). Punto abierto en el ADR 0012: vencimiento vs. fecha de emisión de la factura.
+- El snapshot del cliente solo se valida en estructura (las reglas fiscales las validan catalog e invoicing).
+- Puerto local `127.0.0.1:8083`; base `sales_db` / usuario `sales_user` (`SALES_DB_PASSWORD`); `SALES_CATALOG_BASE_URL` (por defecto `http://catalog:8080`).
 
 ## Convenciones
 
@@ -146,11 +159,13 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 # Cualquier otro goal de Maven
 ./scripts/mvn.sh invoicing -B package -DskipTests
 
-# Tests de catalog (y solo su ArchUnit)
+# Tests de catalog y de sales (y solo su ArchUnit)
 ./scripts/mvn.sh catalog test
 ./scripts/mvn.sh catalog test -Dtest=LayeredArchitectureTest
+./scripts/mvn.sh sales test
+./scripts/mvn.sh sales test -Dtest=HexagonalArchitectureTest
 
-# Levantar el entorno (PostgreSQL + invoicing + catalog)
+# Levantar el entorno (PostgreSQL + invoicing + catalog + sales)
 docker compose --env-file .env -f infra/docker-compose.yml up --build -d
 
 # Estado, logs y apagado
@@ -162,9 +177,15 @@ docker compose --env-file .env -f infra/docker-compose.yml down -v    # BORRA da
 # Health de invoicing y de catalog
 curl -s http://localhost:8081/actuator/health
 curl -s http://localhost:8082/actuator/health
+curl -s http://localhost:8083/actuator/health
+curl -s http://localhost:8083/actuator/health/dependencies   # circuito hacia catalog
+
+# Sembrar en catalog los datos de los ejemplos de Swagger de sales (idempotente)
+./scripts/seed-catalog.sh
 
 # Swagger UI (API documentada con ejemplos)
 # invoicing: http://localhost:8081/swagger-ui.html   catalog: http://localhost:8082/swagger-ui.html
+# sales:     http://localhost:8083/swagger-ui.html
 
 # Agregar la base de un servicio nuevo a un volumen con datos (script idempotente, sin down -v)
 docker compose --env-file .env -f infra/docker-compose.yml up -d postgres

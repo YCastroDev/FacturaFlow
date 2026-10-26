@@ -14,6 +14,7 @@ services:
       # Contraseñas de los usuarios de cada servicio (las usa el script de init)
       INVOICING_DB_PASSWORD: ${INVOICING_DB_PASSWORD:?Define INVOICING_DB_PASSWORD en .env}
       CATALOG_DB_PASSWORD: ${CATALOG_DB_PASSWORD:?Define CATALOG_DB_PASSWORD en .env}
+      SALES_DB_PASSWORD: ${SALES_DB_PASSWORD:?Define SALES_DB_PASSWORD en .env}
     volumes:
       # PostgreSQL 18+: el volumen se monta en /var/lib/postgresql
       - postgres-data:/var/lib/postgresql
@@ -70,6 +71,31 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q UP"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    restart: unless-stopped
+
+  sales:
+    build:
+      context: ../services/sales
+    environment:
+      SALES_DB_URL: jdbc:postgresql://postgres:5432/sales_db
+      SALES_DB_USER: sales_user
+      SALES_DB_PASSWORD: ${SALES_DB_PASSWORD:?Define SALES_DB_PASSWORD en .env}
+      # URL de catalog (no es un secreto). Se puede apuntar a otra para demostraciones.
+      SALES_CATALOG_BASE_URL: ${SALES_CATALOG_BASE_URL:-http://catalog:8080}
+    ports:
+      - "127.0.0.1:8083:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      # Solo "iniciado", no "sano": sales arranca aunque catalog esté caído (su health no depende de catalog).
+      catalog:
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q UP"]
       interval: 10s

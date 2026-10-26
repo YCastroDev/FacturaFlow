@@ -1,6 +1,8 @@
 package com.facturaflow.catalog.repository;
 
 import com.facturaflow.catalog.model.Product;
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -16,4 +18,8 @@ public interface ProductRepository extends JpaRepository<Product, UUID>, JpaSpec
     /** Sin distinguir mayúsculas, con {@code lower()} para usar el índice único (V1). */
     @Query("select p from Product p where lower(p.code) = lower(:code)")
     Optional<Product> findByCodeIgnoringCase(@Param("code") String code);
+
+    /** Consulta por lote (sales, ADR 0012): {@code lowerCodes} ya en minúsculas; activos o no. */
+    @Query("select p from Product p where lower(p.code) in :lowerCodes order by lower(p.code)")
+    List<Product> findByLowerCodes(@Param("lowerCodes") Collection<String> lowerCodes);
 }

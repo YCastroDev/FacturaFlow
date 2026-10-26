@@ -40,3 +40,4 @@ SQL
 # --- agrega su variable de contraseña al .env, .env.example y docker-compose.yml.
 create_service_db invoicing_db invoicing_user "${INVOICING_DB_PASSWORD:-}"
 create_service_db catalog_db   catalog_user   "${CATALOG_DB_PASSWORD:-}"
+create_service_db sales_db     sales_user     "${SALES_DB_PASSWORD:-}"

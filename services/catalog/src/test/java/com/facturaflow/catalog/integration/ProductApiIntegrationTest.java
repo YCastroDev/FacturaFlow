@@ -173,4 +173,21 @@ class ProductApiIntegrationTest {
         assertThat((String) json(excludedWithIva, "$.detail")).contains("excluido de IVA");
         assertThat(jdbc.sql("SELECT count(*) FROM products").query(Long.class).single()).isZero();
     }
+
+    @Test
+    @DisplayName("la consulta por lote trae activos e inactivos sin distinguir mayúsculas y omite los inexistentes")
+    void lookup() {
+        create("CAFE-500", "Café");
+        String rice = create("Arroz-KG", "Arroz");
+        create("OTRO", "No pedido");
+        api.post(URL + "/" + rice + "/deactivate");
+
+        EntityExchangeResult<String> result = api.post(URL + "/lookup",
+                "{ \"codes\": [ \"cafe-500\", \"ARROZ-KG\", \"NO-EXISTE\", \"CAFE-500\" ] }");
+
+        assertThat(status(result)).isEqualTo(200);
+        assertThat((List<String>) json(result, "$.items[*].code")).containsExactly("Arroz-KG", "CAFE-500");
+        assertThat((List<Boolean>) json(result, "$.items[*].active")).containsExactly(false, true);
+        assertThat((List<String>) json(result, "$.items[1].taxes[*].type")).containsExactly("IVA", "INC");
+    }
 }

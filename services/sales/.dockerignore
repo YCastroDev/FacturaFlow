@@ -1,0 +1,17 @@
+# Nunca enviar al contexto de build de Docker:
+.env
+.env.*
+*.env
+target/
+logs/
+*.log
+.git/
+.idea/
+.vscode/
+*.iml
+*.pem
+*.key
+*.p12
+*.jks
+Dockerfile
+.dockerignore

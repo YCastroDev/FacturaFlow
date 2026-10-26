@@ -5,7 +5,13 @@ import com.facturaflow.catalog.model.ProductDetails;
 import com.facturaflow.catalog.repository.CatalogSearch;
 import com.facturaflow.catalog.repository.ProductRepository;
 import java.time.Clock;
+import java.util.Collection;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.data.domain.Page;
@@ -59,6 +65,19 @@ public class ProductService {
         return products.findByCodeIgnoringCase(normalized)
                 .orElseThrow(() -> new ProductNotFoundException("No existe un producto con el código '"
                         + normalized + "'."));
+    }
+
+    /**
+     * Consulta por lote (ADR 0011, nota sobre sales): los productos que existen con esos códigos, sin
+     * distinguir mayúsculas, ACTIVOS O NO (quien consulta decide qué hacer con un inactivo). Los que no
+     * existen simplemente no vienen. Una sola consulta, más una por lote para los impuestos.
+     */
+    @Transactional(readOnly = true)
+    public List<Product> lookup(Collection<String> codes) {
+        Set<String> lowerCodes = codes.stream()
+                .map(code -> code.strip().toLowerCase(Locale.ROOT))
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        return products.findByLowerCodes(lowerCodes);
     }
 
     /** {@code text} y {@code active} nulos = sin ese filtro. */

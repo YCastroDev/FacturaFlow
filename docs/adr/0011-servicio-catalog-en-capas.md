@@ -170,6 +170,14 @@ El riesgo es la **actualización perdida**: dos personas leen la versión 0, las
   - Sigue corriendo solo con el volumen vacío.
   - También se puede ejecutar a mano para agregar un servicio a un volumen con datos, **sin `down -v`**. Así se creó `catalog_db` conservando las facturas locales.
 
+### Nota (2026-10-23): consulta por lote para sales (ADR 0012)
+
+Se agregó `POST /api/v1/products/lookup` con `{ "codes": [...] }` (de 1 a 100 códigos). No cambia ninguna decisión de este ADR.
+- **Qué devuelve:** los productos que existen con esos códigos, sin distinguir mayúsculas, **activos o no**, ordenados por código. Quien consulta decide qué hacer con un inactivo. Los inexistentes no aparecen.
+- **Por qué POST:** es una **lectura** que se puede repetir, pero 100 códigos no caben con seguridad en una URL.
+- **Costo:** 2 sentencias para cualquier cantidad de productos (`QueryCountIntegrationTest`).
+- **Errores:** 400 `invalid-request` si la lista está vacía, tiene más de 100 códigos o un código vacío.
+
 ## Alternativas consideradas
 
 - **Hexagonal, igual que invoicing:**

@@ -8,6 +8,8 @@ import com.facturaflow.catalog.model.Product;
 import com.facturaflow.catalog.service.CatalogPage;
 import com.facturaflow.catalog.service.ProductService;
 import com.facturaflow.catalog.web.dto.PageResponse;
+import com.facturaflow.catalog.web.dto.ProductLookupRequest;
+import com.facturaflow.catalog.web.dto.ProductLookupResponse;
 import com.facturaflow.catalog.web.dto.ProductRequest;
 import com.facturaflow.catalog.web.dto.ProductResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -117,6 +119,20 @@ class ProductController {
             @Min(value = 1, message = "debe ser 1 o mayor")
             @Max(value = MAX_PAGE_SIZE, message = "admite máximo " + MAX_PAGE_SIZE) int size) {
         return ApiMapper.page(products.search(q, active, new CatalogPage(page, size)), ApiMapper::response);
+    }
+
+    @PostMapping("/lookup")
+    @Operation(summary = "Consultar varios productos por código (lote)", description = """
+            Una sola petición para todos los productos de una venta (evita una llamada por línea). Es una \
+            LECTURA: no crea ni modifica nada y se puede repetir. Usa POST para que 100 códigos no dependan del \
+            largo máximo de una URL. Devuelve los que existen, activos o no (revise `active`); los códigos \
+            inexistentes no aparecen.""")
+    @io.swagger.v3.oas.annotations.parameters.RequestBody(content = @Content(examples =
+            @ExampleObject(name = "Dos productos", value = "{ \"codes\": [ \"CAFE-500\", \"arroz-kg\" ] }")))
+    @ApiResponse(responseCode = "200", description = "Los productos encontrados")
+    @ApiResponse(responseCode = "400", description = "Lista vacía, más de 100 códigos o un código vacío")
+    ProductLookupResponse lookup(@Valid @RequestBody ProductLookupRequest request) {
+        return new ProductLookupResponse(products.lookup(request.codes()).stream().map(ApiMapper::response).toList());
     }
 
     @PutMapping("/{id}")

@@ -272,4 +272,30 @@ class ProductControllerTest {
                 .hasStatusOk();
     }
 
+
+    @Test
+    @DisplayName("la consulta por lote devuelve los productos encontrados en una lista")
+    void lookup() {
+        given(service.lookup(List.of("CAFE-500", "arroz"))).willReturn(List.of(product(2)));
+
+        MvcTestResult result = mvc.post().uri(URL + "/lookup").contentType(MediaType.APPLICATION_JSON)
+                .content("{ \"codes\": [ \"CAFE-500\", \"arroz\" ] }").exchange();
+
+        assertThat(result).hasStatusOk();
+        assertThat(result).bodyJson().extractingPath("$.items[0].code").isEqualTo("CAFE-500");
+        assertThat(result).bodyJson().extractingPath("$.items[0].version").isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("la consulta por lote exige de 1 a 100 códigos no vacíos")
+    void lookupLimits() {
+        String tooMany = "{ \"codes\": [" + "\"A\",".repeat(100) + "\"A\"] }";
+        assertProblem(mvc.post().uri(URL + "/lookup").contentType(MediaType.APPLICATION_JSON)
+                .content("{ \"codes\": [] }").exchange(), HttpStatus.BAD_REQUEST, "invalid-request");
+        assertProblem(mvc.post().uri(URL + "/lookup").contentType(MediaType.APPLICATION_JSON)
+                .content(tooMany).exchange(), HttpStatus.BAD_REQUEST, "invalid-request");
+        assertProblem(mvc.post().uri(URL + "/lookup").contentType(MediaType.APPLICATION_JSON)
+                .content("{ \"codes\": [ \" \" ] }").exchange(), HttpStatus.BAD_REQUEST, "invalid-request");
+        verifyNoInteractions(service);
+    }
 }

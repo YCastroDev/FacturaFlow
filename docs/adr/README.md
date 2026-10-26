@@ -15,5 +15,6 @@ Un ADR es un documento corto que registra una decisión técnica importante, su 
 | [0009](0009-notas-credito.md) | Notas crédito: agregado separado, saldo por cantidades y bloqueo optimista sobre la factura | Aceptado (completa el 0005 y el 0006) |
 | [0010](0010-resiliencia-factus.md) | Resiliencia de las llamadas a Factus: reintentos, circuit breaker y limitador (Resilience4j), health informativo | Aceptado (completa el 0008) |
 | [0011](0011-servicio-catalog-en-capas.md) | Servicio catalog: arquitectura en capas (el 0002 sigue vigente para invoicing), datos maestros duplicados a propósito y concurrencia con ETag / If-Match | Aceptado |
+| [0012](0012-servicio-sales.md) | Servicio sales: hexagonal, catalog por HTTP síncrono (consulta por lote, reintento corto y circuit breaker), snapshot de la venta y totales duplicados de invoicing | Aceptado (completa el 0011) |
 
 Para una nueva decisión: copia el formato de un ADR existente, usa el siguiente número y agrégalo a esta tabla. Un ADR aceptado no cambia su decisión: si la decisión cambia, se crea uno nuevo que lo reemplaza. Sí se pueden agregar notas que no la alteren (p. ej. cómo se verifica).

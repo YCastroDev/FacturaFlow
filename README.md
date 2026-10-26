@@ -4,21 +4,23 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 
 ## Arquitectura
 
-- **Monorepo** con un proyecto independiente por servicio en `services/`. Hoy hay dos; luego vendrán sales, notifications, identity (con Keycloak), gateway y frontend.
+- **Monorepo** con un proyecto independiente por servicio en `services/`. Hoy hay tres; luego vendrán notifications, identity (con Keycloak), gateway y frontend.
 
   | Servicio | Responsabilidad | Arquitectura | Puerto local | Base |
   |---|---|---|---|---|
   | `invoicing` | Facturas y notas crédito electrónicas ante la DIAN (vía Factus) | Hexagonal ([ADR 0002](docs/adr/0002-arquitectura-hexagonal.md)) | `127.0.0.1:8081` | `invoicing_db` |
   | `catalog` | Productos y clientes (datos maestros) | En capas ([ADR 0011](docs/adr/0011-servicio-catalog-en-capas.md)) | `127.0.0.1:8082` | `catalog_db` |
+  | `sales` | Ventas confirmadas, con cliente y productos tomados de catalog | Hexagonal ([ADR 0012](docs/adr/0012-servicio-sales.md)) | `127.0.0.1:8083` | `sales_db` |
 
 - **Cada servicio usa la arquitectura que necesita:**
   - invoicing, hexagonal: integra un proveedor externo intercambiable;
+  - sales, hexagonal: tiene reglas de negocio, llama a catalog y pronto publicará eventos;
   - catalog, en capas (controller → service → repository): es casi un CRUD.
 
   Las dos se validan con ArchUnit.
 - **Base de datos por servicio:** un PostgreSQL con una base y un usuario por servicio; el esquema lo gestiona Flyway.
 - **Sin código compartido entre servicios:** los conceptos repetidos, como el DV del NIT, se duplican a propósito.
-- **Comunicación entre servicios** solo por HTTP o eventos (RabbitMQ, más adelante). Sales consultará catalog por HTTP al crear una venta.
+- **Comunicación entre servicios** solo por HTTP o eventos (RabbitMQ, más adelante). Hoy sales consulta catalog por HTTP al crear una venta (2 llamadas por venta, con circuit breaker); en la siguiente tarea, invoicing facturará las ventas a partir de un evento.
 - **Todo corre en Docker:** no se necesita Java ni Maven instalados.
 
 Las decisiones y sus motivos están en los [ADRs](docs/adr/README.md).
@@ -36,22 +38,27 @@ Requisito: Docker Engine con Docker Compose.
    cp .env.example .env
    ```
    El `.env` está en `.gitignore`: nunca se sube al repositorio.
-3. **Levantar el entorno** (PostgreSQL, invoicing y catalog):
+3. **Levantar el entorno** (PostgreSQL, invoicing, catalog y sales):
    ```bash
    docker compose --env-file .env -f infra/docker-compose.yml up --build -d
-   docker compose --env-file .env -f infra/docker-compose.yml ps     # los tres "healthy"
+   docker compose --env-file .env -f infra/docker-compose.yml ps     # los cuatro "healthy"
    ```
-4. **Comprobar** que los dos servicios responden:
+4. **Comprobar** que los tres servicios responden:
    ```bash
    curl http://localhost:8081/actuator/health    # invoicing: {"status":"UP",...}
    curl http://localhost:8082/actuator/health    # catalog:   {"status":"UP",...}
+   curl http://localhost:8083/actuator/health    # sales:     {"status":"UP",...}
+   ```
+5. **Sembrar los datos de ejemplo** en catalog (los usan los ejemplos de Swagger de sales; se puede repetir):
+   ```bash
+   ./scripts/seed-catalog.sh
    ```
 
-### Si ya tenías el entorno levantado antes de catalog
+### Si ya tenías el entorno levantado antes de catalog o sales
 
-El script que crea las bases (`infra/postgres/init/`) corre automáticamente solo con el volumen vacío. Para crear `catalog_db` **sin borrar tus datos** (sin `down -v`):
+El script que crea las bases (`infra/postgres/init/`) corre automáticamente solo con el volumen vacío. Para crear `catalog_db` y `sales_db` **sin borrar tus datos** (sin `down -v`):
 
-1. Agrega `CATALOG_DB_PASSWORD` a tu `.env` (ver `.env.example`).
+1. Agrega `CATALOG_DB_PASSWORD` y `SALES_DB_PASSWORD` a tu `.env` (ver `.env.example`).
 2. Recrea el contenedor de PostgreSQL para que reciba la variable; el volumen se conserva.
 3. Ejecuta el script a mano. Es idempotente: solo crea lo que falta.
 4. Levanta todo.
@@ -185,11 +192,41 @@ curl -si -X PUT localhost:8082/api/v1/products/<id> -H 'Content-Type: applicatio
 # -> 200, ETag: "1". Repetir el mismo PUT con If-Match: "0" -> 412
 ```
 
+## Ventas (sales): una venta de punta a punta
+
+Swagger UI: **http://localhost:8083/swagger-ui.html**. Con el entorno levantado y `./scripts/seed-catalog.sh` ejecutado:
+
+1. **Confirmar una venta** (`POST /api/v1/sales`) con uno de los ejemplos del desplegable. La petición solo trae el documento del cliente, los códigos de producto con cantidad y descuento, y la forma de pago: precios, nombres, impuestos y datos fiscales salen de catalog.
+   - *Contado*: NIT `890903938`, `CAFE-500` con 10 % de descuento y `ARROZ-KG` excluido de IVA. Responde `201` con un total de `41265.00`.
+   - *Crédito*: cédula `1020304050`, `CERVEZA-330` con IVA 19 % + INC 8 %. Responde `201` con un total de `72765.00`.
+   - *422*: un producto inactivo (`DEMO-CAFE`, si existe en tu catalog) y uno inexistente. Responde `422` con `missingProducts` e `inactiveProducts`.
+2. **Repetir** la misma petición: `200` con la misma venta. Con otro contenido y el mismo `referenceCode`: `409`.
+3. **Consultar:** `GET /api/v1/sales/{id}`, `GET /api/v1/sales/by-reference/{referenceCode}` o el listado `GET /api/v1/sales?page=0&size=20`. La venta trae la copia del cliente y de cada producto, y los totales (calculados con las mismas reglas que invoicing).
+4. **Cambiar un precio en catalog** (`PUT` con `If-Match`) y consultar la venta: no cambia, porque guarda una copia.
+
+### Catalog caído: demostración
+
+```bash
+docker compose --env-file .env -f infra/docker-compose.yml stop catalog
+# Confirmar 3 o 4 ventas nuevas (cambiando el referenceCode del ejemplo de contado):
+#   1.ª y 2.ª: 503 en ~2 s (reason "failure", Retry-After: 5)
+#   3.ª: el circuito se abre (reason "circuit-open")
+#   siguientes: 503 inmediato (milisegundos), sin llamar a catalog
+curl -s http://localhost:8083/actuator/health                # sigue {"status":"UP",...}
+curl -s http://localhost:8083/actuator/health/dependencies   # "circuitBreaker":"OPEN"
+# Repetir una venta YA creada: 200 aunque catalog esté caído
+docker compose --env-file .env -f infra/docker-compose.yml logs sales | grep "Circuito de catalog"
+docker compose --env-file .env -f infra/docker-compose.yml start catalog
+# A los 30 s el circuito deja pasar una prueba (HALF_OPEN → CLOSED) y las ventas vuelven a crearse.
+```
+
 ## Otros comandos
 
 ```bash
 ./scripts/mvn.sh invoicing test   # tests de invoicing (Maven + Testcontainers + WireMock en Docker)
 ./scripts/mvn.sh catalog test     # tests de catalog (Maven + Testcontainers en Docker)
+./scripts/mvn.sh sales test       # tests de sales (Maven + Testcontainers + WireMock en Docker)
+./scripts/seed-catalog.sh         # datos de ejemplo en catalog (idempotente)
 # Tests contra el sandbox real de Factus (no corren por defecto; crean 2 facturas y 1 nota crédito reales por ejecución)
 MVN_ENV_FILE=.env ./scripts/mvn.sh invoicing test -Dgroups=sandbox -DexcludedGroups=none
 ./scripts/check-secrets.sh        # escaneo de secretos en todo el repo

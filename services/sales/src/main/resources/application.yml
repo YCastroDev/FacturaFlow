@@ -1,0 +1,84 @@
+# La conexión a la base se lee SOLO desde variables de entorno (sin valores por defecto).
+spring:
+  application:
+    name: sales
+  datasource:
+    url: ${SALES_DB_URL}
+    username: ${SALES_DB_USER}
+    password: ${SALES_DB_PASSWORD}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate   # El esquema lo gestiona Flyway; Hibernate solo valida.
+    properties:
+      hibernate:
+        # El listado carga líneas e impuestos de toda la página en una consulta por nivel, no una por venta.
+        default_batch_fetch_size: 100
+  flyway:
+    locations: classpath:db/migration
+  jackson:
+    deserialization:
+      # Un campo mal escrito (p. ej. "cantidad") da 400 en vez de ignorarse sin aviso.
+      fail-on-unknown-properties: true
+
+sales:
+  # Zona de la fecha de la venta (la fecha legal es la de Colombia, no la del servidor).
+  time-zone: America/Bogota
+  # Cliente de catalog (ADR 0012). Por qué cada valor: ADR 0012.
+  catalog:
+    # En docker compose: http://catalog:8080 (variable SALES_CATALOG_BASE_URL).
+    base-url: ${SALES_CATALOG_BASE_URL:http://localhost:8082}
+    # Catalog está en la misma red: conectar toma milisegundos; 1 s ya es un problema.
+    connect-timeout: 1s
+    # Las dos consultas de catalog son lecturas por índice; 2 s de espera es mucho para un usuario en caja.
+    read-timeout: 2s
+    # Retry-After del 503 cuando una llamada falla (con el circuito abierto, lo que falta para que pruebe).
+    failure-retry-after: 5s
+    resilience:
+      retry:
+        # 1 reintento (2 intentos) SOLO si la petición no salió (conexión rechazada, nombre sin resolver,
+        # timeout de conexión) o ante 502/503/504: un reinicio de catalog. Nunca tras un timeout de lectura.
+        max-attempts: 2
+        backoff: 200ms
+        jitter: 0.5
+      circuit-breaker:
+        # Cada venta hace 2 llamadas: con catalog caído, el circuito abre hacia la 3.ª venta fallida.
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 2
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+  api-docs:
+    path: /v3/api-docs
+
+server:
+  port: 8080
+  error:
+    include-message: never
+    include-stacktrace: never
+
+# Actuator: solo lectura y nada sensible. El puerto solo se publica en 127.0.0.1 (docker-compose).
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,circuitbreakers,circuitbreakerevents,retries
+  endpoint:
+    health:
+      show-details: never
+      show-components: never
+      group:
+        # /actuator/health/dependencies: el componente informativo "catalog" (estado del circuito). Siempre UP:
+        # catalog caído no baja el health de sales ni entra en liveness/readiness (ADR 0012).
+        dependencies:
+          include: catalog
+          show-details: always
+          show-components: always
+  health:
+    # El indicador de Resilience4j bajaría el health con el circuito abierto; se usa el componente propio.
+    circuitbreakers:
+      enabled: false

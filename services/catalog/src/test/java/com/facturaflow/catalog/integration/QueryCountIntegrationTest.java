@@ -17,6 +17,7 @@ import com.facturaflow.catalog.service.CustomerService;
 import com.facturaflow.catalog.service.ProductService;
 import jakarta.persistence.EntityManagerFactory;
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.List;
 import org.hibernate.SessionFactory;
 import org.hibernate.stat.Statistics;
@@ -67,6 +68,23 @@ class QueryCountIntegrationTest {
 
         assertThat(page.getContent()).hasSize(20).allSatisfy(p -> assertThat(p.details().taxes()).hasSize(2));
         assertThat(statistics.getPrepareStatementCount()).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("la consulta por lote de 10 productos: 2 sentencias (productos e impuestos de todos)")
+    void productLookup() {
+        List<String> codes = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            products.create("L-" + i, new ProductDetails("Producto " + i, BigDecimal.TEN, UnitOfMeasure.UNIT, false,
+                    List.of(ProductTax.of(TaxType.IVA, "19"))));
+            codes.add("l-" + i);
+        }
+        statistics.clear();
+
+        List<Product> found = products.lookup(codes);
+
+        assertThat(found).hasSize(10).allSatisfy(p -> assertThat(p.details().taxes()).hasSize(1));
+        assertThat(statistics.getPrepareStatementCount()).isEqualTo(2);
     }
 
     @Test

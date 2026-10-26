@@ -13,6 +13,8 @@ public final class RequestLimits {
     public static final int MAX_SEARCH_TEXT = 100;
     public static final int MAX_PAGE_SIZE = 100;
     public static final int MAX_PAGE = 10_000;
+    /** Tope de la consulta por lote; coincide con el máximo de líneas de una venta (ADR 0012). */
+    public static final int MAX_LOOKUP_CODES = 100;
 
     private RequestLimits() {
     }
