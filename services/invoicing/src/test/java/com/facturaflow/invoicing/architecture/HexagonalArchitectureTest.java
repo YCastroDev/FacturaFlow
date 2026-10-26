@@ -115,6 +115,25 @@ class HexagonalArchitectureTest {
                     + "si otra clase los usara, el modelo de Factus se filtraría al resto del servicio; todo pasa "
                     + "por el puerto ElectronicInvoiceProvider (ADR 0008)");
 
+    // Regla 10: Anti-Corruption Layer del evento SaleConfirmed (ADR 0014).
+    @ArchTest
+    static final ArchRule sale_confirmed_stays_inside_its_adapter = noClasses()
+            .that().resideOutsideOfPackage(BASE + ".infrastructure.adapter.in.messaging..")
+            .should().dependOnClassesThat().resideInAPackage(BASE + ".infrastructure.adapter.in.messaging..")
+            .allowEmptyShould(true)
+            .because("el DTO del evento, su traducción y la topología de colas son detalles del contrato con sales: "
+                    + "si otra clase los usara, el modelo de sales se filtraría al resto del servicio; el adaptador "
+                    + "entra por los casos de uso CreateInvoice e IssueInvoice (ADR 0014)");
+
+    // Regla 11: el broker es un detalle del adaptador de mensajería (ADR 0014).
+    @ArchTest
+    static final ArchRule amqp_stays_inside_messaging_adapter = noClasses()
+            .that().resideOutsideOfPackage(BASE + ".infrastructure.adapter.in.messaging..")
+            .should().dependOnClassesThat().resideInAnyPackage("org.springframework.amqp..", "com.rabbitmq..")
+            .allowEmptyShould(true)
+            .because("RabbitMQ (Spring AMQP y su cliente) solo existe para recibir eventos: los casos de uso y los "
+                    + "demás adaptadores no saben de dónde llega una factura (ADR 0014)");
+
     // Regla 7: sin ciclos entre ningún par de paquetes.
     @ArchTest
     static final ArchRule no_package_cycles = slices()

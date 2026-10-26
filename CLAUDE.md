@@ -22,14 +22,14 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 | Escaneo de secretos | gitleaks v8.30.1 (vía Docker) |
 | Mock HTTP (tests del adaptador de Factus) | WireMock 3.13.1 (`wiremock-standalone`) |
 | Resiliencia (llamadas a Factus) | Resilience4j 2.4.0 (`resilience4j-spring-boot4`, versión fijada en el pom) |
-| Mensajería | RabbitMQ 4.3.6 (`rabbitmq:4.3.6-management-alpine`, en compose y Testcontainers) + `spring-boot-starter-amqp` |
+| Mensajería | RabbitMQ 4.3.6 (`rabbitmq:4.3.6-management-alpine`, en compose y Testcontainers; plugins de la imagen + shovel) + `spring-boot-starter-amqp` (sales y invoicing) |
 | Validación de contratos de eventos (tests) | `com.networknt:json-schema-validator` 3.0.8 (Jackson 3; solo test) |
 
 ## Estructura
 
 - `services/<servicio>/` — un proyecto Spring Boot independiente por servicio: `invoicing` (hexagonal, ADR 0002), `catalog` (en capas, ADR 0011) y `sales` (hexagonal, ADR 0012).
 - `infra/` — `docker-compose.yml` y scripts de init de PostgreSQL (`postgres/init`) y de RabbitMQ (`rabbitmq/init`).
-- `scripts/` — utilidades (`mvn.sh`, `check-secrets.sh`, `seed-catalog.sh`, `rabbitmq-debug-queue.sh`).
+- `scripts/` — utilidades (`mvn.sh`, `check-secrets.sh`, `seed-catalog.sh`, `rabbitmq-debug-queue.sh`, `rabbitmq-dlq.sh`).
 - `docs/events/` — catálogo y contratos (JSON Schema) de los eventos entre servicios (ADR 0013).
 - `.githooks/` — hook pre-commit con gitleaks.
 - `docs/adr/` — Architecture Decision Records.
@@ -82,7 +82,7 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 - **Transacciones solo en `infrastructure/adapter/out/persistence`** (regla de ArchUnit). Nunca envolver un caso de uso en una transacción: las llamadas a sistemas externos (proveedor de facturación) van fuera de la base.
 - Idempotencia de creación por `referenceCode` + huella SHA-256 de la petición normalizada (`InvoiceRequestHasher`, formato v2). Si se agrega un campo a la factura, agregarlo también a la huella y a su test parametrizado (la huella no se versiona: ADR 0007, decisión 6).
 - Emisión: respuestas de negocio como `IssuanceResult` sellado (`Issued` | `Rejected`); fallas técnicas como `ElectronicInvoiceProviderUnavailableException`. Un adaptador de proveedor nunca devuelve un `Rejected` por un timeout.
-- Proveedor activo según `invoicing.provider` (`fake` por defecto, `factus` para el sandbox real). El falso se controla con `SIMULAR_RECHAZO` y `SIMULAR_CAIDA` en la observación (de la factura o de la nota crédito).
+- Proveedor activo según `invoicing.provider` (`fake` por defecto, `factus` para el sandbox real). El falso se controla con `SIMULAR_RECHAZO`, `SIMULAR_CAIDA` (falla siempre) y `SIMULAR_FALLA_TEMPORAL` (falla las primeras `invoicing.fake.temporary-failures` emisiones de ese documento y luego emite; 4 en compose; contador en memoria) en la observación (de la factura o de la nota crédito).
 - REST: DTOs y enums propios en `adapter/in/rest/dto`, con `switch` exhaustivos hacia y desde el dominio. El controlador lee el agregado, nunca lo serializa. Bean Validation solo para forma (presencia, tipos, topes anti-abuso); las reglas de negocio no se duplican (responden 422 desde el dominio).
 - Errores: siempre Problem Details desde `ProblemDetailsHandler`, con `type` `urn:facturaflow:problem:<slug>`. Nunca exponer mensajes de Spring, Jackson o Hibernate ni trazas. Una excepción nueva de `application.exception` necesita su fila en la tabla del ADR 0006 y su test en el test del controlador que la expone (`InvoiceControllerTest` o `CreditNoteControllerTest`).
 - Tests: casos de uso con `InMemoryInvoiceRepository` y `StubElectronicInvoiceProvider` (sin Spring); web con `@WebMvcTest` + `MockMvcTester`; punta a punta con `RestTestClient` + Testcontainers.
@@ -156,6 +156,19 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 - RabbitMQ 4.3 no admite colas transitorias no exclusivas: las colas de tests y de depuración son durables.
 - Tests: los que inspeccionan el outbox apagan el relay (`sales.outbox.relay.enabled=false`) y lo invocan a mano; `TestcontainersConfiguration` levanta PostgreSQL y RabbitMQ.
 
+## Consumo de eventos en invoicing (ADR 0014)
+
+- `infrastructure/adapter/in/messaging` (ACL, package-private; ArchUnit reglas 10 y 11: nada sale del paquete y Spring AMQP/`com.rabbitmq` solo ahí). Traduce `SaleConfirmed` v1 al MISMO `CreateInvoiceCommand` de la API y llama a `CreateInvoiceUseCase` e `IssueInvoiceUseCase` **sin modificarlos**. Lector tolerante (`SaleConfirmedJson`); validación estructural en el traductor; el JSON Schema se valida en los tests (`EventContracts`, copia propia de la de sales).
+- Idempotencia: `referenceCode` de la venta = de la factura. Solo se emite si la factura está `PENDING`; un duplicado de una `ISSUED`/`REJECTED` es ack sin llamar al proveedor. Sin tabla inbox de `eventId` (decisión documentada).
+- `SaleConfirmedProcessor` clasifica (sin AMQP): `Completed` (ISSUED, REJECTED, duplicado, `InvoiceAlreadyRejected`) → ack; `RetryLater` (`ElectronicInvoiceProviderUnavailable`, `InvoiceConcurrentModification`, cualquier excepción inesperada) → espera y reintento; `Invalid` (JSON/contrato, `DomainException`, `ReferenceCodeConflict`) → DLQ sin reintentos. Una clasificación nueva exige su fila en la tabla del ADR 0014 y su test.
+- Ack MANUAL y solo después de procesar o de republicar CON confirmación (`ConfirmedRepublisher`); si republicar falla → `basicNack(requeue=true)`. Nunca hacer ack antes.
+- Topología (la declara invoicing; `sales.events` NO, lo declaran sales y `rabbitmq-init`): `invoicing.sale-confirmed` ← `sales.events`/`sale.confirmed.v1`; `invoicing.retry` → `invoicing.sale-confirmed.wait-<duración>` (TTL por cola; el nombre lleva la duración); al vencer vuelven por `invoicing.requeue` (NUNCA por el exchange por defecto: exigiría write sobre `amq.default`); `invoicing.dlx` → `invoicing.sale-confirmed.dlq`. Cabecera `x-attempt`; la DLQ lleva `x-failure-category`, `x-failure-reason`, `x-attempts-made`, `x-failed-at` y no `x-attempt`.
+- `invoicing.messaging.retry-delays: 10s,1m,5m`; 1 consumidor, prefetch 1 (limitador de Factus y sin duplicados en paralelo).
+- Totales del evento: informativos; WARN con ambos valores solo al CREAR la factura (`SaleTotalsCheck`).
+- Health: `management.health.rabbit.enabled: false`; componente `messaging` (siempre UP) en `/actuator/health/dependencies`; métrica `invoicing.sale_confirmed.processed{outcome}`. Sin RabbitMQ, invoicing arranca y su API funciona.
+- Usuario `invoicing` (`INVOICING_RABBITMQ_PASSWORD`): configure/write `^invoicing\..*`, read `^(invoicing\..*|sales\.events)$`. **Los tests de invoicing ejecutan el script de init real en Testcontainers** y se conectan como `invoicing` (publican como `sales` con `TestcontainersConfiguration.salesTemplate`): un permiso que falte debe fallar en los tests.
+- Reprocesar la DLQ: `./scripts/rabbitmq-dlq.sh requeue` (shovel dinámico) o "Move messages" en la consola, solo tras corregir la causa.
+
 ## Convenciones
 
 - Código, clases, paquetes y endpoints en inglés. Documentación y ADRs en español.
@@ -204,6 +217,10 @@ curl -s http://localhost:8083/actuator/health/dependencies   # circuito hacia ca
 # RabbitMQ: consola http://localhost:15672 (RABBITMQ_ADMIN_USER del .env). Sin consumidores todavía, para VER
 # los eventos de sales se usa una cola de depuración temporal (se borra sola tras 1 h sin uso)
 ./scripts/rabbitmq-debug-queue.sh create   # o peek / delete
+# Consumidor de invoicing: colas, esperas y DLQ; reprocesar la DLQ (shovel)
+./scripts/rabbitmq-dlq.sh status           # o peek / requeue / purge --yes
+curl -s http://localhost:8081/actuator/health/dependencies          # componente messaging del consumidor
+curl -s "http://localhost:8081/actuator/metrics/invoicing.sale_confirmed.processed?tag=outcome:issued"
 curl -s http://localhost:8083/actuator/health/dependencies          # componente messaging (outbox y relay)
 curl -s http://localhost:8083/actuator/metrics/sales.outbox.pending
 

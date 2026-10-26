@@ -27,6 +27,8 @@
         <wiremock.version>3.13.1</wiremock.version>
         <!-- No la gestiona Spring Boot (su BOM no incluye este módulo); 2.4.0 es la primera para Boot 4 (ADR 0010) -->
         <resilience4j.version>2.4.0</resilience4j.version>
+        <!-- No la gestiona Spring Boot; la línea 3.x usa Jackson 3, el de Boot 4 (solo tests, ADR 0014) -->
+        <json-schema-validator.version>3.0.8</json-schema-validator.version>
         <!-- Los tests contra el sandbox real de Factus no corren por defecto (ADR 0008). Para correrlos:
              -Dgroups=sandbox -DexcludedGroups=none -->
         <excludedGroups>sandbox</excludedGroups>
@@ -48,6 +50,11 @@
             <groupId>io.github.resilience4j</groupId>
             <artifactId>resilience4j-spring-boot4</artifactId>
             <version>${resilience4j.version}</version>
+        </dependency>
+        <!-- Consumo de eventos de RabbitMQ (SaleConfirmed, ADR 0014) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-amqp</artifactId>
         </dependency>
         <!-- Persistencia -->
         <dependency>
@@ -105,6 +112,18 @@
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>testcontainers-postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-rabbitmq</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Valida los eventos de prueba contra docs/events/*.schema.json, el mismo archivo que usa sales (ADR 0014) -->
+        <dependency>
+            <groupId>com.networknt</groupId>
+            <artifactId>json-schema-validator</artifactId>
+            <version>${json-schema-validator.version}</version>
             <scope>test</scope>
         </dependency>
         <!-- Servidor HTTP falso para probar el adaptador de Factus con sus respuestas reales -->

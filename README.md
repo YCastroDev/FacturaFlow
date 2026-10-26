@@ -23,7 +23,7 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 - **Comunicación entre servicios** solo por HTTP o eventos:
   - sales consulta catalog por HTTP al crear una venta (2 llamadas por venta, con circuit breaker);
   - sales publica el evento `SaleConfirmed` en RabbitMQ con un *transactional outbox*: la venta y su evento se guardan en la misma transacción y se publican con confirmación del broker, aunque RabbitMQ esté caído al vender ([ADR 0013](docs/adr/0013-mensajeria-y-outbox.md)). El contrato está en el [catálogo de eventos](docs/events/README.md);
-  - en la siguiente fase, invoicing facturará las ventas a partir de ese evento.
+  - invoicing consume ese evento: crea la factura y la emite con los mismos casos de uso de su API, reintenta las fallas técnicas con espera creciente y aparta en una DLQ lo que no puede procesar ([ADR 0014](docs/adr/0014-consumo-de-sale-confirmed.md)). Vender ya factura sola.
 - **Todo corre en Docker:** no se necesita Java ni Maven instalados.
 
 Las decisiones y sus motivos están en los [ADRs](docs/adr/README.md).
@@ -60,7 +60,7 @@ Requisito: Docker Engine con Docker Compose.
 
 ### Si ya tenías el entorno levantado antes de RabbitMQ
 
-Agrega a tu `.env` `RABBITMQ_ADMIN_USER`, `RABBITMQ_ADMIN_PASSWORD` y `SALES_RABBITMQ_PASSWORD` (ver `.env.example`) y vuelve a levantar todo con el comando del paso 3. RabbitMQ empieza con su volumen vacío y `rabbitmq-init` crea el vhost y los usuarios. La migración V2 de sales (el outbox) se aplica sola.
+Agrega a tu `.env` `RABBITMQ_ADMIN_USER`, `RABBITMQ_ADMIN_PASSWORD`, `SALES_RABBITMQ_PASSWORD` e `INVOICING_RABBITMQ_PASSWORD` (ver `.env.example`) y vuelve a levantar todo con el comando del paso 3. RabbitMQ empieza con su volumen vacío y `rabbitmq-init` crea el vhost y los usuarios. La migración V2 de sales (el outbox) se aplica sola.
 
 ### Si ya tenías el entorno levantado antes de catalog o sales
 
@@ -260,6 +260,49 @@ docker compose --env-file .env -f infra/docker-compose.yml logs sales | grep "Ou
 #   WARN ... no se pudieron publicar eventos ...    (una sola línea al empezar a fallar)
 #   INFO ... publicación restablecida tras N ciclo(s) fallido(s); 1 evento(s) publicado(s)
 ```
+
+## Facturación automática: de la venta a la factura (invoicing consume `SaleConfirmed`)
+
+Con el entorno levantado y `./scripts/seed-catalog.sh` ejecutado, **no hace falta tocar invoicing**: cada venta confirmada en sales se factura sola. Consola de RabbitMQ: **http://localhost:15672** (Queues and Streams: `invoicing.sale-confirmed`, sus colas `wait-10s` / `wait-1m` / `wait-5m` y la DLQ `invoicing.sale-confirmed.dlq`).
+
+```bash
+# Ayudante para confirmar una venta (el ejemplo de contado de Swagger) con un referenceCode y una observación
+venta() { curl -s -o /dev/null -w "venta $1: HTTP %{http_code}\n" -X POST http://localhost:8083/api/v1/sales \
+  -H 'Content-Type: application/json' -d "{\"referenceCode\":\"$1\",\"customer\":{\"documentType\":\"NIT\",\"documentNumber\":\"890903938\"},
+  \"lines\":[{\"productCode\":\"CAFE-500\",\"quantity\":2,\"discountRate\":10}],\"paymentMethod\":\"CASH\",
+  \"paymentTerms\":{\"type\":\"CASH\"},\"observation\":\"${2:-}\"}"; }
+factura() { curl -s "http://localhost:8081/api/v1/invoices?referenceCode=$1"; echo; }
+```
+
+1. **Venta → factura ISSUED** (en segundos):
+   ```bash
+   venta DEMO-1                    # 201 en sales
+   factura DEMO-1                  # "status":"ISSUED", "cufe":"0000..." (proveedor falso)
+   ```
+2. **Falla técnica → reintentos → DLQ → reprocesar** (~6 min: esperas de 10 s, 1 min y 5 min):
+   ```bash
+   venta DEMO-2A SIMULAR_CAIDA            # el proveedor falla siempre
+   venta DEMO-2B SIMULAR_FALLA_TEMPORAL   # falla 4 veces (todos los intentos) y luego funciona
+   ./scripts/rabbitmq-dlq.sh status       # repetir: los mensajes pasan por wait-10s, wait-1m, wait-5m...
+   # ...y a los ~6 min los dos están en la DLQ (las facturas, PENDING)
+   ./scripts/rabbitmq-dlq.sh peek         # x-failure-category: technical, x-attempts-made: 4, el motivo
+   ./scripts/rabbitmq-dlq.sh requeue      # o "Move messages" en la página de la DLQ en la consola
+   factura DEMO-2B                        # ISSUED: el "proveedor volvió"
+   # DEMO-2A vuelve a las esperas y a la DLQ: reprocesar sin corregir la causa no la arregla
+   docker compose --env-file .env -f infra/docker-compose.yml logs invoicing | grep -E "Reintento|DLQ|procesada"
+   ```
+3. **Rechazo de la DIAN → REJECTED, sin reintentos:**
+   ```bash
+   venta DEMO-3 SIMULAR_RECHAZO
+   factura DEMO-3                  # "status":"REJECTED" con el motivo; nada en las esperas ni en la DLQ
+   ```
+
+```bash
+curl -s http://localhost:8081/actuator/health/dependencies     # componente messaging: listener RUNNING, último resultado
+curl -s "http://localhost:8081/actuator/metrics/invoicing.sale_confirmed.processed?tag=outcome:issued"
+```
+
+Con RabbitMQ detenido, sales sigue vendiendo (los eventos esperan en su outbox) e invoicing sigue atendiendo su API. Al volver, el outbox publica y el consumidor factura. El proveedor falso cuenta los fallos de `SIMULAR_FALLA_TEMPORAL` en memoria: un reinicio de invoicing los pone en cero.
 
 ## Otros comandos
 

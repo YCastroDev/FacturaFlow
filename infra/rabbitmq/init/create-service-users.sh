@@ -43,10 +43,26 @@ create_service_user() {
 
 echo "init: vhost $VHOST"
 rabbitmqadmin --non-interactive --quiet declare vhost --name "$VHOST"
+# El administrador administra todo el vhost (en compose ya lo hace por ser el usuario por defecto; en los tests de
+# Testcontainers, que ejecutan este mismo script, no).
+rabbitmqadmin --non-interactive --quiet --vhost "$VHOST" declare permissions --username "$RABBITMQADMIN_USERNAME" \
+  --configure '.*' --write '.*' --read '.*'
 
 # --- Un bloque por servicio. Para un servicio nuevo, copia la línea y agrega su variable de contraseña
 # --- al .env, .env.example y docker-compose.yml.
 # sales: solo declara y publica en SU exchange; no lee ninguna cola ('^$' no coincide con ningún nombre).
 create_service_user sales "${SALES_RABBITMQ_PASSWORD:-}" '^sales\.events$' '^sales\.events$' '^$'
+# invoicing (ADR 0014): declara y usa sus propios recursos (cola, esperas, DLQ, exchanges invoicing.*); lee
+# sales.events solo para enlazar su cola (un binding exige read sobre el exchange de origen). No puede
+# publicar en sales.events.
+create_service_user invoicing "${INVOICING_RABBITMQ_PASSWORD:-}" '^invoicing\..*' '^invoicing\..*' \
+  '^(invoicing\..*|sales\.events)$'
+
+# --- Exchanges de los productores (ADR 0014). Cada productor declara el suyo al conectarse; se declaran
+# --- también aquí (mismas propiedades, idempotente) para que los consumidores puedan enlazar sus colas
+# --- sin depender del orden de arranque: un binding a un exchange inexistente falla.
+echo "init: exchange sales.events"
+rabbitmqadmin --non-interactive --quiet --vhost "$VHOST" declare exchange --name sales.events --type topic \
+  --durable true --auto-delete false
 
 echo "init: listo"

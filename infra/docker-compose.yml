@@ -41,6 +41,9 @@ services:
       RABBITMQ_DEFAULT_VHOST: facturaflow
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
+      # Plugins: los de la imagen (consola, Prometheus) + shovel, para mover mensajes de una DLQ a su cola
+      # ("Move messages" en la consola y scripts/rabbitmq-dlq.sh; ADR 0014).
+      - ./rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
     ports:
       # Solo la consola (http://localhost:15672). El 5672 (AMQP) no se publica: los servicios lo usan
       # dentro de la red de Docker y los tests levantan su propio RabbitMQ con Testcontainers.
@@ -65,6 +68,7 @@ services:
       RABBITMQADMIN_PASSWORD: ${RABBITMQ_ADMIN_PASSWORD:?Define RABBITMQ_ADMIN_PASSWORD en .env}
       RABBITMQ_VHOST: facturaflow
       SALES_RABBITMQ_PASSWORD: ${SALES_RABBITMQ_PASSWORD:?Define SALES_RABBITMQ_PASSWORD en .env}
+      INVOICING_RABBITMQ_PASSWORD: ${INVOICING_RABBITMQ_PASSWORD:?Define INVOICING_RABBITMQ_PASSWORD en .env}
     volumes:
       - ./rabbitmq/init:/init:ro
     depends_on:
@@ -90,11 +94,23 @@ services:
       FACTUS_SEND_EMAIL: ${FACTUS_SEND_EMAIL:-false}
       FACTUS_NUMBERING_RANGE_ID: ${FACTUS_NUMBERING_RANGE_ID:-}
       FACTUS_CREDIT_NOTE_NUMBERING_RANGE_ID: ${FACTUS_CREDIT_NOTE_NUMBERING_RANGE_ID:-}
+      # Consumo de SaleConfirmed (ADR 0014): usuario propio con permisos mínimos sobre invoicing.*.
+      INVOICING_RABBITMQ_HOST: rabbitmq
+      INVOICING_RABBITMQ_PORT: 5672
+      INVOICING_RABBITMQ_VHOST: facturaflow
+      INVOICING_RABBITMQ_USER: invoicing
+      INVOICING_RABBITMQ_PASSWORD: ${INVOICING_RABBITMQ_PASSWORD:?Define INVOICING_RABBITMQ_PASSWORD en .env}
+      # Proveedor falso: emisiones que fallan antes de funcionar con SIMULAR_FALLA_TEMPORAL. 4 = los intentos
+      # del consumidor (1 + 3 esperas): la venta llega a la DLQ y al reprocesarla se emite (README).
+      INVOICING_FAKE_TEMPORARY_FAILURES: ${INVOICING_FAKE_TEMPORARY_FAILURES:-4}
     ports:
       - "127.0.0.1:8081:8080"
     depends_on:
       postgres:
         condition: service_healthy
+      # Invoicing arranca y atiende su API sin RabbitMQ; el listener se reconecta solo (ADR 0014).
+      rabbitmq:
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q UP"]
       interval: 10s

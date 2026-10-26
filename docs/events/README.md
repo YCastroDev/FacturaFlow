@@ -1,6 +1,6 @@
 # Catálogo de eventos
 
-Los eventos que los servicios de FacturaFlow publican en RabbitMQ y el contrato de cada uno. Las decisiones de fondo están en el [ADR 0013](../adr/0013-mensajeria-y-outbox.md): RabbitMQ, coreografía, transactional outbox y entrega al menos una vez.
+Los eventos que los servicios de FacturaFlow publican en RabbitMQ y el contrato de cada uno. Las decisiones de fondo están en el [ADR 0013](../adr/0013-mensajeria-y-outbox.md) (productor: RabbitMQ, coreografía, transactional outbox, entrega al menos una vez) y en el [ADR 0014](../adr/0014-consumo-de-sale-confirmed.md) (consumidor: clasificación, reintentos con espera, DLQ y reprocesamiento).
 
 Cada contrato es un **JSON Schema** (draft 2020-12) en esta carpeta. Es la única fuente de verdad: el productor y cada consumidor lo validan en sus propios tests, leyendo **este mismo archivo**, sin copiarlo ni empaquetarlo en una librería compartida (ADR 0001).
 
@@ -8,7 +8,7 @@ Cada contrato es un **JSON Schema** (draft 2020-12) en esta carpeta. Es la únic
 
 | Evento | Versión | Productor | Exchange | Routing key | Esquema | Consumidores |
 |---|---|---|---|---|---|---|
-| `SaleConfirmed` | 1 | sales | `sales.events` | `sale.confirmed.v1` | [sale-confirmed.v1.schema.json](sale-confirmed.v1.schema.json) | invoicing (Fase 2) |
+| `SaleConfirmed` | 1 | sales | `sales.events` | `sale.confirmed.v1` | [sale-confirmed.v1.schema.json](sale-confirmed.v1.schema.json) | invoicing: cola `invoicing.sale-confirmed` (crea y emite la factura) |
 
 ### `SaleConfirmed` v1
 
@@ -19,6 +19,13 @@ Cada contrato es un **JSON Schema** (draft 2020-12) en esta carpeta. Es la únic
 - `saleId`, `customerId` y `productId`, para la trazabilidad;
 - `referenceCode`, que en la Fase 2 será el `referenceCode` de la factura. Así la idempotencia de invoicing evita facturar dos veces la misma venta;
 - **`totals`, informativo:** los totales según la copia del cálculo que tiene sales. Invoicing **no** los usa para calcular, porque es la autoridad (ADR 0004). Los compara con los suyos y registra un WARN si difieren, para detectar que las dos copias del cálculo (ADR 0012, D7) divergieron.
+
+**Qué hace invoicing con él** (ADR 0014):
+- lo traduce al mismo comando de `POST /api/v1/invoices`, crea la factura (idempotente por `referenceCode`) y la emite;
+- un mensaje repetido no vuelve a emitir;
+- emitida o rechazada por la DIAN → ack;
+- falla técnica → reintento a los 10 s, 1 min y 5 min, y luego a la DLQ;
+- mensaje inválido → DLQ sin reintentos.
 
 **Ejemplo** (con los datos de `scripts/seed-catalog.sh`):
 
@@ -117,9 +124,30 @@ Un esquema publicado no se edita de forma incompatible, igual que una migración
 2. Su esquema en esta carpeta (`<evento>.v1.schema.json`) y su fila en la tabla de eventos.
 3. Su serialización en el adaptador del productor, y el test que valida contra el esquema, incluidos mensajes rotos que el esquema debe rechazar.
 4. El valor nuevo en el CHECK `event_type` del outbox (migración).
-5. Si lo publica un servicio nuevo: su exchange, y su usuario de RabbitMQ en `infra/rabbitmq/init/create-service-users.sh`.
+5. Si lo publica un servicio nuevo: su exchange, y su usuario de RabbitMQ en `infra/rabbitmq/init/create-service-users.sh` (y la declaración de su exchange allí).
+6. Para cada consumidor: su cola, sus esperas y su DLQ con el prefijo del consumidor, permiso de `read` sobre el exchange del productor, y un test que valide sus eventos de prueba contra el esquema.
 
-## Ver los mensajes en local (Fase 1, sin consumidores)
+## Consumidores: cola, reintentos y DLQ (ADR 0014)
+
+Cada consumidor declara su propia topología con el prefijo de su servicio. Para invoicing:
+
+| Recurso | Para qué |
+|---|---|
+| `invoicing.sale-confirmed` | Su cola, enlazada a `sales.events` con `sale.confirmed.v1` |
+| `invoicing.retry` → `invoicing.sale-confirmed.wait-10s`, `wait-1m`, `wait-5m` | Colas de espera con TTL, sin consumidores. La cabecera `x-attempt` cuenta los reintentos. |
+| `invoicing.requeue` | Por aquí vuelve un mensaje a la cola cuando vence su espera |
+| `invoicing.dlx` → `invoicing.sale-confirmed.dlq` | La DLQ |
+
+Los mensajes de la DLQ conservan el cuerpo y el `message_id`, y llevan `x-failure-category` (`technical`/`invalid`), `x-failure-reason`, `x-attempts-made` y `x-failed-at`.
+
+**Reprocesar la DLQ** (tras corregir la causa):
+- `./scripts/rabbitmq-dlq.sh requeue`, o "Move messages" en la consola;
+- los mensajes vuelven con todos sus intentos;
+- con `status` y `peek` se ve qué hay sin sacarlo.
+
+**Exchanges de los productores:** `infra/rabbitmq/init/create-service-users.sh` también los declara, para que un consumidor pueda enlazar su cola aunque el productor aún no haya arrancado.
+
+## Ver los mensajes en local sin un consumidor
 
 ```bash
 ./scripts/rabbitmq-debug-queue.sh create   # cola temporal debug.sales-events enlazada a sales.events

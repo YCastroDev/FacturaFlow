@@ -16,8 +16,12 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.util.HexFormat;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
@@ -27,6 +31,10 @@ import org.springframework.stereotype.Component;
  * Es determinista y se controla con la observación del documento (factura o nota):
  * <ul>
  *   <li>contiene {@value #SIMULATE_OUTAGE}: lanza la excepción de falla técnica (tiene prioridad);</li>
+ *   <li>contiene {@value #SIMULATE_TEMPORARY_FAILURE}: las primeras {@code temporaryFailures} emisiones de ESE
+ *       documento lanzan la falla técnica y las siguientes funcionan, como un proveedor que vuelve. Sirve para
+ *       ver los reintentos del consumidor de eventos y reprocesar desde la DLQ (ADR 0014). El contador vive en
+ *       memoria (se reinicia con el servicio): es un falso;</li>
  *   <li>contiene {@value #SIMULATE_REJECTION}: la rechaza con un motivo de ejemplo;</li>
  *   <li>en otro caso: la emite con datos claramente falsos.</li>
  * </ul>
@@ -44,6 +52,8 @@ class FakeElectronicInvoiceProvider implements ElectronicInvoiceProvider, Electr
 
     static final String SIMULATE_REJECTION = "SIMULAR_RECHAZO";
     static final String SIMULATE_OUTAGE = "SIMULAR_CAIDA";
+    /** Sin "SIMULAR_CAIDA" como subcadena: las dos palabras no se confunden. */
+    static final String SIMULATE_TEMPORARY_FAILURE = "SIMULAR_FALLA_TEMPORAL";
     static final String FAKE_CUFE_MARK = "0000000000000000";
     static final String NUMBER_PREFIX = "FAKE-";
     static final String CREDIT_NOTE_NUMBER_PREFIX = "FAKE-NC-";
@@ -53,9 +63,17 @@ class FakeElectronicInvoiceProvider implements ElectronicInvoiceProvider, Electr
     private static final Logger LOG = LoggerFactory.getLogger(FakeElectronicInvoiceProvider.class);
 
     private final Clock clock;
+    private final int temporaryFailures;
+    /** Emisiones fallidas por documento con {@value #SIMULATE_TEMPORARY_FAILURE}. */
+    private final ConcurrentMap<UUID, AtomicInteger> temporaryFailuresSoFar = new ConcurrentHashMap<>();
 
-    FakeElectronicInvoiceProvider(Clock clock) {
+    /** @param temporaryFailures cuántas emisiones fallan con {@value #SIMULATE_TEMPORARY_FAILURE} antes de funcionar */
+    FakeElectronicInvoiceProvider(Clock clock, @Value("${invoicing.fake.temporary-failures}") int temporaryFailures) {
+        if (temporaryFailures < 0) {
+            throw new IllegalArgumentException("invoicing.fake.temporary-failures no puede ser negativo");
+        }
         this.clock = clock;
+        this.temporaryFailures = temporaryFailures;
         LOG.warn("Proveedor de facturación electrónica FALSO activo (invoicing.provider=fake): "
                 + "las facturas 'emitidas' no tienen validez ante la DIAN.");
     }
@@ -64,6 +82,9 @@ class FakeElectronicInvoiceProvider implements ElectronicInvoiceProvider, Electr
     public IssuanceResult issue(Invoice invoice) {
         if (simulates(invoice.observation().orElse(""), SIMULATE_OUTAGE)) {
             throw outage(invoice.id().value(), false);
+        }
+        if (failsTemporarily(invoice.observation().orElse(""), invoice.id().value())) {
+            throw temporaryFailure(invoice.id().value(), false);
         }
         return issue(invoice.observation().orElse(""), NUMBER_PREFIX + invoice.referenceCode().value(),
                 invoice.id().value(), invoice.total());
@@ -83,6 +104,9 @@ class FakeElectronicInvoiceProvider implements ElectronicInvoiceProvider, Electr
     public IssuanceResult issue(CreditNote creditNote, Invoice creditedInvoice) {
         if (simulates(creditNote.observation().orElse(""), SIMULATE_OUTAGE)) {
             throw outage(creditNote.id().value(), true);
+        }
+        if (failsTemporarily(creditNote.observation().orElse(""), creditNote.id().value())) {
+            throw temporaryFailure(creditNote.id().value(), true);
         }
         return issue(creditNote.observation().orElse(""), CREDIT_NOTE_NUMBER_PREFIX + creditNote.referenceCode().value(),
                 creditNote.id().value(), creditNote.total());
@@ -123,8 +147,26 @@ class FakeElectronicInvoiceProvider implements ElectronicInvoiceProvider, Electr
         return observation.contains(word);
     }
 
+    /** Cuenta el intento y dice si todavía debe fallar. */
+    private boolean failsTemporarily(String observation, UUID documentId) {
+        if (!simulates(observation, SIMULATE_TEMPORARY_FAILURE)) {
+            return false;
+        }
+        int attempt = temporaryFailuresSoFar.computeIfAbsent(documentId, id -> new AtomicInteger()).incrementAndGet();
+        return attempt <= temporaryFailures;
+    }
+
     private static ElectronicInvoiceProviderUnavailableException outage(UUID documentId, boolean creditNote) {
-        String detail = "caída simulada por el proveedor falso (" + SIMULATE_OUTAGE + ")";
+        return unavailable(documentId, creditNote, "caída simulada por el proveedor falso (" + SIMULATE_OUTAGE + ")");
+    }
+
+    private ElectronicInvoiceProviderUnavailableException temporaryFailure(UUID documentId, boolean creditNote) {
+        return unavailable(documentId, creditNote, "falla temporal simulada por el proveedor falso ("
+                + SIMULATE_TEMPORARY_FAILURE + ", " + temporaryFailures + " intento(s))");
+    }
+
+    private static ElectronicInvoiceProviderUnavailableException unavailable(UUID documentId, boolean creditNote,
+                                                                            String detail) {
         return creditNote
                 ? ElectronicInvoiceProviderUnavailableException.forCreditNote(documentId, detail, null)
                 : new ElectronicInvoiceProviderUnavailableException(documentId, detail, null);

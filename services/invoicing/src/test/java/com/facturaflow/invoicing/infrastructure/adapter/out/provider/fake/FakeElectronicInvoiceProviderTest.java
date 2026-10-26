@@ -36,12 +36,26 @@ class FakeElectronicInvoiceProviderTest {
     private static final Instant NOW = Instant.parse("2026-10-20T15:30:00Z");
 
     private final FakeElectronicInvoiceProvider provider =
-            new FakeElectronicInvoiceProvider(Clock.fixed(NOW, ZoneId.of("America/Bogota")));
+            new FakeElectronicInvoiceProvider(Clock.fixed(NOW, ZoneId.of("America/Bogota")), 2);
 
     private static Invoice invoice(String observation) {
         return Invoice.create(InvoiceId.generate(), new ReferenceCode("VENTA-7"), customer(),
                 List.of(line("2", "50000.00", "10", "19")), PaymentMethod.CASH, PaymentTerms.cash(), ISSUE_DATE,
                 observation);
+    }
+
+    @Test
+    @DisplayName("con SIMULAR_FALLA_TEMPORAL las primeras N emisiones de ESA factura fallan y luego se emite")
+    void temporaryFailureThenIssues() {
+        Invoice flaky = invoice("Venta SIMULAR_FALLA_TEMPORAL");
+        Invoice other = invoice("Otra SIMULAR_FALLA_TEMPORAL");
+
+        assertThatThrownBy(() -> provider.issue(flaky)).isInstanceOf(ElectronicInvoiceProviderUnavailableException.class)
+                .hasMessageContaining("falla temporal simulada");
+        assertThatThrownBy(() -> provider.issue(flaky)).isInstanceOf(ElectronicInvoiceProviderUnavailableException.class);
+        assertThat(provider.issue(flaky)).isInstanceOf(IssuanceResult.Issued.class);
+        assertThatThrownBy(() -> provider.issue(other)).as("el contador es por documento")
+                .isInstanceOf(ElectronicInvoiceProviderUnavailableException.class);
     }
 
     @Test
