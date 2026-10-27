@@ -3,6 +3,7 @@ package com.facturaflow.invoicing.infrastructure.adapter.out.persistence;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.facturaflow.invoicing.InfraImages;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -15,7 +16,6 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
-import org.testcontainers.utility.DockerImageName;
 
 /**
  * La migración V4 sobre datos existentes (ADR 0007): aplica V1–V3, inserta filas como las que
@@ -26,7 +26,7 @@ import org.testcontainers.utility.DockerImageName;
 class V4MigrationTest {
 
     @Container
-    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer(DockerImageName.parse("postgres:18-alpine"));
+    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer(InfraImages.POSTGRES);
 
     private static Flyway flyway(String schema, String target) {
         return Flyway.configure()

@@ -4,6 +4,8 @@
 
 Aceptado — 2026-10-26. Cumple lo anticipado en el [ADR 0001](0001-monorepo.md): "la CI deberá construir y probar solo lo que cambió, usando filtros por ruta".
 
+Nota del 2026-10-27: las imágenes de PostgreSQL y RabbitMQ de los tests salen del compose y el compose dispara los tests (ver la nota al final de la decisión).
+
 ## Contexto
 
 FacturaFlow es un monorepo público en GitHub con tres servicios Spring Boot (invoicing, catalog y sales) y hasta ahora no tenía CI. Todo se probaba en local con `./scripts/mvn.sh`.
@@ -45,10 +47,11 @@ FacturaFlow es un monorepo público en GitHub con tres servicios Spring Boot (in
 | invoicing | `services/invoicing/**`, `docs/events/**`, `infra/rabbitmq/**` |
 | sales | `services/sales/**`, `docs/events/**`, `infra/rabbitmq/**` |
 | catalog | `services/catalog/**` |
-| los tres | `.github/workflows/**`, `.github/scripts/**`; `workflow_dispatch` (manual) prueba los tres siempre |
+| los tres | `.github/workflows/**`, `.github/scripts/**`, `infra/docker-compose.yml`; `workflow_dispatch` (manual) prueba los tres siempre |
 
 - `docs/events/` dispara a invoicing y sales porque sus tests validan los eventos contra esos esquemas (ADR 0013–0015).
 - `infra/rabbitmq/` los dispara porque sus tests ejecutan el script de init real en Testcontainers.
+- `infra/docker-compose.yml` dispara a los tres porque es la fuente de las imágenes de PostgreSQL y RabbitMQ de sus tests (ver la nota de 2026-10-27). También los dispara un cambio del compose que no toque imágenes: se acepta, porque filtrar por contenido sería más frágil que probar de más.
 - **`scripts/mvn.sh` no dispara nada:** la CI no lo usa. Corre `./mvnw` directamente en el runner, con Java 25 de `actions/setup-java`. El mismo Maven (3.9.16, por el wrapper) y el mismo JDK que en local.
 
 **Concurrencia:** en una rama de PR, un push nuevo cancela la ejecución anterior. En `main` no se cancela, porque cada commit publica su imagen.
@@ -100,12 +103,13 @@ En un PR corre dos veces (push y pull_request). Cuesta segundos y deja el check 
 - **Cadencia:** semanal (lunes 06:00, Bogotá), como máximo 5 PRs abiertos de Maven.
 - **Un PR para los tres servicios:** gracias a `directories` + grupos, un mismo cambio (p. ej. Spring Boot) llega en UN PR, que la CI prueba en los tres.
 
+**Las imágenes de los tests (PostgreSQL y RabbitMQ) sí quedan cubiertas:** los tests las leen del compose (nota de 2026-10-27), así que el PR de `docker-compose` las actualiza y la CI prueba la versión nueva.
+
 **No cubre:**
-- las imágenes fijadas en el código de los tests (`postgres:18-alpine` y `rabbitmq:4.3.6-management-alpine` en `TestcontainersConfiguration`);
 - la de gitleaks (hook, script y workflow);
 - la de Maven en `scripts/mvn.sh`.
 
-Al actualizar una de esas, se buscan todas sus apariciones (`grep -rn "rabbitmq:4.3.6"`).
+Al actualizar una de esas, se buscan todas sus apariciones (`grep -rn "gitleaks:v8"`).
 
 ### 6. Calidad: SonarCloud con cobertura de JaCoCo, un proyecto por servicio
 
@@ -164,6 +168,30 @@ El repo es público y no tenía licencia: el código era visible pero, legalment
   - la construcción de las imágenes.
 - **Lo que no se puede simular en local** (permisos del token, caché `gha`, GHCR, paths-filter contra la API) se revisa en la primera ejecución (README).
 
+
+## Nota (2026-10-27): una sola fuente para las imágenes de infraestructura de los tests
+
+**Problema.** El PR de Dependabot que subía RabbitMQ de 4.3.6 a 4.4.0 en `infra/docker-compose.yml` pasó en verde sin probar nada:
+- el filtro de rutas no incluía `infra/docker-compose.yml`, así que los tres servicios quedaron `skipped`;
+- aunque hubieran corrido, los tests fijaban sus propias imágenes en el código (8 `DockerImageName.parse(...)`), que Dependabot no ve: no habrían probado la versión del compose.
+
+**Opciones consideradas.**
+
+| Opción | Por qué no / por qué sí |
+|---|---|
+| A. El compose es la fuente; los tests leen `image:` de él | **Elegida.** Un solo archivo, que Dependabot (`docker-compose`) ya vigila; los tests prueban la imagen que se despliega; los tests ya leen otros archivos de `infra/` |
+| B. Un Dockerfile por imagen en `infra/images/` | El compose construiría en vez de descargar, y los módulos de Testcontainers exigirían `asCompatibleSubstituteFor` |
+| C. Un archivo de variables (`images.env`) interpolado | Dependabot no actualiza ni archivos `.env` ni `image: ${VAR}` |
+| D. Mantener las copias + un test de coherencia | No es una sola fuente: cada PR de Dependabot saldría en rojo y habría que completarlo a mano |
+
+**Decisión.**
+- **`InfraImages`** (test, en el paquete raíz de cada servicio; copia deliberada en los tres, ADR 0001) lee `../../infra/docker-compose.yml` con SnakeYAML (`SafeConstructor`, dependencia de test con la versión de Spring Boot) y expone `POSTGRES` (los tres) y `RABBITMQ` (invoicing y sales). Todo `PostgreSQLContainer` y `RabbitMQContainer` de los tests la usa.
+- **`InfraImagesTest`** exige que toda imagen del compose fije al menos `mayor.menor` (nunca `latest`) y que los servicios con la misma imagen (`rabbitmq` y `rabbitmq-init`) usen la misma versión: Dependabot cambia las dos líneas en el mismo PR.
+- **PostgreSQL fijado a un parche** (`postgres:18.6-alpine`, el mismo digest que `18-alpine` ese día): con `18-alpine` los parches entraban sin pasar por la CI y los builds no eran reproducibles. Dependabot propone los parches nuevos.
+- **Filtro de rutas:** `infra/docker-compose.yml` dispara a los tres servicios (catalog también usa PostgreSQL).
+
+**En producción** se fijaría además el digest (`imagen:tag@sha256:…`, que Dependabot también actualiza) y la lista de imágenes vendría de un catálogo central de la plataforma.
+
 ## Cómo se haría en producción
 
 - **CD:**
@@ -191,5 +219,6 @@ El repo es público y no tenía licencia: el código era visible pero, legalment
 - **Rutas escritas a mano:** si un servicio empieza a depender de otra carpeta, hay que agregarla en `ci.yml` (y en esta tabla).
 - **Una dependencia de terceros** (`dorny/paths-filter`), fijada por SHA.
 - **Una sola insignia de CI** en vez de una por servicio.
-- **Versiones fijadas que Dependabot no ve** (las imágenes de los tests y de gitleaks): hay que revisarlas a mano.
+- **Versiones fijadas que Dependabot no ve** (gitleaks y la imagen de Maven de `scripts/mvn.sh`): hay que revisarlas a mano.
+- **Los tests dependen de la estructura del compose:** los servicios `postgres` y `rabbitmq` deben declarar `image:` (si no, `InfraImages` falla con un mensaje claro).
 - **Pasos manuales:** SonarCloud, la visibilidad de los paquetes de GHCR y el ruleset de `main` (README).

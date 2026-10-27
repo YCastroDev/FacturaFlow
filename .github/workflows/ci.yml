@@ -47,6 +47,10 @@ jobs:
             ci: &ci
               - '.github/workflows/**'
               - '.github/scripts/**'
+            infra-images: &infra-images
+              # Fuente de las imágenes de PostgreSQL y RabbitMQ de los tests (InfraImages): un PR de Dependabot que
+              # las sube debe probar los servicios con la versión nueva.
+              - 'infra/docker-compose.yml'
             events: &events
               # Contratos de eventos (los validan los tests) y el script de init de RabbitMQ (los tests lo ejecutan
               # en Testcontainers para conectarse con los usuarios reales).
@@ -54,14 +58,17 @@ jobs:
               - 'infra/rabbitmq/**'
             invoicing:
               - *ci
+              - *infra-images
               - *events
               - 'services/invoicing/**'
             sales:
               - *ci
+              - *infra-images
               - *events
               - 'services/sales/**'
             catalog:
               - *ci
+              - *infra-images
               - 'services/catalog/**'
 
   invoicing:

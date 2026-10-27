@@ -1,7 +1,8 @@
 # Actualizaciones de dependencias (ADR 0016): semanales y AGRUPADAS, para no recibir decenas de PRs. Un mismo cambio
 # en los tres servicios (p. ej. Spring Boot o Testcontainers) llega en UN solo PR, que la CI prueba en los tres.
-# No cubre las imágenes fijadas en el código de los tests (postgres, rabbitmq) ni la de gitleaks en los scripts y
-# el workflow: se revisan a mano (lista en el ADR 0016).
+# Las imágenes de PostgreSQL y RabbitMQ de los tests salen de infra/docker-compose.yml (InfraImages): el PR de
+# docker-compose las actualiza y dispara los tests. No cubre la de gitleaks en los scripts y el workflow ni la de
+# Maven en scripts/mvn.sh: se revisan a mano (lista en el ADR 0016).
 version: 2
 
 updates:
