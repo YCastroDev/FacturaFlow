@@ -114,6 +114,22 @@ class CustomerTest {
             assertThatThrownBy(() -> withLocation(null, "D".repeat(251), null, null))
                     .isInstanceOf(CatalogRuleException.class).hasMessageContaining("250");
         }
+
+        @ParameterizedTest(name = "''{0}''")
+        @ValueSource(strings = {"ana", "ana@", "ana@example", "ana example@mail.com", "@example.com", "ana@mail..com",
+                "ana@.mail.com", "ana@mail.com.", "ana@b@mail.com"})
+        @DisplayName("si viene un email, debe tener formato válido (copia de la regla de invoicing)")
+        void rejectsInvalidEmail(String email) {
+            assertThatThrownBy(() -> withLocation(null, null, null, email))
+                    .isInstanceOf(CatalogRuleException.class).hasMessageContaining("email");
+        }
+
+        @ParameterizedTest(name = "''{0}''")
+        @ValueSource(strings = {"ana@mail.com", "ana.perez+ventas@empresa.com.co", "a@b.c"})
+        @DisplayName("un email con dominio y subdominios bien formados se acepta")
+        void acceptsValidEmail(String email) {
+            assertThat(withLocation(null, null, null, email).email()).isEqualTo(email);
+        }
     }
 
     @Nested

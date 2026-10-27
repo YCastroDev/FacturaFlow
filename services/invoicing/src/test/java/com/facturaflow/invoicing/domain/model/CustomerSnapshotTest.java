@@ -128,11 +128,19 @@ class CustomerSnapshotTest {
     }
 
     @ParameterizedTest(name = "''{0}''")
-    @ValueSource(strings = {"ana", "ana@", "ana@example", "ana example@mail.com", "@example.com"})
+    @ValueSource(strings = {"ana", "ana@", "ana@example", "ana example@mail.com", "@example.com", "ana@mail..com",
+            "ana@.mail.com", "ana@mail.com.", "ana@b@mail.com"})
     @DisplayName("si viene un email, debe tener formato válido")
     void rejectsInvalidEmail(String email) {
         assertThatThrownBy(() -> CustomerSnapshot.person(CC, "Ana", NOT_RESPONSIBLE, email))
                 .isInstanceOf(InvalidCustomerException.class)
                 .hasMessageContaining("email");
+    }
+
+    @ParameterizedTest(name = "''{0}''")
+    @ValueSource(strings = {"ana@mail.com", "ana.perez+ventas@empresa.com.co", "a@b.c"})
+    @DisplayName("un email con dominio y subdominios bien formados se acepta")
+    void acceptsValidEmail(String email) {
+        assertThat(CustomerSnapshot.person(CC, "Ana", NOT_RESPONSIBLE, email).optionalEmail()).contains(email);
     }
 }
