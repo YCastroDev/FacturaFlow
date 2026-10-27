@@ -36,7 +36,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
         "spring.rabbitmq.host=127.0.0.1", "spring.rabbitmq.port=1", "spring.rabbitmq.password=sin-broker",
-        "sales.outbox.poll-interval=200ms"})
+        "sales.outbox.poll-interval=200ms", "sales.catalog.read-timeout=10s"})   // holgado: no prueba timeouts
 @AutoConfigureRestTestClient
 @Import(BrokerDownEndToEndTest.PostgresOnly.class)
 class BrokerDownEndToEndTest {

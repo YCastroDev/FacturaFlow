@@ -1,5 +1,8 @@
 package com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus;
 
+import static com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus.FactusTestData.GENEROUS_READ_TIMEOUT;
+import static com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus.FactusTestData.SHORT_READ_TIMEOUT;
+import static com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus.FactusTestData.SLOW_RESPONSE;
 import static com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus.FactusTestData.cashInvoice;
 import static com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus.FactusTestData.fixture;
 import static com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus.FactusTestData.issuedCreditInvoice;
@@ -38,13 +41,17 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.extension.RegisterExtension;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 
 /**
  * Reintentos, circuit breaker y limitador de las llamadas a Factus (ADR 0010), con el adaptador real
  * contra WireMock (escenarios con estado). Los tiempos son de milisegundos, configurados solo aquí,
- * para que todo corra en segundos.
+ * para que todo corra en segundos. Ninguna aserción depende de que el runner sea rápido: el circuito
+ * abierto dura {@link #LONG_OPEN_WAIT} (salvo en el test que espera el semiabierto, donde dormir de más
+ * es inocuo) y los timeouts tienen segundos de margen ({@link FactusTestData#GENEROUS_READ_TIMEOUT}).
  */
 @ExtendWith(OutputCaptureExtension.class)
 class FactusResilienceTest {
@@ -52,7 +59,10 @@ class FactusResilienceTest {
     private static final String BILLS = FactusClient.VALIDATE_PATH;
     private static final String NOTES = FactusClient.CREDIT_NOTE_VALIDATE_PATH;
     private static final String TOKEN = FactusTokenEndpoint.PATH;
-    private static final Duration OPEN_WAIT = Duration.ofMillis(400);
+    /** Mientras dure, una pausa del runner no puede pasar el circuito a semiabierto a mitad de un test. */
+    private static final Duration LONG_OPEN_WAIT = Duration.ofSeconds(60);
+    /** Solo para el test que ESPERA el semiabierto (dormir de más ahí no cambia el resultado). */
+    private static final Duration SHORT_OPEN_WAIT = Duration.ofMillis(400);
 
     @RegisterExtension
     static final WireMockExtension FACTUS = WireMockExtension.newInstance()
@@ -64,13 +74,21 @@ class FactusResilienceTest {
     private final SimpleMeterRegistry meters = new SimpleMeterRegistry();
 
     /** 3 intentos con esperas de ms; circuito que abre con 4 llamadas y 50 % de fallas. */
-    private static Resilience fast(RateLimiterSettings rateLimiter) {
+    private static Resilience fast(RateLimiterSettings rateLimiter, Duration openWait) {
         return new Resilience(new RetrySettings(3, Duration.ofMillis(20), 2.0, 0.5, Duration.ofSeconds(2)),
-                new CircuitBreakerSettings(4, 4, 50, OPEN_WAIT, 1), rateLimiter);
+                new CircuitBreakerSettings(4, 4, 50, openWait, 1), rateLimiter);
+    }
+
+    private static Resilience fast(RateLimiterSettings rateLimiter) {
+        return fast(rateLimiter, LONG_OPEN_WAIT);
+    }
+
+    private static Resilience fast(Duration openWait) {
+        return fast(new RateLimiterSettings(1000, Duration.ofSeconds(1), Duration.ZERO), openWait);
     }
 
     private static Resilience fast() {
-        return fast(new RateLimiterSettings(1000, Duration.ofSeconds(1), Duration.ZERO));
+        return fast(LONG_OPEN_WAIT);
     }
 
     private FactusResilience resilience;
@@ -86,7 +104,7 @@ class FactusResilienceTest {
     }
 
     private void start(Resilience settings) {
-        start(settings, Duration.ofSeconds(2));
+        start(settings, GENEROUS_READ_TIMEOUT);
     }
 
     private static ResponseDefinitionBuilder json(int status, String body) {
@@ -161,8 +179,8 @@ class FactusResilienceTest {
         @Test
         @DisplayName("un timeout también se reintenta (Factus es idempotente por reference_code)")
         void timeoutRetried() {
-            start(fast(), Duration.ofMillis(300));
-            respondInOrder(BILLS, validatedCash().withFixedDelay(1000), validatedCash());
+            start(fast(), SHORT_READ_TIMEOUT);
+            respondInOrder(BILLS, validatedCash().withFixedDelay((int) SLOW_RESPONSE.toMillis()), validatedCash());
 
             assertThat(provider.issue(cash())).isInstanceOf(IssuanceResult.Issued.class);
             assertThat(requests(BILLS)).isEqualTo(2);
@@ -260,8 +278,9 @@ class FactusResilienceTest {
             assertThat(requests(BILLS)).isEqualTo(before);
             assertThat(requests(NOTES)).isZero();
             assertThat(error.reason()).isEqualTo(Reason.CIRCUIT_OPEN);
+            // Lo que falta de los 60 s (el redondeo hacia arriba se prueba aparte: retryAfterRoundsUp).
             assertThat(error.retryAfter()).hasValueSatisfying(wait ->
-                    assertThat(wait).isBetween(Duration.ofSeconds(1), Duration.ofSeconds(1)));   // 400 ms → 1 s
+                    assertThat(wait).isBetween(LONG_OPEN_WAIT.minusSeconds(5), LONG_OPEN_WAIT));
             assertThat(noteError.reason()).isEqualTo(Reason.CIRCUIT_OPEN);
             assertThat(noteError.document()).isEqualTo(ElectronicInvoiceProviderUnavailableException.Document.CREDIT_NOTE);
             assertThat(output).contains("Circuito de Factus: CLOSED → OPEN");
@@ -272,16 +291,24 @@ class FactusResilienceTest {
         @Test
         @DisplayName("tras la espera pasa a semiabierto y, si Factus responde bien, se cierra")
         void halfOpenThenClosed(CapturedOutput output) throws InterruptedException {
-            start(fast());
+            start(fast(SHORT_OPEN_WAIT));
             respondInOrder(BILLS, error500(), error500(), error500(), validatedCash());
             assertThatThrownBy(() -> provider.issue(cash()));
             assertThat(resilience.circuitBreaker().getState()).isEqualTo(CircuitBreaker.State.OPEN);
 
-            Thread.sleep(OPEN_WAIT.plusMillis(100).toMillis());
+            Thread.sleep(SHORT_OPEN_WAIT.plusMillis(100).toMillis());
 
             assertThat(provider.issue(cash())).isInstanceOf(IssuanceResult.Issued.class);
             assertThat(resilience.circuitBreaker().getState()).isEqualTo(CircuitBreaker.State.CLOSED);
             assertThat(output).contains("OPEN → HALF_OPEN", "HALF_OPEN → CLOSED");
+        }
+
+        @ParameterizedTest(name = "faltan {0} ms → Retry-After de {1} s")
+        @CsvSource({"400, 1", "1000, 1", "1001, 2", "29999, 30", "0, 1", "-250, 1"})
+        @DisplayName("el Retry-After del circuito abierto son segundos enteros hacia arriba, nunca menos de 1 s")
+        void retryAfterRoundsUp(long remainingMillis, long expectedSeconds) {
+            assertThat(FactusResilience.wholeSecondsRoundedUp(Duration.ofMillis(remainingMillis)))
+                    .isEqualTo(Duration.ofSeconds(expectedSeconds));
         }
 
         @Test
@@ -312,7 +339,8 @@ class FactusResilienceTest {
             long started = System.nanoTime();
             ElectronicInvoiceProviderUnavailableException error = unavailable(() -> provider.issue(cash()));
 
-            assertThat(Duration.ofNanos(System.nanoTime() - started)).isLessThan(Duration.ofSeconds(1));
+            // Esperó los 100 ms del limitador, no el periodo de 30 s (margen amplio para runners lentos).
+            assertThat(Duration.ofNanos(System.nanoTime() - started)).isLessThan(Duration.ofSeconds(10));
             assertThat(error.reason()).isEqualTo(Reason.RATE_LIMITED);
             assertThat(error.retryAfter()).contains(Duration.ofSeconds(30));
             assertThat(requests(BILLS)).isEqualTo(1);

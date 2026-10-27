@@ -135,7 +135,11 @@ final class CatalogResilience {
     private Duration remainingOpenTime() {
         long openedAt = openedAtNanos.get();
         Duration elapsed = openedAt == 0 ? Duration.ZERO : Duration.ofNanos(System.nanoTime() - openedAt);
-        Duration remaining = waitInOpenState.minus(elapsed);
+        return wholeSecondsRoundedUp(waitInOpenState.minus(elapsed));
+    }
+
+    /** Segundos enteros para {@code Retry-After}: redondeo hacia arriba y nunca menos de 1 s (ni 0 ni negativo). */
+    static Duration wholeSecondsRoundedUp(Duration remaining) {
         return Duration.ofSeconds(Math.max(1, (remaining.toMillis() + 999) / 1000));
     }
 }

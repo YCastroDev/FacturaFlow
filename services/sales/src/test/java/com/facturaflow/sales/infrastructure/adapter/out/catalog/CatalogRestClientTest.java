@@ -39,16 +39,23 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 /**
  * El adaptador de catalog contra un catalog falso (WireMock) que responde como el real (ADR 0011).
- * Valores de resiliencia de producción, salvo el timeout de lectura (corto para que el test sea rápido).
+ * Valores de resiliencia de producción, salvo el timeout de lectura: holgado en los tests que no tratan de
+ * tiempos (en un runner lento, un timeout justo convierte un 503 en un timeout) y corto, frente a una
+ * respuesta mucho más lenta, solo en el que prueba el timeout.
  */
 class CatalogRestClientTest {
 
     private static final String NIT_PATH = "/api/v1/customers/by-document/NIT/890903938";
     private static final String LOOKUP_PATH = "/api/v1/products/lookup";
     private static final CustomerDocumentRef NIT = new CustomerDocumentRef(DocumentType.NIT, "890903938");
+    private static final Duration GENEROUS_READ_TIMEOUT = Duration.ofSeconds(10);
+    private static final Duration SHORT_READ_TIMEOUT = Duration.ofSeconds(1);
+    private static final Duration SLOW_RESPONSE = Duration.ofSeconds(5);
 
     static final String CUSTOMER_JSON = """
             { "id": "c0000000-0000-4000-8000-000000000001", "documentType": "NIT", "documentNumber": "890903938",
@@ -78,7 +85,11 @@ class CatalogRestClientTest {
     }
 
     private CatalogRestClient clientFor(URI baseUrl) {
-        CatalogProperties properties = properties(baseUrl, Duration.ofMillis(300));
+        return clientFor(baseUrl, GENEROUS_READ_TIMEOUT);
+    }
+
+    private CatalogRestClient clientFor(URI baseUrl, Duration readTimeout) {
+        CatalogProperties properties = properties(baseUrl, readTimeout);
         resilience = new CatalogResilience(properties, CircuitBreakerRegistry.ofDefaults(), RetryRegistry.ofDefaults());
         return new CatalogRestClient(new CatalogHttp(properties, resilience));
     }
@@ -191,12 +202,16 @@ class CatalogRestClientTest {
     @Test
     @DisplayName("timeout de lectura: no se reintenta (ya gastó el tiempo) y es 503")
     void readTimeoutIsNotRetried() {
-        catalog.stubFor(get(NIT_PATH).willReturn(okJson(CUSTOMER_JSON.formatted("true")).withFixedDelay(1500)));
+        CatalogRestClient impatient = clientFor(URI.create(catalog.baseUrl()), SHORT_READ_TIMEOUT);
+        catalog.stubFor(get(NIT_PATH).willReturn(okJson(CUSTOMER_JSON.formatted("true"))
+                .withFixedDelay((int) SLOW_RESPONSE.toMillis())));
 
         long started = System.nanoTime();
-        assertThatThrownBy(() -> client.findCustomer(NIT)).isInstanceOf(CatalogUnavailableException.class);
+        assertThatThrownBy(() -> impatient.findCustomer(NIT)).isInstanceOf(CatalogUnavailableException.class)
+                .hasMessageContaining("HttpTimeoutException");
 
-        assertThat(Duration.ofNanos(System.nanoTime() - started)).isLessThan(Duration.ofMillis(1200));
+        // No esperó la respuesta lenta (el "sin reintento" lo prueba verify).
+        assertThat(Duration.ofNanos(System.nanoTime() - started)).isLessThan(SLOW_RESPONSE.minusSeconds(1));
         catalog.verify(1, getRequestedFor(urlEqualTo(NIT_PATH)));
     }
 
@@ -231,6 +246,14 @@ class CatalogRestClientTest {
                 });
         assertThat(catalog.getAllServeEvents()).isEmpty();
         assertThat(resilience.snapshot()).containsEntry("circuitBreaker", "OPEN").containsKey("retryAfterSeconds");
+    }
+
+    @ParameterizedTest(name = "faltan {0} ms → Retry-After de {1} s")
+    @CsvSource({"400, 1", "1000, 1", "1001, 2", "29999, 30", "0, 1", "-250, 1"})
+    @DisplayName("el Retry-After del circuito abierto son segundos enteros hacia arriba, nunca menos de 1 s")
+    void retryAfterRoundsUp(long remainingMillis, long expectedSeconds) {
+        assertThat(CatalogResilience.wholeSecondsRoundedUp(Duration.ofMillis(remainingMillis)))
+                .isEqualTo(Duration.ofSeconds(expectedSeconds));
     }
 
     @Test

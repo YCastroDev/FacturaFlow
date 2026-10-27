@@ -53,6 +53,15 @@ final class FactusTestData {
     static final int CREDIT_NOTE_RANGE = 390;
     static final LocalDate NOTE_DATE = LocalDate.of(2026, 10, 22);
 
+    /**
+     * Timeout de lectura de los tests que NO prueban timeouts: holgado, para que un runner lento no convierta
+     * una respuesta normal en un timeout. Solo los que prueban el timeout usan {@link #SHORT_READ_TIMEOUT}
+     * frente a una respuesta {@link #SLOW_RESPONSE}, con segundos de margen hacia los dos lados.
+     */
+    static final Duration GENEROUS_READ_TIMEOUT = Duration.ofSeconds(10);
+    static final Duration SHORT_READ_TIMEOUT = Duration.ofSeconds(1);
+    static final Duration SLOW_RESPONSE = Duration.ofSeconds(5);
+
     private FactusTestData() {
     }
 
@@ -131,7 +140,7 @@ final class FactusTestData {
     }
 
     static FactusProperties properties(String baseUrl) {
-        return properties(baseUrl, false, null, Duration.ofSeconds(2));
+        return properties(baseUrl, false, null, GENEROUS_READ_TIMEOUT);
     }
 
     static FactusProperties properties(String baseUrl, boolean sendEmail, Integer numberingRangeId,
