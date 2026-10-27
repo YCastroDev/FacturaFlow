@@ -20,8 +20,9 @@ final class SaleTotalsCheck {
         if (sales == null) {
             return true;
         }
-        boolean same = equal(sales.subtotal(), invoice.subtotal()) && equal(sales.totalDiscount(), invoice.totalDiscount())
-                && equal(sales.totalTax(), invoice.totalTax()) && equal(sales.total(), invoice.total());
+        boolean same = sameAmount(sales.subtotal(), invoice.subtotal())
+                && sameAmount(sales.totalDiscount(), invoice.totalDiscount())
+                && sameAmount(sales.totalTax(), invoice.totalTax()) && sameAmount(sales.total(), invoice.total());
         if (!same) {
             LOG.warn("Totales distintos entre sales e invoicing para la venta {} (factura {}); la factura usa los de "
                             + "invoicing. sales: subtotal={}, descuento={}, impuestos={}, total={} | invoicing: "
@@ -34,7 +35,7 @@ final class SaleTotalsCheck {
         return same;
     }
 
-    private static boolean equal(BigDecimal sales, Money invoicing) {
+    private static boolean sameAmount(BigDecimal sales, Money invoicing) {
         return sales != null && sales.compareTo(invoicing.amount()) == 0;
     }
 }

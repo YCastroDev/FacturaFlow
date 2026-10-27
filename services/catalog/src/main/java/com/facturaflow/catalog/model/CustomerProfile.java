@@ -29,7 +29,9 @@ public record CustomerProfile(PersonType personType, String companyName, String 
     public static final int MAX_ADDRESS_LENGTH = 250;
     public static final int MAX_EMAIL_LENGTH = 254;
 
-    private static final Pattern EMAIL = Pattern.compile("[^\\s@]+@[^\\s@]+\\.[^\\s@]+");
+    // Cuantificadores posesivos y etiquetas del dominio sin punto: tiempo lineal (sin backtracking) y sin
+    // etiquetas vacías. Copia de invoicing (CustomerSnapshot, ADR 0011).
+    private static final Pattern EMAIL = Pattern.compile("[^\\s@]++@[^\\s@.]++(?:\\.[^\\s@.]++)++");
     private static final Pattern MUNICIPALITY = Pattern.compile("[0-9]{5}");
     private static final Pattern PHONE = Pattern.compile("\\+?[0-9]{7,15}");
     private static final Pattern PHONE_SEPARATORS = Pattern.compile("[\\s().-]");

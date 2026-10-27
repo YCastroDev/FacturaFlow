@@ -5,14 +5,12 @@
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
 ![Java 25](https://img.shields.io/badge/Java-25-orange.svg)
 ![Spring Boot 4.1](https://img.shields.io/badge/Spring%20Boot-4.1-6DB33F.svg)
-<!-- SonarCloud (ADR 0016): descomentar cuando existan los proyectos en sonarcloud.io, para no mostrar insignias rotas.
 [![Quality Gate invoicing](https://sonarcloud.io/api/project_badges/measure?project=ycastrodev_facturaflow-invoicing&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ycastrodev_facturaflow-invoicing)
 [![Cobertura invoicing](https://sonarcloud.io/api/project_badges/measure?project=ycastrodev_facturaflow-invoicing&metric=coverage)](https://sonarcloud.io/summary/new_code?id=ycastrodev_facturaflow-invoicing)
 [![Quality Gate catalog](https://sonarcloud.io/api/project_badges/measure?project=ycastrodev_facturaflow-catalog&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ycastrodev_facturaflow-catalog)
 [![Cobertura catalog](https://sonarcloud.io/api/project_badges/measure?project=ycastrodev_facturaflow-catalog&metric=coverage)](https://sonarcloud.io/summary/new_code?id=ycastrodev_facturaflow-catalog)
 [![Quality Gate sales](https://sonarcloud.io/api/project_badges/measure?project=ycastrodev_facturaflow-sales&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ycastrodev_facturaflow-sales)
 [![Cobertura sales](https://sonarcloud.io/api/project_badges/measure?project=ycastrodev_facturaflow-sales&metric=coverage)](https://sonarcloud.io/summary/new_code?id=ycastrodev_facturaflow-sales)
--->
 
 Plataforma de ventas para pymes colombianas que emite facturas electrónicas ante la DIAN a través de la API de [Factus](https://www.factus.com.co/). Proyecto de portafolio construido con microservicios en Spring Boot.
 

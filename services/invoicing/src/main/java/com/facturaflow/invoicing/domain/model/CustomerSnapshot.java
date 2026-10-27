@@ -22,7 +22,9 @@ public record CustomerSnapshot(IdentificationDocument identification, PersonType
                                String address, PhoneNumber phone) {
 
     public static final int MAX_ADDRESS_LENGTH = 250;
-    private static final Pattern EMAIL = Pattern.compile("[^\\s@]+@[^\\s@]+\\.[^\\s@]+");
+    // Cuantificadores posesivos y etiquetas del dominio sin punto: tiempo lineal (sin backtracking) y sin
+    // etiquetas vacías. Copia en catalog (CustomerProfile, ADR 0011).
+    private static final Pattern EMAIL = Pattern.compile("[^\\s@]++@[^\\s@.]++(?:\\.[^\\s@.]++)++");
     private static final int MAX_EMAIL_LENGTH = 254;
 
     public CustomerSnapshot {
