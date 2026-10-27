@@ -6,7 +6,7 @@ name: facturaflow
 
 services:
   postgres:
-    image: postgres:18-alpine
+    image: postgres:18.6-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_SUPERUSER:?Define POSTGRES_SUPERUSER en .env}
       POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?Define POSTGRES_SUPERUSER_PASSWORD en .env}

@@ -3,6 +3,7 @@ package com.facturaflow.invoicing.infrastructure.adapter.out.persistence;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.facturaflow.invoicing.InfraImages;
 import java.util.UUID;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.DisplayName;
@@ -12,7 +13,6 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
-import org.testcontainers.utility.DockerImageName;
 
 /**
  * La migración V6 (ADR 0009) sobre datos existentes: aplica V1–V5, inserta una factura ISSUED como
@@ -25,7 +25,7 @@ class V6MigrationTest {
     private static final String CUFE = "ab".repeat(48);
 
     @Container
-    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer(DockerImageName.parse("postgres:18-alpine"));
+    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer(InfraImages.POSTGRES);
 
     private static Flyway flyway(String target) {
         return Flyway.configure()

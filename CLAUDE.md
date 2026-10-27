@@ -14,7 +14,7 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 | Java | 25 (LTS) — Eclipse Temurin |
 | Spring Boot | 4.1.1 |
 | Maven | 3.9.16 vía Maven Wrapper (`mvnw`) |
-| PostgreSQL | 18 (`postgres:18-alpine`) |
+| PostgreSQL | 18 (`postgres:18.6-alpine`, parche fijado) |
 | Migraciones | Flyway |
 | Tests de integración | Testcontainers 2.x |
 | Tests de arquitectura | ArchUnit 1.5.1 |
@@ -22,7 +22,7 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 | Escaneo de secretos | gitleaks v8.30.1 (vía Docker) |
 | Mock HTTP (tests del adaptador de Factus) | WireMock 3.13.1 (`wiremock-standalone`) |
 | Resiliencia (llamadas a Factus) | Resilience4j 2.4.0 (`resilience4j-spring-boot4`, versión fijada en el pom) |
-| Mensajería | RabbitMQ 4.3.6 (`rabbitmq:4.3.6-management-alpine`, en compose y Testcontainers; plugins de la imagen + shovel) + `spring-boot-starter-amqp` (sales y invoicing) |
+| Mensajería | RabbitMQ 4.3.6 (`rabbitmq:4.3.6-management-alpine`, en compose y Testcontainers, que la lee del compose; plugins de la imagen + shovel) + `spring-boot-starter-amqp` (sales y invoicing) |
 | Validación de contratos de eventos (tests) | `com.networknt:json-schema-validator` 3.0.8 (Jackson 3; solo test) |
 
 ## Estructura
@@ -184,12 +184,13 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 ## Integración continua (ADR 0016)
 
 - `ci.yml` SIEMPRE arranca; el job `changes` (paths-filter) decide qué servicios probar con `_service.yml`; `ci-result` es el ÚNICO check obligatorio (junto con `gitleaks`). Nunca usar `on.paths` en un workflow cuyo check sea obligatorio: quedaría "Pending" y bloquearía el PR.
-- Rutas por servicio en `ci.yml`: invoicing y sales también por `docs/events/**` e `infra/rabbitmq/**`; todos por `.github/workflows/**` y `.github/scripts/**`. **Si un servicio empieza a depender de otra carpeta, agregarla al filtro** (y a la tabla del ADR 0016).
+- Rutas por servicio en `ci.yml`: invoicing y sales también por `docs/events/**` e `infra/rabbitmq/**`; todos por `.github/workflows/**`, `.github/scripts/**` e `infra/docker-compose.yml`. **Si un servicio empieza a depender de otra carpeta, agregarla al filtro** (y a la tabla del ADR 0016).
 - La CI corre `./mvnw -B -ntp verify` en el runner (no `scripts/mvn.sh`): todo test debe pasar sin `.env` ni credenciales; los que las necesitan llevan `@Tag("sandbox")`.
 - Acciones fijadas por SHA completo con `# vX.Y.Z`; permisos mínimos por job; `persist-credentials: false`; nada interpolado dentro de `run:` (va por `env`). Validar con `docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12`.
 - Ningún secreto en los workflows. SonarCloud usa el secreto opcional `SONAR_TOKEN`: sin él el paso se omite (la CI no debe fallar). Las propiedades `sonar.*` y JaCoCo viven en cada pom.
 - Imágenes en GHCR solo desde `main` (`sha-<7>` y `latest`), con el `GITHUB_TOKEN`.
-- Dependabot no ve las imágenes fijadas en `TestcontainersConfiguration` (postgres, rabbitmq), la de gitleaks (hook, script, workflow) ni la de Maven en `scripts/mvn.sh`: al cambiar una, cambiar todas sus apariciones.
+- **Imágenes de infraestructura de los tests: una sola fuente, `infra/docker-compose.yml`.** Los tests nunca fijan `postgres:`/`rabbitmq:` en el código: usan `InfraImages.POSTGRES`/`RABBITMQ` (copia en cada servicio, lee el compose); `InfraImagesTest` exige versiones fijadas (mínimo `mayor.menor`, nunca `latest`) e iguales para la misma imagen. Así Dependabot (`docker-compose`) las actualiza y el PR dispara los tests.
+- Dependabot no ve la imagen de gitleaks (hook, script, workflow) ni la de Maven en `scripts/mvn.sh`: al cambiar una, cambiar todas sus apariciones.
 - `main` protegida (ruleset): se trabaja con ramas y PRs (`gh pr create`, `gh pr merge --squash`); los commits los hace el usuario.
 
 ## Convenciones

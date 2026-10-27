@@ -18,7 +18,7 @@ import org.testcontainers.utility.MountableFile;
  * Levanta un PostgreSQL y un RabbitMQ desechables para los tests. {@link ServiceConnection} hace que Spring use
  * la URL y credenciales de PostgreSQL en lugar de las variables de entorno de application.yml.
  *
- * <p>RabbitMQ usa la misma imagen que docker compose y se configura con el MISMO script de init
+ * <p>RabbitMQ usa la misma imagen que docker compose ({@link InfraImages}) y se configura con el MISMO script de init
  * ({@code infra/rabbitmq/init/create-service-users.sh}): vhost {@code facturaflow}, exchange {@code sales.events} y
  * los usuarios {@code sales} e {@code invoicing} con sus permisos mínimos. Sales se conecta como {@code sales}, así
  * los tests fallan si la topología necesita un permiso que el usuario real no tiene (ADR 0015); para publicar como
@@ -29,7 +29,7 @@ import org.testcontainers.utility.MountableFile;
 public class TestcontainersConfiguration {
 
     public static final String INVOICING_EVENTS = "invoicing.events";
-    public static final DockerImageName RABBITMQ_IMAGE = DockerImageName.parse("rabbitmq:4.3.6-management-alpine");
+    public static final DockerImageName RABBITMQ_IMAGE = InfraImages.RABBITMQ;
     public static final String VHOST = "facturaflow";
     private static final String ADMIN_PASSWORD = "admin-de-prueba";
     private static final String SALES_PASSWORD = "sales-de-prueba";
@@ -38,7 +38,7 @@ public class TestcontainersConfiguration {
     @Bean
     @ServiceConnection
     PostgreSQLContainer postgresContainer() {
-        return new PostgreSQLContainer(DockerImageName.parse("postgres:18-alpine"));
+        return new PostgreSQLContainer(InfraImages.POSTGRES);
     }
 
     @Bean

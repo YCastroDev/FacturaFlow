@@ -103,6 +103,12 @@
             <artifactId>testcontainers-postgresql</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Lee las imágenes de PostgreSQL y RabbitMQ de infra/docker-compose.yml (InfraImages, ADR 0016) -->
+        <dependency>
+            <groupId>org.yaml</groupId>
+            <artifactId>snakeyaml</artifactId>
+            <scope>test</scope>
+        </dependency>
         <!-- Tests de arquitectura (hacen cumplir el ADR 0011) -->
         <dependency>
             <groupId>com.tngtech.archunit</groupId>

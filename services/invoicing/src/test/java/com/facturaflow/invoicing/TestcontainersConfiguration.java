@@ -11,14 +11,13 @@ import org.springframework.test.context.DynamicPropertyRegistrar;
 import org.testcontainers.containers.Container;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.rabbitmq.RabbitMQContainer;
-import org.testcontainers.utility.DockerImageName;
 import org.testcontainers.utility.MountableFile;
 
 /**
  * Levanta un PostgreSQL y un RabbitMQ desechables para los tests. {@link ServiceConnection} hace que Spring use
  * la URL y credenciales de PostgreSQL en lugar de las variables de entorno de application.yml.
  *
- * <p>RabbitMQ usa la misma imagen que docker compose y se configura con el MISMO script de init
+ * <p>RabbitMQ usa la misma imagen que docker compose ({@link InfraImages}) y se configura con el MISMO script de init
  * ({@code infra/rabbitmq/init/create-service-users.sh}): vhost {@code facturaflow}, exchange {@code sales.events} y
  * los usuarios {@code sales} e {@code invoicing} con sus permisos mínimos. Invoicing se conecta como
  * {@code invoicing}, así los tests fallan si la topología necesita un permiso que el usuario real no tiene (ADR
@@ -37,12 +36,12 @@ public class TestcontainersConfiguration {
     @Bean
     @ServiceConnection
     PostgreSQLContainer postgresContainer() {
-        return new PostgreSQLContainer(DockerImageName.parse("postgres:18-alpine"));
+        return new PostgreSQLContainer(InfraImages.POSTGRES);
     }
 
     @Bean
     RabbitMQContainer rabbitContainer() {
-        RabbitMQContainer rabbit = new RabbitMQContainer(DockerImageName.parse("rabbitmq:4.3.6-management-alpine"))
+        RabbitMQContainer rabbit = new RabbitMQContainer(InfraImages.RABBITMQ)
                 .withAdminUser("admin").withAdminPassword(ADMIN_PASSWORD)
                 .withCopyFileToContainer(MountableFile.forHostPath("../../infra/rabbitmq/init/create-service-users.sh"),
                         "/init/create-service-users.sh");
