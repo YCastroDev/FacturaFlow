@@ -43,7 +43,9 @@ import org.springframework.test.web.servlet.client.RestTestClient;
  * (Testcontainers). Sin @Transactional: cada operación confirma.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-        properties = "sales.outbox.poll-interval=200ms")
+        // Timeout de lectura holgado: aquí nada prueba timeouts, y en un runner lento uno justo convertiría el 503
+        // de catalogDown en un timeout (no se reintenta y el circuito no abriría donde el test lo espera).
+        properties = {"sales.outbox.poll-interval=200ms", "sales.catalog.read-timeout=10s"})
 @AutoConfigureRestTestClient
 @Import(TestcontainersConfiguration.class)
 class SaleApiEndToEndTest {
@@ -176,10 +178,9 @@ class SaleApiEndToEndTest {
         createSale("VENTA-E2E-4");
         createSale("VENTA-E2E-5");   // 2 intentos por venta: el circuito abre en esta (5.ª llamada)
         CATALOG.resetRequests();
-        long started = System.nanoTime();
         EntityExchangeResult<String> open = createSale("VENTA-E2E-6");
 
-        assertThat(System.nanoTime() - started).isLessThan(500_000_000L);
+        // Inmediato = sin llamar a catalog (no se mide el tiempo: en un runner lento eso solo da falsos fallos).
         assertThat(open.getStatus().value()).isEqualTo(503);
         assertThat((String) JsonPath.read(open.getResponseBody(), "$.reason")).isEqualTo("circuit-open");
         assertThat(CATALOG.getAllServeEvents()).isEmpty();

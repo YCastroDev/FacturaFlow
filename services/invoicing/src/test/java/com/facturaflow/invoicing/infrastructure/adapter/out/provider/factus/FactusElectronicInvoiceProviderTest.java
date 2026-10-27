@@ -1,7 +1,10 @@
 package com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus;
 
 import static com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus.FactusTestData.CLIENT_SECRET;
+import static com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus.FactusTestData.GENEROUS_READ_TIMEOUT;
 import static com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus.FactusTestData.PASSWORD;
+import static com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus.FactusTestData.SHORT_READ_TIMEOUT;
+import static com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus.FactusTestData.SLOW_RESPONSE;
 import static com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus.FactusTestData.cashInvoice;
 import static com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus.FactusTestData.creditInvoice;
 import static com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus.FactusTestData.fixture;
@@ -294,9 +297,9 @@ class FactusElectronicInvoiceProviderTest {
     @DisplayName("un timeout de lectura → falla técnica (nunca un Rejected)")
     void readTimeoutIsTechnical() {
         provider = FactusElectronicInvoiceProvider.create(
-                properties(FACTUS.baseUrl(), false, null, Duration.ofMillis(300)), clock);
+                properties(FACTUS.baseUrl(), false, null, SHORT_READ_TIMEOUT), clock);
         FACTUS.stubFor(validate().willReturn(json(201, fixture("bill-validated-cash.json", id))
-                .withFixedDelay(1500)));
+                .withFixedDelay((int) SLOW_RESPONSE.toMillis())));
 
         assertThatThrownBy(() -> provider.issue(cash()))
                 .isInstanceOf(ElectronicInvoiceProviderUnavailableException.class)
@@ -478,7 +481,7 @@ class FactusElectronicInvoiceProviderTest {
     @DisplayName("send_email y numbering_range_id configurados llegan a Factus")
     void sendsConfiguredOptions() {
         provider = FactusElectronicInvoiceProvider.create(properties(FACTUS.baseUrl(), true, 389,
-                Duration.ofSeconds(2)), clock);
+                GENEROUS_READ_TIMEOUT), clock);
         respondToValidation(201, "bill-validated-cash.json");
 
         provider.issue(cash());
