@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ---------- Etapa 1: compilación (Maven + JDK) ----------
-FROM maven:3.9.16-eclipse-temurin-25 AS build
+FROM maven:3.9-eclipse-temurin-26 AS build
 # La imagen define MAVEN_CONFIG; se vacía para que mvnw no lo reciba como argumento.
 ENV MAVEN_CONFIG=""
 WORKDIR /workspace
