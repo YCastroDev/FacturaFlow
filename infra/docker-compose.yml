@@ -30,7 +30,7 @@ services:
 
   # Broker de eventos entre servicios (ADR 0013). Imagen oficial con la consola de administración.
   rabbitmq:
-    image: rabbitmq:4.3.6-management-alpine
+    image: rabbitmq:4.4.0-management-alpine
     # Nombre de nodo fijo (rabbit@rabbitmq): RabbitMQ guarda sus datos bajo ese nombre; si cambiara con
     # cada contenedor, el volumen quedaría huérfano y se perderían exchanges y mensajes.
     hostname: rabbitmq
@@ -60,7 +60,7 @@ services:
   # Contenedor de un solo uso: crea el vhost y el usuario de cada servicio con permisos mínimos y termina
   # (script idempotente, como el de PostgreSQL). Se repite en cada "up".
   rabbitmq-init:
-    image: rabbitmq:4.3.6-management-alpine
+    image: rabbitmq:4.4.0-management-alpine
     entrypoint: ["sh", "/init/create-service-users.sh"]
     environment:
       RABBITMQADMIN_BASE_URI: http://rabbitmq:15672/api
