@@ -113,10 +113,7 @@ jobs:
           RESULTS: ${{ toJSON(needs) }}
           FAILED: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
         run: |
-          echo "$RESULTS" | python3 -c '
-          import json, sys
-          for job, data in json.load(sys.stdin).items():
-              print(f"{job}: {data[\"result\"]}")'
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<< "$RESULTS"
           if [[ "$FAILED" == "true" ]]; then
             echo "::error::Algún job falló o se canceló."
             exit 1
