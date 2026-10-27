@@ -7,7 +7,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>4.1.1</version>
+        <version>4.1.2</version>
         <relativePath/>
     </parent>
 
@@ -22,9 +22,9 @@
         <!-- No la gestiona Spring Boot; 1.4.1+ soporta Java 25 -->
         <archunit.version>1.5.1</archunit.version>
         <!-- No la gestiona Spring Boot; la línea 3.x es la de Boot 4 (3.1.1 se construye sobre Boot 4.1.0) -->
-        <springdoc.version>3.1.1</springdoc.version>
+        <springdoc.version>3.2.0</springdoc.version>
         <!-- No la gestiona Spring Boot; el "standalone" trae Jetty y Jackson sombreados (sin choques) -->
-        <wiremock.version>3.13.1</wiremock.version>
+        <wiremock.version>3.13.2</wiremock.version>
         <!-- No la gestiona Spring Boot (su BOM no incluye este módulo); 2.4.0 es la primera para Boot 4 (ADR 0012) -->
         <resilience4j.version>2.4.0</resilience4j.version>
         <!-- No la gestiona Spring Boot; la línea 3.x usa Jackson 3, el de Boot 4 (solo tests, ADR 0013) -->

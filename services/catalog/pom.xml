@@ -7,7 +7,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>4.1.1</version>
+        <version>4.1.2</version>
         <relativePath/>
     </parent>
 
@@ -22,7 +22,7 @@
         <!-- No la gestiona Spring Boot; 1.4.1+ soporta Java 25 -->
         <archunit.version>1.5.1</archunit.version>
         <!-- No la gestiona Spring Boot; la línea 3.x es la de Boot 4 -->
-        <springdoc.version>3.1.1</springdoc.version>
+        <springdoc.version>3.2.0</springdoc.version>
         <!-- Cobertura de los tests para SonarCloud (ADR 0016). 0.8.14+ soporta Java 25; la 0.8.16 recién salió -->
         <jacoco.version>0.8.15</jacoco.version>
         <!-- SonarCloud (ADR 0016): solo lo usa la CI, y solo si existe el secreto SONAR_TOKEN. Un proyecto por servicio. -->
