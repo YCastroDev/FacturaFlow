@@ -1,0 +1,74 @@
+# Actualizaciones de dependencias (ADR 0016): semanales y AGRUPADAS, para no recibir decenas de PRs. Un mismo cambio
+# en los tres servicios (p. ej. Spring Boot o Testcontainers) llega en UN solo PR, que la CI prueba en los tres.
+# No cubre las imágenes fijadas en el código de los tests (postgres, rabbitmq) ni la de gitleaks en los scripts y
+# el workflow: se revisan a mano (lista en el ADR 0016).
+version: 2
+
+updates:
+  - package-ecosystem: maven
+    directories:
+      - /services/invoicing
+      - /services/catalog
+      - /services/sales
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Bogota
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: build(deps)
+    groups:
+      # Menores y parches juntos; las versiones mayores aparte, porque piden revisar notas de migración.
+      maven-minor-patch:
+        update-types: [minor, patch]
+      maven-major:
+        update-types: [major]
+
+  - package-ecosystem: docker
+    directories:
+      - /services/invoicing
+      - /services/catalog
+      - /services/sales
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Bogota
+    commit-message:
+      prefix: build(docker)
+    ignore:
+      # Java 25 es la versión LTS elegida (CLAUDE.md): no proponer Java 26+ (no LTS) en las imágenes base.
+      - dependency-name: eclipse-temurin
+        update-types: [version-update:semver-major]
+      - dependency-name: maven
+        update-types: [version-update:semver-major]
+    groups:
+      docker-images:
+        patterns: ["*"]
+
+  - package-ecosystem: docker-compose
+    directory: /infra
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Bogota
+    commit-message:
+      prefix: build(compose)
+    groups:
+      compose-images:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Bogota
+    commit-message:
+      prefix: ci(deps)
+    groups:
+      github-actions:
+        patterns: ["*"]

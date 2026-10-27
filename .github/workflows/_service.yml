@@ -1,0 +1,139 @@
+# CI de UN servicio (ADR 0016). Workflow reutilizable: lo llama ci.yml una vez por servicio que cambió, así la
+# configuración existe una sola vez para invoicing, catalog y sales.
+#
+#   test   → compila y corre TODOS los tests con ./mvnw (Testcontainers usa el Docker del runner; los @Tag("sandbox")
+#            se excluyen en el pom); cobertura con JaCoCo; SonarCloud solo si existe el secreto SONAR_TOKEN.
+#   image  → construye la imagen con el Dockerfile del servicio; en un push a main además la publica en GHCR.
+#
+# Acciones fijadas por SHA completo (con su versión en el comentario): un tag no se puede mover por debajo.
+# Dependabot (github-actions) actualiza los SHA. Ningún dato se interpola dentro de un script: va por "env".
+name: servicio (reutilizable)
+
+on:
+  workflow_call:
+    inputs:
+      service:
+        description: Carpeta del servicio en services/ (invoicing, catalog o sales)
+        required: true
+        type: string
+    secrets:
+      SONAR_TOKEN:
+        description: Token de SonarCloud. Opcional; sin él, el análisis se omite y la CI sigue en verde.
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: services/${{ inputs.service }}
+    env:
+      # Los secretos no se pueden usar en "if:"; como variable sí. Vacía si el secreto no existe, en PRs de forks y
+      # en PRs de Dependabot (no reciben secretos).
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Historial completo: SonarCloud lo usa para atribuir líneas y detectar el código nuevo.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Java 25 (Temurin) con caché de Maven
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+          cache-dependency-path: services/${{ inputs.service }}/pom.xml
+
+      - name: Compilar y probar (./mvnw verify)
+        # -ntp: sin la barra de progreso de las descargas. Los reportes de JaCoCo quedan en target/site/jacoco/.
+        run: ./mvnw -B -ntp verify
+
+      - name: Resumen de los tests
+        if: ${{ !cancelled() }}
+        env:
+          SERVICE: ${{ inputs.service }}
+        run: python3 "$GITHUB_WORKSPACE/.github/scripts/test-summary.py" "$SERVICE" target/surefire-reports >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Subir los reportes de los tests (si fallaron)
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: surefire-reports-${{ inputs.service }}
+          path: services/${{ inputs.service }}/target/surefire-reports/
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Análisis de SonarCloud
+        if: ${{ env.SONAR_TOKEN != '' }}
+        # Reutiliza lo compilado y el jacoco.xml de "verify": no vuelve a correr los tests. El proyecto, la
+        # organización y el servidor están en el pom (propiedades sonar.*). En un PR, el plugin detecta el contexto.
+        run: ./mvnw -B -ntp sonar:sonar
+
+      - name: SonarCloud omitido (sin SONAR_TOKEN)
+        if: ${{ env.SONAR_TOKEN == '' }}
+        run: |
+          echo "SonarCloud omitido: el secreto SONAR_TOKEN no está disponible en esta ejecución (ADR 0016)." >> "$GITHUB_STEP_SUMMARY"
+
+  image:
+    name: imagen
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      # Solo se usa en un push a main (publicar en GHCR con el GITHUB_TOKEN; sin secretos propios).
+      packages: write
+    env:
+      PUBLISH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Nombre de la imagen (GHCR exige minúsculas)
+        id: name
+        env:
+          SERVICE: ${{ inputs.service }}
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/facturaflow-${SERVICE}" >> "$GITHUB_OUTPUT"
+
+      - name: Etiquetas y labels OCI
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ steps.name.outputs.image }}
+          # sha-<7 caracteres> en cada build; latest solo al publicar desde main. El label
+          # org.opencontainers.image.source (lo agrega la acción) enlaza el paquete de GHCR con el repositorio.
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest,enable=${{ env.PUBLISH == 'true' }}
+
+      - name: Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Login en GHCR
+        if: ${{ env.PUBLISH == 'true' }}
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Construir (y publicar en main)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: services/${{ inputs.service }}
+          push: ${{ env.PUBLISH == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Caché de capas en la caché de Actions, separada por servicio.
+          cache-from: type=gha,scope=${{ inputs.service }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.service }}

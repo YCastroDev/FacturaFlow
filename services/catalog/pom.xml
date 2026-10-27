@@ -23,6 +23,15 @@
         <archunit.version>1.5.1</archunit.version>
         <!-- No la gestiona Spring Boot; la línea 3.x es la de Boot 4 -->
         <springdoc.version>3.1.1</springdoc.version>
+        <!-- Cobertura de los tests para SonarCloud (ADR 0016). 0.8.14+ soporta Java 25; la 0.8.16 recién salió -->
+        <jacoco.version>0.8.15</jacoco.version>
+        <!-- SonarCloud (ADR 0016): solo lo usa la CI, y solo si existe el secreto SONAR_TOKEN. Un proyecto por servicio. -->
+        <sonar.organization>ycastrodev</sonar.organization>
+        <sonar.projectKey>ycastrodev_facturaflow-catalog</sonar.projectKey>
+        <sonar.projectName>facturaflow-catalog</sonar.projectName>
+        <sonar.host.url>https://sonarcloud.io</sonar.host.url>
+        <!-- Declarado en pluginManagement: "./mvnw sonar:sonar" lo encuentra por su prefijo y Dependabot lo actualiza -->
+        <sonar-maven-plugin.version>5.8.0.7211</sonar-maven-plugin.version>
     </properties>
 
     <dependencies>
@@ -105,7 +114,38 @@
 
     <build>
         <finalName>catalog</finalName>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.sonarsource.scanner.maven</groupId>
+                    <artifactId>sonar-maven-plugin</artifactId>
+                    <version>${sonar-maven-plugin.version}</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
         <plugins>
+            <!-- Cobertura (ADR 0016): el agente instrumenta los tests y "verify" deja target/site/jacoco/jacoco.xml,
+                 que SonarCloud lee por defecto. -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>${jacoco.version}</version>
+                <executions>
+                    <execution>
+                        <id>prepare-agent</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>report</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>

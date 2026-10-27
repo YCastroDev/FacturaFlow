@@ -1,5 +1,19 @@
 # FacturaFlow
 
+[![CI](https://github.com/YCastroDev/facturaflow/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/YCastroDev/facturaflow/actions/workflows/ci.yml)
+[![gitleaks](https://github.com/YCastroDev/facturaflow/actions/workflows/gitleaks.yml/badge.svg?branch=main)](https://github.com/YCastroDev/facturaflow/actions/workflows/gitleaks.yml)
+[![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
+![Java 25](https://img.shields.io/badge/Java-25-orange.svg)
+![Spring Boot 4.1](https://img.shields.io/badge/Spring%20Boot-4.1-6DB33F.svg)
+<!-- SonarCloud (ADR 0016): descomentar cuando existan los proyectos en sonarcloud.io, para no mostrar insignias rotas.
+[![Quality Gate invoicing](https://sonarcloud.io/api/project_badges/measure?project=ycastrodev_facturaflow-invoicing&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ycastrodev_facturaflow-invoicing)
+[![Cobertura invoicing](https://sonarcloud.io/api/project_badges/measure?project=ycastrodev_facturaflow-invoicing&metric=coverage)](https://sonarcloud.io/summary/new_code?id=ycastrodev_facturaflow-invoicing)
+[![Quality Gate catalog](https://sonarcloud.io/api/project_badges/measure?project=ycastrodev_facturaflow-catalog&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ycastrodev_facturaflow-catalog)
+[![Cobertura catalog](https://sonarcloud.io/api/project_badges/measure?project=ycastrodev_facturaflow-catalog&metric=coverage)](https://sonarcloud.io/summary/new_code?id=ycastrodev_facturaflow-catalog)
+[![Quality Gate sales](https://sonarcloud.io/api/project_badges/measure?project=ycastrodev_facturaflow-sales&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ycastrodev_facturaflow-sales)
+[![Cobertura sales](https://sonarcloud.io/api/project_badges/measure?project=ycastrodev_facturaflow-sales&metric=coverage)](https://sonarcloud.io/summary/new_code?id=ycastrodev_facturaflow-sales)
+-->
+
 Plataforma de ventas para pymes colombianas que emite facturas electrónicas ante la DIAN a través de la API de [Factus](https://www.factus.com.co/). Proyecto de portafolio construido con microservicios en Spring Boot.
 
 ## Arquitectura
@@ -312,6 +326,25 @@ docker compose --env-file .env -f infra/docker-compose.yml logs invoicing sales 
 ```
 
 Con RabbitMQ detenido, sales sigue vendiendo e invoicing sigue atendiendo su API; los eventos esperan en el outbox de cada uno. Al volver, todo se publica y la Saga continúa. El proveedor falso cuenta los fallos de `SIMULAR_FALLA_TEMPORAL` en memoria: un reinicio de invoicing los pone en cero.
+
+## Integración continua (GitHub Actions)
+
+Detalles y decisiones en el [ADR 0016](docs/adr/0016-integracion-continua.md).
+
+- **`CI`** (`.github/workflows/ci.yml`) corre en cada push a `main`, en cada PR y a mano (Actions → CI → Run workflow, que prueba los tres servicios).
+  - Detecta qué servicios cambiaron y, solo en esos, corre `./mvnw verify`: todos los tests con Testcontainers, sin los de sandbox, más la cobertura con JaCoCo.
+  - También construye la imagen Docker. Desde `main` la publica en GHCR: `ghcr.io/ycastrodev/facturaflow-<servicio>:sha-<commit>` y `:latest`.
+  - El job **`ci-result`** da el veredicto, y es el check que exige la protección de `main`.
+  - Si los tests fallan, los reportes quedan como artefacto `surefire-reports-<servicio>`, y el resumen de cada ejecución muestra los tests de cada servicio.
+- **`gitleaks`** (`.github/workflows/gitleaks.yml`) revisa todo el historial en cada push y PR, con la misma configuración que el hook local.
+- **Dependabot** (`.github/dependabot.yml`): PRs semanales y agrupados para Maven, Docker, docker compose y GitHub Actions.
+- **SonarCloud** (opcional): el análisis corre solo si existe el secreto `SONAR_TOKEN`. Sin él, se omite y la CI sigue en verde.
+
+```bash
+gh run list --workflow ci.yml --limit 5     # últimas ejecuciones
+gh run watch                                 # seguir la ejecución en curso
+gh run view --log-failed                     # solo los pasos que fallaron
+```
 
 ## Otros comandos
 

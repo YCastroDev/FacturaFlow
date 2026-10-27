@@ -1,0 +1,29 @@
+# Escaneo de secretos de TODO el historial en cada push y pull request (ADR 0016). Misma imagen, versión y
+# configuración (.gitleaks.toml) que el hook pre-commit y scripts/check-secrets.sh. Sin gitleaks-action (pide
+# licencia en organizaciones) y sin secretos.
+name: gitleaks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gitleaks:
+    name: gitleaks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout (historial completo)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: gitleaks sobre el historial
+        # --redact: si encuentra algo, no lo imprime en el log público.
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/repo" -w /repo zricethezav/gitleaks:v8.30.1 \
+            git --redact --no-banner --config /repo/.gitleaks.toml /repo

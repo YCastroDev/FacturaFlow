@@ -1,0 +1,124 @@
+# CI del monorepo (ADR 0016): SIEMPRE arranca, detecta qué servicios cambiaron y prueba solo esos (ADR 0001),
+# con el workflow reutilizable _service.yml. El job final "ci-result" resume todo y es el ÚNICO check que exige la
+# protección de main: un servicio que no cambió queda "skipped" (no bloquea), en vez de un check que nunca llega,
+# como pasaría con filtros "on.paths" por workflow.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Manual (pestaña Actions → CI → Run workflow): prueba los TRES servicios, cambien o no.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # En una rama de PR, un push nuevo cancela la ejecución anterior. En main no: cada commit publica su imagen.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  changes:
+    name: cambios
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      # En un PR, paths-filter lee la lista de archivos cambiados con la API.
+      pull-requests: read
+    outputs:
+      invoicing: ${{ steps.filter.outputs.invoicing }}
+      catalog: ${{ steps.filter.outputs.catalog }}
+      sales: ${{ steps.filter.outputs.sales }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: ¿Qué servicios cambiaron?
+        id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          # Qué dispara a cada servicio (ADR 0016). scripts/mvn.sh no está: la CI no lo usa (corre ./mvnw en el runner).
+          filters: |
+            ci: &ci
+              - '.github/workflows/**'
+              - '.github/scripts/**'
+            events: &events
+              # Contratos de eventos (los validan los tests) y el script de init de RabbitMQ (los tests lo ejecutan
+              # en Testcontainers para conectarse con los usuarios reales).
+              - 'docs/events/**'
+              - 'infra/rabbitmq/**'
+            invoicing:
+              - *ci
+              - *events
+              - 'services/invoicing/**'
+            sales:
+              - *ci
+              - *events
+              - 'services/sales/**'
+            catalog:
+              - *ci
+              - 'services/catalog/**'
+
+  invoicing:
+    needs: changes
+    if: ${{ needs.changes.outputs.invoicing == 'true' || github.event_name == 'workflow_dispatch' }}
+    uses: ./.github/workflows/_service.yml
+    with:
+      service: invoicing
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    permissions:
+      contents: read
+      packages: write
+
+  catalog:
+    needs: changes
+    if: ${{ needs.changes.outputs.catalog == 'true' || github.event_name == 'workflow_dispatch' }}
+    uses: ./.github/workflows/_service.yml
+    with:
+      service: catalog
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    permissions:
+      contents: read
+      packages: write
+
+  sales:
+    needs: changes
+    if: ${{ needs.changes.outputs.sales == 'true' || github.event_name == 'workflow_dispatch' }}
+    uses: ./.github/workflows/_service.yml
+    with:
+      service: sales
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    permissions:
+      contents: read
+      packages: write
+
+  ci-result:
+    name: ci-result
+    # always(): corre aunque un servicio haya fallado o se haya saltado, para dar SIEMPRE un veredicto.
+    if: ${{ always() }}
+    needs: [changes, invoicing, catalog, sales]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Veredicto
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          FAILED: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: |
+          echo "$RESULTS" | python3 -c '
+          import json, sys
+          for job, data in json.load(sys.stdin).items():
+              print(f"{job}: {data[\"result\"]}")'
+          if [[ "$FAILED" == "true" ]]; then
+            echo "::error::Algún job falló o se canceló."
+            exit 1
+          fi
+          echo "CI en verde (los servicios sin cambios quedan 'skipped')."

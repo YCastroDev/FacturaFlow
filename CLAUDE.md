@@ -32,6 +32,7 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 - `scripts/` — utilidades (`mvn.sh`, `check-secrets.sh`, `seed-catalog.sh`, `rabbitmq-debug-queue.sh`, `rabbitmq-dlq.sh`).
 - `docs/events/` — catálogo y contratos (JSON Schema) de los eventos entre servicios (ADR 0013).
 - `.githooks/` — hook pre-commit con gitleaks.
+- `.github/` — CI (ADR 0016): `workflows/ci.yml` (orquestador), `workflows/_service.yml` (reutilizable por servicio), `workflows/gitleaks.yml`, `scripts/test-summary.py`, `dependabot.yml`.
 - `docs/adr/` — Architecture Decision Records.
 - `docs/spikes/` y `scripts/spikes/` — investigaciones contra sistemas externos (hallazgos y scripts reproducibles).
 
@@ -180,6 +181,17 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 - Permisos: `sales` configure/write `^sales\..*`, read `^(sales\..*|invoicing\.events)$`. Los tests de sales también ejecutan el script de init real y se conectan como `sales` (publican resultados como invoicing con `TestcontainersConfiguration.invoicingTemplate`); sus colas de prueba llevan el prefijo `sales.`.
 - ArchUnit en los dos: regla 11 (AMQP solo en `adapter/in/messaging` y `adapter/out/messaging`; nada de `out/messaging` sale) y regla 12 (el ACL del otro adaptador de mensajería).
 
+## Integración continua (ADR 0016)
+
+- `ci.yml` SIEMPRE arranca; el job `changes` (paths-filter) decide qué servicios probar con `_service.yml`; `ci-result` es el ÚNICO check obligatorio (junto con `gitleaks`). Nunca usar `on.paths` en un workflow cuyo check sea obligatorio: quedaría "Pending" y bloquearía el PR.
+- Rutas por servicio en `ci.yml`: invoicing y sales también por `docs/events/**` e `infra/rabbitmq/**`; todos por `.github/workflows/**` y `.github/scripts/**`. **Si un servicio empieza a depender de otra carpeta, agregarla al filtro** (y a la tabla del ADR 0016).
+- La CI corre `./mvnw -B -ntp verify` en el runner (no `scripts/mvn.sh`): todo test debe pasar sin `.env` ni credenciales; los que las necesitan llevan `@Tag("sandbox")`.
+- Acciones fijadas por SHA completo con `# vX.Y.Z`; permisos mínimos por job; `persist-credentials: false`; nada interpolado dentro de `run:` (va por `env`). Validar con `docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12`.
+- Ningún secreto en los workflows. SonarCloud usa el secreto opcional `SONAR_TOKEN`: sin él el paso se omite (la CI no debe fallar). Las propiedades `sonar.*` y JaCoCo viven en cada pom.
+- Imágenes en GHCR solo desde `main` (`sha-<7>` y `latest`), con el `GITHUB_TOKEN`.
+- Dependabot no ve las imágenes fijadas en `TestcontainersConfiguration` (postgres, rabbitmq), la de gitleaks (hook, script, workflow) ni la de Maven en `scripts/mvn.sh`: al cambiar una, cambiar todas sus apariciones.
+- `main` protegida (ruleset): se trabaja con ramas y PRs (`gh pr create`, `gh pr merge --squash`); los commits los hace el usuario.
+
 ## Convenciones
 
 - Código, clases, paquetes y endpoints en inglés. Documentación y ADRs en español.
@@ -264,3 +276,4 @@ curl -s http://localhost:8081/actuator/metrics/resilience4j.circuitbreaker.not.p
 - Proyecto de portafolio sin datos ni usuarios en producción: cuando la solución robusta solo proteja datos de prueba o casos hipotéticos, prefiere la solución simple y documenta en el ADR cómo se haría en producción. Aplica rigor completo en arquitectura, modelado del dominio, tests y seguridad. Si dudas, pregúntame.
 - Si una decisión técnica importante no está cubierta por un ADR, **preguntar antes de implementarla**.
 - **No hacer commits** ni push; los hace el usuario.
+- Nunca ejecutes acciones en servicios externos a mi nombre sin que te lo pida explícitamente en ese momento: git push, comandos de gh que creen o modifiquen algo en GitHub (PRs, rulesets, secretos, releases, configuración), ni llamadas a APIs externas con mis credenciales. Única excepción: el sandbox de Factus para spikes y tests `@Tag("sandbox")`, con `send_email` en `false` y sin borrar nada. Leer información pública o del repositorio sí está permitido.
