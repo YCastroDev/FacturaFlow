@@ -16,13 +16,15 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 
 ## Arquitectura
 
-- **Monorepo** con un proyecto independiente por servicio en `services/`. Hoy hay tres; luego vendrán notifications, identity (con Keycloak), gateway y frontend.
+- **Monorepo** con un proyecto independiente por servicio en `services/`. Hoy hay tres servicios de negocio y el gateway; luego vendrán notifications y el frontend.
 
   | Servicio | Responsabilidad | Arquitectura | Puerto local | Base |
   |---|---|---|---|---|
   | `invoicing` | Facturas y notas crédito electrónicas ante la DIAN (vía Factus) | Hexagonal ([ADR 0002](docs/adr/0002-arquitectura-hexagonal.md)) | `127.0.0.1:8081` | `invoicing_db` |
   | `catalog` | Productos y clientes (datos maestros) | En capas ([ADR 0011](docs/adr/0011-servicio-catalog-en-capas.md)) | `127.0.0.1:8082` | `catalog_db` |
   | `sales` | Ventas confirmadas, con cliente y productos tomados de catalog | Hexagonal ([ADR 0012](docs/adr/0012-servicio-sales.md)) | `127.0.0.1:8083` | `sales_db` |
+  | `gateway` | Punto de entrada único a la API: enruta a los tres servicios | Spring Cloud Gateway WebMVC ([ADR 0017](docs/adr/0017-seguridad-keycloak-y-gateway.md)) | `127.0.0.1:8080` | — |
+  | Keycloak | Proveedor de identidad: realm `facturaflow` como código (roles, usuarios de demostración, clientes) | Imagen oficial 26.8.1 ([ADR 0017](docs/adr/0017-seguridad-keycloak-y-gateway.md)) | `127.0.0.1:8180` | `keycloak_db` |
 
 - **Cada servicio usa la arquitectura que necesita:**
   - invoicing, hexagonal: integra un proveedor externo intercambiable;
@@ -37,6 +39,7 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
   - sales publica el evento `SaleConfirmed` en RabbitMQ con un *transactional outbox*: la venta y su evento se guardan en la misma transacción y se publican con confirmación del broker, aunque RabbitMQ esté caído al vender ([ADR 0013](docs/adr/0013-mensajeria-y-outbox.md)). El contrato está en el [catálogo de eventos](docs/events/README.md);
   - invoicing consume ese evento: crea la factura y la emite con los mismos casos de uso de su API, reintenta las fallas técnicas con espera creciente y aparta en una DLQ lo que no puede procesar ([ADR 0014](docs/adr/0014-consumo-de-sale-confirmed.md)). Vender ya factura sola;
   - invoicing publica el resultado de cada factura en `invoicing.events` (con su propio outbox), y sales deja la venta `INVOICED` (número y CUFE) o `INVOICE_FAILED` (motivo). La Saga se cierra por coreografía ([ADR 0015](docs/adr/0015-cierre-de-la-saga-de-facturacion.md)).
+- **Seguridad (en curso):** Keycloak y el gateway ya funcionan, pero en esta Fase 1 nadie exige token; en la Fase 2, el gateway y cada servicio validarán el JWT y los roles (zero trust) ([ADR 0017](docs/adr/0017-seguridad-keycloak-y-gateway.md)).
 - **Todo corre en Docker:** no se necesita Java ni Maven instalados.
 
 Las decisiones y sus motivos están en los [ADRs](docs/adr/README.md).
@@ -54,17 +57,18 @@ Requisito: Docker Engine con Docker Compose.
    cp .env.example .env
    ```
    El `.env` está en `.gitignore`: nunca se sube al repositorio.
-3. **Levantar el entorno** (PostgreSQL, RabbitMQ, invoicing, catalog y sales):
+3. **Levantar el entorno** (PostgreSQL, RabbitMQ, Keycloak, invoicing, catalog, sales y gateway):
    ```bash
    docker compose --env-file .env -f infra/docker-compose.yml up --build -d
-   docker compose --env-file .env -f infra/docker-compose.yml ps     # los cinco "healthy"
+   docker compose --env-file .env -f infra/docker-compose.yml ps     # los siete "healthy"
    ```
    `rabbitmq-init` aparece como terminado (`Exited (0)`): es un contenedor de un solo uso que crea el usuario de RabbitMQ de cada servicio.
-4. **Comprobar** que los tres servicios responden:
+4. **Comprobar** que los servicios responden:
    ```bash
    curl http://localhost:8081/actuator/health    # invoicing: {"status":"UP",...}
    curl http://localhost:8082/actuator/health    # catalog:   {"status":"UP",...}
    curl http://localhost:8083/actuator/health    # sales:     {"status":"UP",...}
+   curl http://localhost:8080/actuator/health    # gateway:   {"status":"UP",...}
    ```
 5. **Sembrar los datos de ejemplo** en catalog (los usan los ejemplos de Swagger de sales; se puede repetir):
    ```bash
@@ -90,6 +94,70 @@ docker compose --env-file .env -f infra/docker-compose.yml exec postgres \
   bash /docker-entrypoint-initdb.d/01-create-service-databases.sh
 docker compose --env-file .env -f infra/docker-compose.yml up --build -d
 ```
+
+### Si ya tenías el entorno levantado antes de Keycloak
+
+1. Agrega a tu `.env` las variables de la sección Keycloak de `.env.example`: `KEYCLOAK_ADMIN_USER`, `KEYCLOAK_ADMIN_PASSWORD`, `KEYCLOAK_DB_PASSWORD`, `KC_DEMO_ADMIN_PASSWORD`, `KC_DEMO_VENDEDOR_PASSWORD`, `KC_DEMO_CONTADOR_PASSWORD` y `SALES_SERVICE_CLIENT_SECRET`.
+2. Crea `keycloak_db` como en la sección anterior: recrea `postgres` y ejecuta el script de init, que es idempotente.
+3. Levanta todo con `up --build -d`. Keycloak importa el realm la primera vez.
+
+## Seguridad: Keycloak y el gateway (Fase 1)
+
+Detalles y decisiones en el [ADR 0017](docs/adr/0017-seguridad-keycloak-y-gateway.md). **En esta fase nadie exige token**: el token se puede enviar y llega hasta los servicios, pero todavía no se valida (eso es la Fase 2).
+
+**Consola de Keycloak:** http://localhost:8180/admin, solo desde tu máquina.
+- Entra con `KEYCLOAK_ADMIN_USER` / `KEYCLOAK_ADMIN_PASSWORD` de tu `.env`.
+- Elige el realm **facturaflow** arriba a la izquierda:
+  - *Realm roles*: `admin`, `vendedor`, `contador`;
+  - *Users*: `admin.demo`, `vendedor.demo`, `contador.demo`;
+  - *Clients*: `sales-service`, `facturaflow-swagger`, `facturaflow-cli`;
+  - *Client scopes*: `catalog.read`.
+
+**Obtener un token desde la terminal.** El script pide la contraseña sin mostrarla: es la variable `KC_DEMO_<ROL>_PASSWORD` de tu `.env`, o el `SALES_SERVICE_CLIENT_SECRET` para `sales-service`.
+
+```bash
+./scripts/keycloak-token.sh --claims vendedor.demo     # issuer, usuario y roles: "realm_access": {"roles": ["vendedor"]}
+./scripts/keycloak-token.sh --claims contador.demo
+./scripts/keycloak-token.sh --claims admin.demo
+./scripts/keycloak-token.sh --claims sales-service     # client credentials: "scope": "catalog.read", sin roles
+TOKEN=$(./scripts/keycloak-token.sh vendedor.demo)     # solo el token, para usarlo en curl
+```
+
+- `facturaflow-cli` es un cliente **solo para desarrollo** (password grant). Los usuarios reales entrarán por authorization code + PKCE (`facturaflow-swagger`, Fase 2).
+- El token dura 5 minutos.
+
+**Llamar a los servicios por el gateway** (http://localhost:8080). Las rutas son las mismas de cada servicio:
+
+```bash
+curl -s "http://localhost:8080/api/v1/products?size=5"                            # → catalog
+curl -s http://localhost:8080/api/v1/customers/by-document/NIT/890903938          # → catalog
+curl -s -H "Authorization: Bearer $TOKEN" -X POST http://localhost:8080/api/v1/sales \
+  -H 'Content-Type: application/json' -d '{ "referenceCode": "GW-0001",
+  "customer": { "documentType": "NIT", "documentNumber": "890903938" },
+  "lines": [ { "productCode": "CAFE-500", "quantity": 2 } ],
+  "paymentMethod": "CASH", "paymentTerms": { "type": "CASH" } }'                 # → sales (201)
+curl -s http://localhost:8080/api/v1/sales/by-reference/GW-0001                   # → sales: INVOICED en segundos
+curl -s http://localhost:8080/api/v1/invoices/<invoiceId de la venta>             # → invoicing
+curl -s http://localhost:8080/api/v1/nada                                         # → 404 Problem Details del gateway
+```
+
+- **Errores del gateway:**
+  - un servicio detenido da 502 `upstream-unavailable` solo en sus rutas;
+  - uno que no responde en 60 s da 504 `upstream-timeout`;
+  - el health del gateway sigue UP en los dos casos.
+- **Swagger UI** sigue en el puerto de cada servicio.
+
+**Comprobar el issuer desde dentro de Docker** (debe ser el mismo `http://localhost:8180/realms/facturaflow` que en los tokens):
+
+```bash
+docker compose --env-file .env -f infra/docker-compose.yml exec gateway \
+  wget -qO- http://keycloak:8080/realms/facturaflow/.well-known/openid-configuration
+```
+
+**Cambiar el realm o una contraseña de demostración.** Keycloak importa el archivo `infra/keycloak/import/facturaflow-realm.json` solo si el realm **no existe**. Para aplicar un cambio del archivo o del `.env`:
+
+1. En la consola, entra al realm `facturaflow` → *Realm settings* → *Action* (arriba a la derecha) → *Delete*.
+2. Reinicia Keycloak: `docker compose --env-file .env -f infra/docker-compose.yml restart keycloak`. Vuelve a importar el realm con los valores actuales.
 
 ## Probar la API con Swagger
 
@@ -329,7 +397,7 @@ Con RabbitMQ detenido, sales sigue vendiendo e invoicing sigue atendiendo su API
 
 Detalles y decisiones en el [ADR 0016](docs/adr/0016-integracion-continua.md).
 
-- **`CI`** (`.github/workflows/ci.yml`) corre en cada push a `main`, en cada PR y a mano (Actions → CI → Run workflow, que prueba los tres servicios).
+- **`CI`** (`.github/workflows/ci.yml`) corre en cada push a `main`, en cada PR y a mano (Actions → CI → Run workflow, que prueba todos los servicios, incluido el gateway).
   - Detecta qué servicios cambiaron y, solo en esos, corre `./mvnw verify`: todos los tests con Testcontainers, sin los de sandbox, más la cobertura con JaCoCo.
   - También construye la imagen Docker. Desde `main` la publica en GHCR: `ghcr.io/ycastrodev/facturaflow-<servicio>:sha-<commit>` y `:latest`.
   - El job **`ci-result`** da el veredicto, y es el check que exige la protección de `main`.
@@ -350,6 +418,8 @@ gh run view --log-failed                     # solo los pasos que fallaron
 ./scripts/mvn.sh invoicing test   # tests de invoicing (Maven + Testcontainers + WireMock en Docker)
 ./scripts/mvn.sh catalog test     # tests de catalog (Maven + Testcontainers en Docker)
 ./scripts/mvn.sh sales test       # tests de sales (Maven + Testcontainers + WireMock en Docker)
+./scripts/mvn.sh gateway test     # tests del gateway (enrutamiento con WireMock + realm en un Keycloak real)
+./scripts/keycloak-token.sh --claims vendedor.demo   # token de un usuario de demostración (pide la contraseña)
 ./scripts/seed-catalog.sh         # datos de ejemplo en catalog (idempotente)
 # Tests contra el sandbox real de Factus (no corren por defecto; crean 2 facturas y 1 nota crédito reales por ejecución)
 MVN_ENV_FILE=.env ./scripts/mvn.sh invoicing test -Dgroups=sandbox -DexcludedGroups=none

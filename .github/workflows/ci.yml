@@ -8,7 +8,7 @@ on:
   push:
     branches: [main]
   pull_request:
-  # Manual (pestaña Actions → CI → Run workflow): prueba los TRES servicios, cambien o no.
+  # Manual (pestaña Actions → CI → Run workflow): prueba TODOS los servicios, cambien o no.
   workflow_dispatch:
 
 permissions:
@@ -32,6 +32,7 @@ jobs:
       invoicing: ${{ steps.filter.outputs.invoicing }}
       catalog: ${{ steps.filter.outputs.catalog }}
       sales: ${{ steps.filter.outputs.sales }}
+      gateway: ${{ steps.filter.outputs.gateway }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -70,6 +71,14 @@ jobs:
               - *ci
               - *infra-images
               - 'services/catalog/**'
+            gateway:
+              # La imagen de Keycloak sale del compose (infra-images) y el realm de infra/keycloak (KeycloakRealmTest y
+              # RealmFileSecretsTest, que además lee .env.example).
+              - *ci
+              - *infra-images
+              - 'infra/keycloak/**'
+              - '.env.example'
+              - 'services/gateway/**'
 
   invoicing:
     needs: changes
@@ -107,11 +116,23 @@ jobs:
       contents: read
       packages: write
 
+  gateway:
+    needs: changes
+    if: ${{ needs.changes.outputs.gateway == 'true' || github.event_name == 'workflow_dispatch' }}
+    uses: ./.github/workflows/_service.yml
+    with:
+      service: gateway
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    permissions:
+      contents: read
+      packages: write
+
   ci-result:
     name: ci-result
     # always(): corre aunque un servicio haya fallado o se haya saltado, para dar SIEMPRE un veredicto.
     if: ${{ always() }}
-    needs: [changes, invoicing, catalog, sales]
+    needs: [changes, invoicing, catalog, sales, gateway]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

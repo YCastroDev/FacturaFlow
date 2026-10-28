@@ -1,0 +1,53 @@
+# API Gateway (ADR 0017): punto de entrada único a los servicios. En la Fase 1 solo enruta (no exige token).
+# Los destinos se leen de variables de entorno; por defecto, los nombres de la red de docker compose.
+spring:
+  application:
+    name: gateway
+  threads:
+    virtual:
+      # Cada petición reenviada bloquea su hilo mientras espera al servicio: con hilos virtuales eso no agota un pool.
+      enabled: true
+  http:
+    clients:
+      # Cliente HTTP con el que el gateway llama a los servicios. Lectura holgada: una emisión a Factus puede tardar
+      # ~45 s en el peor caso (3 intentos × (3 s de conexión + 10 s de lectura) + esperas, ADR 0010).
+      connect-timeout: 2s
+      read-timeout: 60s
+  cloud:
+    gateway:
+      server:
+        webmvc:
+          # Sin "trusted-proxies": el gateway no agrega X-Forwarded-* y BORRA los que mande el cliente (nadie puede
+          # hacerse pasar por otra IP u otro host ante los servicios). Ninguno los usa todavía.
+          routes:
+            # Sin reintentos en ninguna ruta: hay POST no idempotentes (la idempotencia la dan los servicios).
+            - id: invoicing
+              uri: ${GATEWAY_INVOICING_URI:http://invoicing:8080}
+              predicates:
+                # "/**" también cubre la raíz (/api/v1/invoices) y las notas crédito de una factura
+                # (/api/v1/invoices/{id}/credit-notes).
+                - Path=/api/v1/invoices/**,/api/v1/credit-notes/**
+            - id: catalog
+              uri: ${GATEWAY_CATALOG_URI:http://catalog:8080}
+              predicates:
+                - Path=/api/v1/products/**,/api/v1/customers/**
+            - id: sales
+              uri: ${GATEWAY_SALES_URI:http://sales:8080}
+              predicates:
+                - Path=/api/v1/sales/**
+server:
+  port: 8080
+  error:
+    include-message: never
+    include-stacktrace: never
+
+# Actuator: solo lectura y nada sensible. El health NO consulta los servicios ni Keycloak (mismo criterio que el
+# ADR 0010): que un servicio caiga no debe sacar al gateway de servicio ni reiniciarlo.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: never

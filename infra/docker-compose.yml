@@ -15,6 +15,7 @@ services:
       INVOICING_DB_PASSWORD: ${INVOICING_DB_PASSWORD:?Define INVOICING_DB_PASSWORD en .env}
       CATALOG_DB_PASSWORD: ${CATALOG_DB_PASSWORD:?Define CATALOG_DB_PASSWORD en .env}
       SALES_DB_PASSWORD: ${SALES_DB_PASSWORD:?Define SALES_DB_PASSWORD en .env}
+      KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?Define KEYCLOAK_DB_PASSWORD en .env}
     volumes:
       # PostgreSQL 18+: el volumen se monta en /var/lib/postgresql
       - postgres-data:/var/lib/postgresql
@@ -75,6 +76,51 @@ services:
       rabbitmq:
         condition: service_healthy
     restart: "no"
+
+  # Proveedor de identidad (ADR 0017). Perfil de producción ("start") sobre HTTP: la misma configuración que en
+  # producción salvo TLS. El realm "facturaflow" se importa del repositorio al arrancar, SOLO si aún no existe (un
+  # realm ya importado no se toca: para aplicar cambios del archivo o del .env, ver el README).
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.1
+    command: ["start", "--import-realm"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak_db
+      KC_DB_USERNAME: keycloak_user
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?Define KEYCLOAK_DB_PASSWORD en .env}
+      KC_HTTP_ENABLED: "true"
+      # Issuer FIJO: los tokens dicen siempre http://localhost:8180/realms/facturaflow, se pidan desde la terminal o
+      # desde un contenedor; las llamadas internas (keycloak:8080) usan su propia URL (backchannel dinámico).
+      KC_HOSTNAME: http://localhost:8180
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      # Health en el puerto de gestión 9000 (no se publica; lo usa el healthcheck).
+      KC_HEALTH_ENABLED: "true"
+      # Un solo nodo: caché local (sin el clúster de Infinispan).
+      KC_CACHE: local
+      # Administrador inicial del realm master (consola). Se crea solo en el primer arranque.
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER:?Define KEYCLOAK_ADMIN_USER en .env}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?Define KEYCLOAK_ADMIN_PASSWORD en .env}
+      # Valores que el realm referencia como ${VAR} (nunca escritos en el archivo; RealmFileSecretsTest lo verifica).
+      KC_DEMO_ADMIN_PASSWORD: ${KC_DEMO_ADMIN_PASSWORD:?Define KC_DEMO_ADMIN_PASSWORD en .env}
+      KC_DEMO_VENDEDOR_PASSWORD: ${KC_DEMO_VENDEDOR_PASSWORD:?Define KC_DEMO_VENDEDOR_PASSWORD en .env}
+      KC_DEMO_CONTADOR_PASSWORD: ${KC_DEMO_CONTADOR_PASSWORD:?Define KC_DEMO_CONTADOR_PASSWORD en .env}
+      SALES_SERVICE_CLIENT_SECRET: ${SALES_SERVICE_CLIENT_SECRET:?Define SALES_SERVICE_CLIENT_SECRET en .env}
+    volumes:
+      - ./keycloak/import:/opt/keycloak/data/import:ro
+    ports:
+      # Consola (http://localhost:8180/admin) y endpoints del realm, solo en la máquina local.
+      - "127.0.0.1:8180:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      # La imagen no trae curl ni wget: petición HTTP a mano con /dev/tcp de bash.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && grep -q '\"UP\"' <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 60s
+    restart: unless-stopped
 
   invoicing:
     build:
@@ -172,6 +218,28 @@ services:
       timeout: 5s
       retries: 10
       start_period: 40s
+    restart: unless-stopped
+
+  # Punto de entrada único a la API (ADR 0017). En la Fase 1 solo enruta, sin exigir token.
+  gateway:
+    build:
+      context: ../services/gateway
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      # Solo "iniciados": el gateway arranca y su health es UP aunque un servicio esté caído (responde 502 en su ruta).
+      invoicing:
+        condition: service_started
+      catalog:
+        condition: service_started
+      sales:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q UP"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     restart: unless-stopped
 
 volumes:
