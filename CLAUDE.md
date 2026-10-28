@@ -13,7 +13,7 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 |---|---|
 | Java | 25 (LTS) — Eclipse Temurin |
 | Spring Boot | 4.1.1 |
-| Maven | 3.9.16 vía Maven Wrapper (`mvnw`) |
+| Maven | 3.10.0 vía Maven Wrapper (`mvnw`; la versión vive en `.mvn/wrapper/maven-wrapper.properties` y la actualiza Dependabot) |
 | PostgreSQL | 18 (`postgres:18.6-alpine`, parche fijado) |
 | Migraciones | Flyway |
 | Tests de integración | Testcontainers 2.x |
@@ -30,8 +30,8 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 ## Estructura
 
 - `services/<servicio>/` — un proyecto Spring Boot independiente por servicio: `invoicing` (hexagonal, ADR 0002), `catalog` (en capas, ADR 0011), `sales` (hexagonal, ADR 0012) y `gateway` (API Gateway, ADR 0017).
-- `infra/` — `docker-compose.yml`, scripts de init de PostgreSQL (`postgres/init`) y de RabbitMQ (`rabbitmq/init`) y el realm de Keycloak (`keycloak/import/facturaflow-realm.json`).
-- `scripts/` — utilidades (`mvn.sh`, `check-secrets.sh`, `seed-catalog.sh`, `rabbitmq-debug-queue.sh`, `rabbitmq-dlq.sh`, `keycloak-token.sh`).
+- `infra/` — `docker-compose.yml`, scripts de init de PostgreSQL (`postgres/init`) y de RabbitMQ (`rabbitmq/init`), el realm de Keycloak (`keycloak/import/facturaflow-realm.json`) y el override de la prueba de humo (`smoke/compose.smoke.yml`).
+- `scripts/` — utilidades (`mvn.sh`, `check-secrets.sh`, `seed-catalog.sh`, `rabbitmq-debug-queue.sh`, `rabbitmq-dlq.sh`, `keycloak-token.sh`, `smoke-test.sh`).
 - `docs/events/` — catálogo y contratos (JSON Schema) de los eventos entre servicios (ADR 0013).
 - `.githooks/` — hook pre-commit con gitleaks.
 - `.github/` — CI (ADR 0016): `workflows/ci.yml` (orquestador), `workflows/_service.yml` (reutilizable por servicio), `workflows/gitleaks.yml`, `scripts/test-summary.py`, `dependabot.yml`.
@@ -201,13 +201,14 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 ## Integración continua (ADR 0016)
 
 - `ci.yml` SIEMPRE arranca; el job `changes` (paths-filter) decide qué servicios probar con `_service.yml`; `ci-result` es el ÚNICO check obligatorio (junto con `gitleaks`). Nunca usar `on.paths` en un workflow cuyo check sea obligatorio: quedaría "Pending" y bloquearía el PR.
-- Rutas por servicio en `ci.yml`: invoicing y sales también por `docs/events/**` e `infra/rabbitmq/**`; gateway por `infra/keycloak/**` y `.env.example`; todos por `.github/workflows/**`, `.github/scripts/**` e `infra/docker-compose.yml`. **Si un servicio empieza a depender de otra carpeta, agregarla al filtro** (y a la tabla del ADR 0016).
+- Rutas por servicio en `ci.yml`: invoicing y sales también por `docs/events/**` e `infra/rabbitmq/**`; invoicing, catalog y sales por `infra/postgres/**` y `.env.example` (prueba de humo); gateway por `infra/keycloak/**` y `.env.example`; todos por `.github/workflows/**`, `.github/scripts/**`, `infra/docker-compose.yml`, `scripts/smoke-test.sh` e `infra/smoke/**`. **Si un servicio empieza a depender de otra carpeta, agregarla al filtro** (y a la tabla del ADR 0016).
 - La CI corre `./mvnw -B -ntp verify` en el runner (no `scripts/mvn.sh`): todo test debe pasar sin `.env` ni credenciales; los que las necesitan llevan `@Tag("sandbox")`.
 - Acciones fijadas por SHA completo con `# vX.Y.Z`; permisos mínimos por job; `persist-credentials: false`; nada interpolado dentro de `run:` (va por `env`). Validar con `docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12`.
 - Ningún secreto en los workflows. SonarCloud usa el secreto opcional `SONAR_TOKEN`: sin él el paso se omite (la CI no debe fallar). Las propiedades `sonar.*` y JaCoCo viven en cada pom.
-- Imágenes en GHCR solo desde `main` (`sha-<7>` y `latest`), con el `GITHUB_TOKEN`.
+- Imágenes en GHCR solo desde `main` (`sha-<7>` y `latest`), con el `GITHUB_TOKEN`, y solo si pasó la **prueba de humo** del job `imagen` (`scripts/smoke-test.sh <servicio> <imagen>`): arranca la imagen con el compose + `infra/smoke/compose.smoke.yml` (sin puertos ni reinicios), solo con PostgreSQL (el gateway, sin nada), credenciales desechables generadas de `.env.example` (nunca lee `.env`), y espera `UP` en `/actuator/health` (máx. 180 s). Un servicio que pase a necesitar otra dependencia para arrancar exige cambiar el script y la tabla del ADR 0016.
+- Dockerfiles: compilación y ejecución sobre `eclipse-temurin:25.x.y_z-jdk/jre-alpine` (parche fijado, el mismo en las dos etapas); Maven sale del wrapper. **Nunca** volver a la imagen `maven:*` en los Dockerfiles (Java iba en el sufijo y Dependabot lo subió a 26).
 - **Imágenes de infraestructura de los tests: una sola fuente, `infra/docker-compose.yml`.** Los tests nunca fijan `postgres:`/`rabbitmq:`/`keycloak:` en el código: usan `InfraImages.POSTGRES`/`RABBITMQ`/`KEYCLOAK` (copia en cada servicio, lee el compose); `InfraImagesTest` exige versiones fijadas (mínimo `mayor.menor`, nunca `latest`) e iguales para la misma imagen. Así Dependabot (`docker-compose`) las actualiza y el PR dispara los tests.
-- Dependabot no ve la imagen de gitleaks (hook, script, workflow) ni la de Maven en `scripts/mvn.sh`: al cambiar una, cambiar todas sus apariciones.
+- Dependabot no ve la imagen de gitleaks (hook, script, workflow) ni la de Maven en `scripts/mvn.sh` (`maven:3.9.16-eclipse-temurin-25`; **pendiente** pasarla a `eclipse-temurin` en un PR aparte, ADR 0016): al cambiar una, cambiar todas sus apariciones.
 - `main` protegida (ruleset): se trabaja con ramas y PRs (`gh pr create`, `gh pr merge --squash`); los commits los hace el usuario.
 
 ## Convenciones
@@ -293,6 +294,9 @@ TOKEN=$(./scripts/keycloak-token.sh vendedor.demo)        # pide la contraseña 
 ./scripts/keycloak-token.sh --claims sales-service         # client credentials: scope catalog.read
 curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/products?size=5"   # por el gateway
 curl -s http://localhost:8080/actuator/health
+
+# Prueba de humo de una imagen (la misma que la CI): arranca y espera UP en /actuator/health
+docker build -t facturaflow-catalog:local services/catalog && ./scripts/smoke-test.sh catalog facturaflow-catalog:local
 
 # Escaneo de secretos de todo el repo
 ./scripts/check-secrets.sh

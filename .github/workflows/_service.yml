@@ -3,7 +3,8 @@
 #
 #   test   → compila y corre TODOS los tests con ./mvnw (Testcontainers usa el Docker del runner; los @Tag("sandbox")
 #            se excluyen en el pom); cobertura con JaCoCo; SonarCloud solo si existe el secreto SONAR_TOKEN.
-#   image  → construye la imagen con el Dockerfile del servicio; en un push a main además la publica en GHCR.
+#   image  → construye la imagen con el Dockerfile del servicio, la ARRANCA (prueba de humo: scripts/smoke-test.sh) y,
+#            solo si respondió UP y es un push a main, la publica en GHCR.
 #
 # Acciones fijadas por SHA completo (con su versión en el comentario): un tag no se puede mover por debajo.
 # Dependabot (github-actions) actualiza los SHA. Ningún dato se interpola dentro de un script: va por "env".
@@ -86,7 +87,7 @@ jobs:
     name: imagen
     needs: test
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     permissions:
       contents: read
       # Solo se usa en un push a main (publicar en GHCR con el GITHUB_TOKEN; sin secretos propios).
@@ -119,6 +120,28 @@ jobs:
       - name: Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
+      - name: Construir
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: services/${{ inputs.service }}
+          # Al Docker del runner, para la prueba de humo; todavía no se publica.
+          load: true
+          push: false
+          tags: facturaflow-${{ inputs.service }}:smoke
+          labels: ${{ steps.meta.outputs.labels }}
+          # Caché de capas en la caché de Actions, separada por servicio.
+          cache-from: type=gha,scope=${{ inputs.service }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.service }}
+
+      - name: Prueba de humo (la imagen arranca y su health responde UP)
+        # Construir no basta: las imágenes de main no arrancaban desde el PR #5 y la CI seguía en verde (ADR 0016,
+        # nota del 2026-10-28). Solo con PostgreSQL (el del compose); credenciales desechables generadas de
+        # .env.example, sin secretos.
+        timeout-minutes: 5
+        env:
+          SERVICE: ${{ inputs.service }}
+        run: ./scripts/smoke-test.sh "$SERVICE" "facturaflow-${SERVICE}:smoke"
+
       - name: Login en GHCR
         if: ${{ env.PUBLISH == 'true' }}
         uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
@@ -127,13 +150,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Construir (y publicar en main)
+      - name: Publicar en GHCR (solo main y solo si la prueba de humo pasó)
+        if: ${{ env.PUBLISH == 'true' }}
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: services/${{ inputs.service }}
-          push: ${{ env.PUBLISH == 'true' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Caché de capas en la caché de Actions, separada por servicio.
+          # Las capas salen de la caché que dejó "Construir": no se vuelve a compilar.
           cache-from: type=gha,scope=${{ inputs.service }}
-          cache-to: type=gha,mode=max,scope=${{ inputs.service }}
