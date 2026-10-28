@@ -34,6 +34,7 @@ import com.facturaflow.invoicing.domain.model.CreditNote;
 import com.facturaflow.invoicing.domain.model.CreditNoteReason;
 import com.facturaflow.invoicing.domain.model.Invoice;
 import com.facturaflow.invoicing.domain.model.Money;
+import com.facturaflow.invoicing.infrastructure.config.SecurityConfiguration;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
@@ -42,14 +43,18 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 import org.springframework.test.web.servlet.assertj.MvcTestResult;
 
 /** Capa web de las notas crédito, como {@code InvoiceControllerTest}: casos de uso simulados. */
 @WebMvcTest(CreditNoteController.class)
+@Import(SecurityConfiguration.class)
+@WithMockUser(roles = "contador")
 class CreditNoteControllerTest {
 
     private static final Invoice INVOICE = issuedInvoiceToCredit();

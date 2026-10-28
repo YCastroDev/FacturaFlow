@@ -9,6 +9,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
 import com.facturaflow.sales.EventContracts;
+import com.facturaflow.sales.FakeKeycloak;
 import com.facturaflow.sales.TestcontainersConfiguration;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.jayway.jsonpath.JsonPath;
@@ -30,6 +31,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureRestTestClient;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -116,8 +118,13 @@ class SaleApiEndToEndTest {
                 .exchange().expectBody(String.class).returnResult();
     }
 
+    /** Actuator, salvo el health, es solo para admin (ADR 0018); lo demás va con el token por defecto (vendedor). */
     private EntityExchangeResult<String> fetch(String uri) {
-        return client.get().uri(uri).exchange().expectBody(String.class).returnResult();
+        var request = client.get().uri(uri);
+        if (uri.startsWith("/actuator/") && !uri.startsWith("/actuator/health")) {
+            request.header(HttpHeaders.AUTHORIZATION, "Bearer " + FakeKeycloak.userToken("admin"));
+        }
+        return request.exchange().expectBody(String.class).returnResult();
     }
 
     private long salesInDatabase() {
@@ -139,6 +146,9 @@ class SaleApiEndToEndTest {
         // 2 x 18.500 = 37.000 - 10 % = 33.300 + IVA 5 % (1.665) = 34.965
         assertThat((Double) JsonPath.read(body, "$.totals.total")).isEqualTo(34965.00);
         assertThat(CATALOG.getAllServeEvents()).as("2 llamadas: cliente y lote de productos").hasSize(2);
+        assertThat(CATALOG.getAllServeEvents()).as("con la identidad de sales-service (ADR 0018)")
+                .allSatisfy(call -> assertThat(call.getRequest().getHeader("Authorization"))
+                        .isEqualTo("Bearer " + FakeKeycloak.SERVICE_TOKEN));
 
         CATALOG.resetAll();   // catalog "caído": sin stubs, todo 404
         EntityExchangeResult<String> replay = createSale("VENTA-E2E-1");

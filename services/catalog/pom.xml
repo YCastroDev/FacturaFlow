@@ -23,6 +23,8 @@
         <archunit.version>1.5.1</archunit.version>
         <!-- No la gestiona Spring Boot; la línea 3.x es la de Boot 4 -->
         <springdoc.version>3.2.0</springdoc.version>
+        <!-- No la gestiona Spring Boot; el "standalone" trae Jetty y Jackson sombreados (sin choques) -->
+        <wiremock.version>3.13.2</wiremock.version>
         <!-- Cobertura de los tests para SonarCloud (ADR 0016). 0.8.14+ soporta Java 25; la 0.8.16 recién salió -->
         <jacoco.version>0.8.15</jacoco.version>
         <!-- SonarCloud (ADR 0016): solo lo usa la CI, y solo si existe el secreto SONAR_TOKEN. Un proyecto por servicio. -->
@@ -76,10 +78,22 @@
             <version>${springdoc.version}</version>
         </dependency>
 
+        <!-- Seguridad (ADR 0018): resource server que valida el JWT de Keycloak (firma, iss, aud, exp) y los roles -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security-oauth2-resource-server</artifactId>
+        </dependency>
+
         <!-- Tests -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- jwt() de spring-security-test para los tests de la capa web (ADR 0018) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security-oauth2-resource-server-test</artifactId>
             <scope>test</scope>
         </dependency>
         <!-- En Boot 4, @WebMvcTest/MockMvc y RestTestClient viven en módulos propios -->
@@ -101,6 +115,13 @@
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>testcontainers-postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Keycloak falso de los tests (JWKS de una clave de prueba, ADR 0018) -->
+        <dependency>
+            <groupId>org.wiremock</groupId>
+            <artifactId>wiremock-standalone</artifactId>
+            <version>${wiremock.version}</version>
             <scope>test</scope>
         </dependency>
         <!-- Lee las imágenes de PostgreSQL y RabbitMQ de infra/docker-compose.yml (InfraImages, ADR 0016) -->

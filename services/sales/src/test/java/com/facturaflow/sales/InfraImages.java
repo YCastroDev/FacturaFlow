@@ -27,6 +27,8 @@ public final class InfraImages {
 
     public static final DockerImageName POSTGRES = image("postgres");
     public static final DockerImageName RABBITMQ = image("rabbitmq");
+    /** Keycloak real de los tests de punta a punta de la seguridad (ADR 0018). */
+    public static final DockerImageName KEYCLOAK = image("keycloak");
 
     private InfraImages() {
     }

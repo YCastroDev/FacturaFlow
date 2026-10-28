@@ -11,6 +11,7 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
+import com.facturaflow.catalog.config.SecurityConfiguration;
 import com.facturaflow.catalog.model.CatalogRuleException;
 import com.facturaflow.catalog.model.Customer;
 import com.facturaflow.catalog.model.CustomerDocument;
@@ -31,16 +32,20 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 import org.springframework.test.web.servlet.assertj.MvcTestResult;
 
 @WebMvcTest(CustomerController.class)
+@Import(SecurityConfiguration.class)
+@WithMockUser(roles = "admin")
 class CustomerControllerTest {
 
     private static final String URL = "/api/v1/customers";

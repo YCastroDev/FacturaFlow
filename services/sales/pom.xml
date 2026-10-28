@@ -93,10 +93,27 @@
             <version>${springdoc.version}</version>
         </dependency>
 
+        <!-- Seguridad (ADR 0018): resource server que valida el JWT de Keycloak (firma, iss, aud, exp) y los roles -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security-oauth2-resource-server</artifactId>
+        </dependency>
+        <!-- Sales → catalog con client credentials (ADR 0018): token de sales-service en caché y renovado -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security-oauth2-client</artifactId>
+        </dependency>
+
         <!-- Tests -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- jwt() de spring-security-test para los tests de la capa web (ADR 0018) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security-oauth2-resource-server-test</artifactId>
             <scope>test</scope>
         </dependency>
         <!-- En Boot 4, @WebMvcTest/MockMvc y RestTestClient viven en módulos propios -->

@@ -3,19 +3,31 @@
 # Usa la API pública de catalog (pasa por todas sus validaciones; no toca la base) y es IDEMPOTENTE:
 # un 409 significa "ya existe" y se toma como éxito. No borra ni modifica nada existente.
 #
+# Crear productos exige el rol admin (ADR 0018): el token sale de FACTURAFLOW_TOKEN o, si no está, de
+# ./scripts/keycloak-token.sh admin.demo (pide la contraseña sin eco, o la toma de KC_PASSWORD). El token nunca va en
+# los argumentos de curl (no aparece en "ps"): la cabecera se le pasa por un descriptor de archivo.
+#
 # Uso: ./scripts/seed-catalog.sh [URL de catalog]     (por defecto http://localhost:8082)
+#   ej: FACTURAFLOW_TOKEN=$(./scripts/keycloak-token.sh admin.demo) ./scripts/seed-catalog.sh
 set -euo pipefail
 
 catalog_url="${1:-http://localhost:8082}"
+token="${FACTURAFLOW_TOKEN:-}"
+if [[ -z "$token" ]]; then
+  token="$("$(dirname "$0")/keycloak-token.sh" admin.demo)"
+fi
 
 # create <recurso> <descripción> <json>
 create() {
   local resource="$1" description="$2" body="$3" status
   status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$catalog_url/api/v1/$resource" \
-    -H 'Content-Type: application/json' -d "$body") || status="sin respuesta"
+    -H 'Content-Type: application/json' -H @<(printf 'Authorization: Bearer %s\n' "$token") \
+    -d "$body") || status="sin respuesta"
   case "$status" in
     201) echo "  creado:    $description" ;;
     409) echo "  ya existe: $description" ;;
+    401) echo "  ERROR (401): token ausente, vencido o inválido (los tokens duran 5 min)" >&2; exit 1 ;;
+    403) echo "  ERROR (403): el token no es de admin.demo (crear productos exige el rol admin)" >&2; exit 1 ;;
     *)   echo "  ERROR ($status): $description" >&2; exit 1 ;;
   esac
 }

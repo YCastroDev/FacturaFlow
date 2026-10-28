@@ -1,4 +1,5 @@
-# API Gateway (ADR 0017): punto de entrada único a los servicios. En la Fase 1 solo enruta (no exige token).
+# API Gateway (ADR 0017): punto de entrada único a los servicios. Desde la Fase 2 (ADR 0018) exige un token del realm
+# con algún rol de la aplicación; cada servicio lo vuelve a validar y aplica su matriz de permisos (zero trust).
 # Los destinos se leen de variables de entorno; por defecto, los nombres de la red de docker compose.
 spring:
   application:
@@ -13,6 +14,16 @@ spring:
       # ~45 s en el peor caso (3 intentos × (3 s de conexión + 10 s de lectura) + esperas, ADR 0010).
       connect-timeout: 2s
       read-timeout: 60s
+  # Resource server (ADR 0018). Sin "issuer-uri" como fuente de descubrimiento: las claves se piden a la URL INTERNA
+  # de Keycloak (jwk-set-uri, solo con el primer token: el gateway arranca sin Keycloak) y el "iss" esperado es el
+  # FIJO del realm (KC_HOSTNAME, ADR 0017), el mismo dentro y fuera de Docker. Boot valida además firma y vigencia.
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${SECURITY_JWT_ISSUER:http://localhost:8180/realms/facturaflow}
+          jwk-set-uri: ${SECURITY_JWT_JWK_SET_URI:http://keycloak:8080/realms/facturaflow/protocol/openid-connect/certs}
+          audiences: facturaflow-api
   cloud:
     gateway:
       server:
@@ -41,8 +52,9 @@ server:
     include-message: never
     include-stacktrace: never
 
-# Actuator: solo lectura y nada sensible. El health NO consulta los servicios ni Keycloak (mismo criterio que el
-# ADR 0010): que un servicio caiga no debe sacar al gateway de servicio ni reiniciarlo.
+# Actuator: solo lectura y nada sensible; el health es público y el resto exige el rol admin (ADR 0018). El health NO
+# consulta los servicios ni Keycloak (mismo criterio que el ADR 0010): que un servicio caiga no debe sacar al gateway
+# de servicio ni reiniciarlo.
 management:
   endpoints:
     web:

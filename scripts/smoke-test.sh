@@ -11,7 +11,9 @@
 # - Credenciales DESECHABLES: un env temporal generado de .env.example con cada CAMBIAME reemplazado por un valor
 #   aleatorio; se borra al terminar. Nunca lee .env.
 # - Dependencias: solo PostgreSQL (invoicing, catalog y sales). RabbitMQ y Keycloak quedan fuera a propósito: ningún
-#   servicio los necesita para arrancar (ADR 0013, 0014 y 0017); el gateway arranca solo.
+#   servicio los necesita para arrancar (ADR 0013, 0014 y 0017); el gateway arranca solo. Aunque desde la Fase 2 todos
+#   validan tokens, las claves de Keycloak se piden con el primer token, nunca al arrancar, y el health es público
+#   (ADR 0018): la prueba comprueba también eso.
 set -euo pipefail
 
 if [[ $# -ne 2 ]]; then

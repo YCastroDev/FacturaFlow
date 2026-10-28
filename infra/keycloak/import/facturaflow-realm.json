@@ -630,6 +630,30 @@
         "include.in.token.scope": "true",
         "display.on.consent.screen": "false"
       }
+    },
+    {
+      "name": "facturaflow-api",
+      "description": "Audiencia de la API de FacturaFlow (aud = facturaflow-api): la exigen el gateway y los servicios (ADR 0018)",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "false",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "audience facturaflow-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "facturaflow-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true",
+            "lightweight.claim": "false"
+          }
+        }
+      ]
     }
   ],
   "defaultDefaultClientScopes": [
@@ -721,7 +745,8 @@
       "defaultClientScopes": [
         "basic",
         "service_account",
-        "catalog.read"
+        "catalog.read",
+        "facturaflow-api"
       ],
       "optionalClientScopes": []
     },
@@ -757,7 +782,8 @@
         "email",
         "profile",
         "roles",
-        "web-origins"
+        "web-origins",
+        "facturaflow-api"
       ],
       "optionalClientScopes": []
     },
@@ -777,7 +803,8 @@
         "basic",
         "email",
         "profile",
-        "roles"
+        "roles",
+        "facturaflow-api"
       ],
       "optionalClientScopes": []
     }

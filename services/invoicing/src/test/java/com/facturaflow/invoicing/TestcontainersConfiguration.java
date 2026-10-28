@@ -7,6 +7,7 @@ import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.context.DynamicPropertyRegistrar;
 import org.testcontainers.containers.Container;
 import org.testcontainers.postgresql.PostgreSQLContainer;
@@ -23,8 +24,11 @@ import org.testcontainers.utility.MountableFile;
  * {@code invoicing}, así los tests fallan si la topología necesita un permiso que el usuario real no tiene (ADR
  * 0014); para publicar como el productor, {@link #salesTemplate} usa el usuario {@code sales}. Las contraseñas son
  * de prueba, solo viven en este contenedor desechable.
+ *
+ * <p>Importa {@link TestSecurityConfiguration}: todo test con la aplicación completa valida tokens (ADR 0018).
  */
 @TestConfiguration(proxyBeanMethods = false)
+@Import(TestSecurityConfiguration.class)
 public class TestcontainersConfiguration {
 
     public static final String SALES_EVENTS = "sales.events";

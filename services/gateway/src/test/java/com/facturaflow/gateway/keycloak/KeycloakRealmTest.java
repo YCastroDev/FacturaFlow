@@ -109,6 +109,7 @@ class KeycloakRealmTest {
         assertThat((List<String>) JsonPath.read(claims, "$.realm_access.roles"))
                 .contains(role).doesNotContainAnyElementsOf(others(role));
         assertThat((String) JsonPath.read(claims, "$.sub")).isNotBlank();
+        assertThat(audiences(claims)).as("audiencia de la API (ADR 0018)").contains("facturaflow-api");
     }
 
     @Test
@@ -133,6 +134,22 @@ class KeycloakRealmTest {
         assertThat((String) JsonPath.read(claims, "$.azp")).isEqualTo("sales-service");
         assertThat(((String) JsonPath.read(claims, "$.scope")).split(" ")).contains("catalog.read");
         assertThat(claims).doesNotContain("\"admin\"", "\"vendedor\"", "\"contador\"");
+        assertThat(audiences(claims)).contains("facturaflow-api");
+        assertThat(((String) JsonPath.read(claims, "$.scope")).split(" ")).doesNotContain("facturaflow-api");
+    }
+
+    @Test
+    @DisplayName("Otro cliente del realm (admin-cli) da un token válido del mismo emisor para el usuario, pero SIN la "
+            + "audiencia de la API: por eso el gateway y los servicios exigen aud = facturaflow-api")
+    void otherClientsDoNotGetTheApiAudience() {
+        Token response = token("facturaflow", form("grant_type", "password", "client_id", "admin-cli",
+                "username", "admin.demo", "password", PASSWORDS.get("admin.demo")));
+
+        assertThat(response.status()).as(response.body()).isEqualTo(200);
+        String claims = claims(response.body());
+        assertThat((String) JsonPath.read(claims, "$.iss")).endsWith("/realms/facturaflow");
+        assertThat((String) JsonPath.read(claims, "$.azp")).isEqualTo("admin-cli");
+        assertThat(audiences(claims)).doesNotContain("facturaflow-api");
     }
 
     @Test
@@ -196,6 +213,15 @@ class KeycloakRealmTest {
     private static String claims(String tokenResponse) {
         String accessToken = JsonPath.read(tokenResponse, "$.access_token");
         return new String(Base64.getUrlDecoder().decode(accessToken.split("\\.")[1]), StandardCharsets.UTF_8);
+    }
+
+    /** {@code aud} puede ser un texto o una lista (RFC 7519); falta si ningún mapper la agrega. */
+    private static List<String> audiences(String claims) {
+        Object aud = JsonPath.parse(claims).read("$", Map.class).get("aud");
+        if (aud instanceof List<?> list) {
+            return list.stream().map(String::valueOf).toList();
+        }
+        return aud == null ? List.of() : List.of(String.valueOf(aud));
     }
 
     private static MultiValueMap<String, String> form(String... keyValues) {

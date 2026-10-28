@@ -2,6 +2,7 @@ package com.facturaflow.sales.infrastructure.adapter.out.catalog;
 
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.github.resilience4j.retry.RetryRegistry;
+import java.time.Clock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -34,9 +35,16 @@ class CatalogConfiguration {
     }
 
     @Bean
-    CatalogRestClient catalogRestClient(CatalogProperties properties, CatalogResilience resilience) {
-        LOG.info("Catalog: {} (connect {}, read {})", properties.baseUrl(), properties.connectTimeout(),
-                properties.readTimeout());
-        return new CatalogRestClient(new CatalogHttp(properties, resilience));
+    CatalogTokenProvider catalogTokenProvider(CatalogProperties properties, Clock clock) {
+        return new CatalogTokenProvider(properties.auth(), clock);
+    }
+
+    @Bean
+    CatalogRestClient catalogRestClient(CatalogProperties properties, CatalogResilience resilience,
+                                        CatalogTokenProvider tokens) {
+        LOG.info("Catalog: {} (connect {}, read {}); token de {} en {}", properties.baseUrl(),
+                properties.connectTimeout(), properties.readTimeout(), properties.auth().clientId(),
+                properties.auth().tokenUri());
+        return new CatalogRestClient(new CatalogHttp(properties, resilience, tokens));
     }
 }

@@ -7,6 +7,7 @@ Aceptado — 2026-10-26. Cumple lo anticipado en el [ADR 0001](0001-monorepo.md)
 Nota del 2026-10-27: las imágenes de PostgreSQL y RabbitMQ de los tests salen del compose y el compose dispara los tests (ver la nota al final de la decisión).
 
 Nota del 2026-10-28 (segunda): Java 25 fijado en las imágenes (sin la imagen `maven`) y prueba de humo de cada imagen en la CI (ver la nota al final).
+Nota del 2026-10-28 (tercera): seguridad, Fase 2: la prueba de humo sigue sin Keycloak y catalog y sales se disparan también con `infra/keycloak/**` (ADR 0018).
 
 ## Contexto
 
@@ -274,6 +275,19 @@ Desde el PR #5 (SnakeYAML con scope `test`, nota anterior) ninguna imagen arranc
 - **Control negativo:** se reconstruyeron catalog y gateway con SnakeYAML otra vez en scope `test`. La prueba falló en segundos, con código 1 y el error real en los logs (`snakeyaml was not found on the classpath`), y el cambio se revirtió.
 - **Tiempo agotado:** con `SMOKE_WAIT_TIMEOUT=1`, una imagen sana también falla.
 - `actionlint` 1.7.12 sin errores.
+
+## Nota (2026-10-28): seguridad, Fase 2 (ADR 0018)
+
+- **La prueba de humo no cambia y sigue sin Keycloak.** Los cuatro servicios validan tokens desde la Fase 2, pero las claves de Keycloak se piden con el primer token, nunca al arrancar (`jwk-set-uri` sin descubrimiento), y el health es público. Se revisó lo que dejó pendiente la nota anterior ("si los servicios validan JWT, se revisa si Keycloak entra"): no hace falta. Sales recibe además `SALES_SERVICE_CLIENT_SECRET`, que la prueba ya genera desde `.env.example`.
+- **Rutas:** catalog y sales también se disparan con `infra/keycloak/**` (el alias `realm` de `ci.yml`, compartido con el gateway), porque sus tests de punta a punta importan el realm en un Keycloak real.
+
+| Servicio | Rutas (tabla completa) |
+|---|---|
+| invoicing | `services/invoicing/**`, `docs/events/**`, `infra/rabbitmq/**`, `infra/postgres/**`, `.env.example` |
+| sales | `services/sales/**`, `docs/events/**`, `infra/rabbitmq/**`, `infra/postgres/**`, `infra/keycloak/**`, `.env.example` |
+| catalog | `services/catalog/**`, `infra/postgres/**`, `infra/keycloak/**`, `.env.example` |
+| gateway | `services/gateway/**`, `infra/keycloak/**`, `.env.example` |
+| todos | `.github/workflows/**`, `.github/scripts/**`, `infra/docker-compose.yml`, `scripts/smoke-test.sh`, `infra/smoke/**`; `workflow_dispatch` prueba todos |
 
 ## Cómo se haría en producción
 

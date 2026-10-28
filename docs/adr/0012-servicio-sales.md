@@ -4,6 +4,8 @@
 
 Aceptado — 2026-10-23. Aplica el ADR 0002 (hexagonal) a sales y completa el ADR 0011 con la consulta por lote de catalog.
 
+> **Nota posterior (ADR 0018):** la API exige un token del realm con el rol `admin` o `vendedor`. Los 401 (`unauthorized`), 403 (`forbidden`) y 503 (`authentication-unavailable`) los escribe la configuración de seguridad con el mismo formato de Problem Details; su tabla está en la decisión 6 del ADR 0018 y sus tests en `SaleSecurityTest`. Sales, además, llama a catalog con su propio token (client credentials de `sales-service`, dentro del reintento y del circuito de catalog: decisión 7 del ADR 0018). Las decisiones de este ADR no cambian.
+
 ## Contexto
 
 `sales` es el tercer servicio. Registra ventas de una pyme tomando el cliente y los productos de `catalog`. Más adelante publicará un evento `SaleConfirmed` y `invoicing` creará la factura a partir de él. En esta tarea todavía no hay RabbitMQ: invoicing no cambia.

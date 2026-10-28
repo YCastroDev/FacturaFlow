@@ -28,6 +28,7 @@ import com.facturaflow.sales.domain.model.Sale;
 import com.facturaflow.sales.domain.model.SaleId;
 import com.facturaflow.sales.domain.model.SaleStatus;
 import com.facturaflow.sales.domain.model.TaxType;
+import com.facturaflow.sales.infrastructure.config.SecurityConfiguration;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDate;
@@ -38,17 +39,22 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 import org.springframework.test.web.servlet.assertj.MvcTestResult;
 
 /**
  * Capa web aislada: controlador + manejador de errores + Jackson + Bean Validation, con los casos de uso
- * simulados. Verifica códigos HTTP, forma del JSON y Problem Details.
+ * simulados. Verifica códigos HTTP, forma del JSON y Problem Details. Con la seguridad real y un usuario
+ * {@code vendedor}; la matriz de permisos se prueba en {@link SaleSecurityTest}.
  */
 @WebMvcTest(SaleController.class)
+@Import(SecurityConfiguration.class)
+@WithMockUser(roles = "vendedor")
 class SaleControllerTest {
 
     private static final String URL = "/api/v1/sales";

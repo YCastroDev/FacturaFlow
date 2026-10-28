@@ -26,6 +26,8 @@ public final class InfraImages {
     static final Map<String, String> BY_SERVICE = load();
 
     public static final DockerImageName POSTGRES = image("postgres");
+    /** Keycloak real de los tests de punta a punta de la seguridad (ADR 0018). */
+    public static final DockerImageName KEYCLOAK = image("keycloak");
 
     private InfraImages() {
     }

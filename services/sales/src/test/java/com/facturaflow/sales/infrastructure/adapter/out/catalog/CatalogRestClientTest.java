@@ -1,12 +1,14 @@
 package com.facturaflow.sales.infrastructure.adapter.out.catalog;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
+import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
 import static com.github.tomakehurst.wiremock.client.WireMock.equalToJson;
 import static com.github.tomakehurst.wiremock.client.WireMock.get;
 import static com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.okJson;
 import static com.github.tomakehurst.wiremock.client.WireMock.post;
 import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
+import static com.github.tomakehurst.wiremock.client.WireMock.unauthorized;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMockConfig;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -30,6 +32,7 @@ import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.github.resilience4j.retry.RetryRegistry;
 import java.net.ServerSocket;
 import java.net.URI;
+import java.time.Clock;
 import java.time.Duration;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -47,6 +50,8 @@ import org.junit.jupiter.params.provider.CsvSource;
  * Valores de resiliencia de producción, salvo el timeout de lectura: holgado en los tests que no tratan de
  * tiempos (en un runner lento, un timeout justo convierte un 503 en un timeout) y corto, frente a una
  * respuesta mucho más lenta, solo en el que prueba el timeout.
+ *
+ * <p>El mismo WireMock hace de token endpoint de Keycloak (client credentials de sales-service, ADR 0018).
  */
 class CatalogRestClientTest {
 
@@ -56,6 +61,9 @@ class CatalogRestClientTest {
     private static final Duration GENEROUS_READ_TIMEOUT = Duration.ofSeconds(10);
     private static final Duration SHORT_READ_TIMEOUT = Duration.ofSeconds(1);
     private static final Duration SLOW_RESPONSE = Duration.ofSeconds(5);
+    private static final String TOKEN_PATH = "/realms/facturaflow/protocol/openid-connect/token";
+    private static final String TOKEN_JSON = """
+            { "access_token": "%s", "token_type": "Bearer", "expires_in": %d }""";
 
     static final String CUSTOMER_JSON = """
             { "id": "c0000000-0000-4000-8000-000000000001", "documentType": "NIT", "documentNumber": "890903938",
@@ -77,8 +85,10 @@ class CatalogRestClientTest {
     private CatalogResilience resilience;
     private CatalogRestClient client;
 
-    static CatalogProperties properties(URI baseUrl, Duration readTimeout) {
+    static CatalogProperties properties(URI baseUrl, Duration readTimeout, URI tokenUri) {
         return new CatalogProperties(baseUrl, Duration.ofSeconds(1), readTimeout, Duration.ofSeconds(5),
+                new CatalogProperties.Auth(tokenUri, "sales-service", "secreto-de-prueba", Duration.ofSeconds(1),
+                        GENEROUS_READ_TIMEOUT, Duration.ofSeconds(60)),
                 new CatalogProperties.Resilience(
                         new CatalogProperties.RetrySettings(2, Duration.ofMillis(50), 0.5),
                         new CatalogProperties.CircuitBreakerSettings(10, 5, 50, Duration.ofSeconds(30), 2)));
@@ -89,15 +99,25 @@ class CatalogRestClientTest {
     }
 
     private CatalogRestClient clientFor(URI baseUrl, Duration readTimeout) {
-        CatalogProperties properties = properties(baseUrl, readTimeout);
+        return clientFor(baseUrl, readTimeout, URI.create(catalog.baseUrl() + TOKEN_PATH));
+    }
+
+    private CatalogRestClient clientFor(URI baseUrl, Duration readTimeout, URI tokenUri) {
+        CatalogProperties properties = properties(baseUrl, readTimeout, tokenUri);
         resilience = new CatalogResilience(properties, CircuitBreakerRegistry.ofDefaults(), RetryRegistry.ofDefaults());
-        return new CatalogRestClient(new CatalogHttp(properties, resilience));
+        CatalogTokenProvider tokens = new CatalogTokenProvider(properties.auth(), Clock.systemUTC());
+        return new CatalogRestClient(new CatalogHttp(properties, resilience, tokens));
+    }
+
+    private void tokenEndpointReturns(String token, int expiresInSeconds) {
+        catalog.stubFor(post(TOKEN_PATH).willReturn(okJson(TOKEN_JSON.formatted(token, expiresInSeconds))));
     }
 
     @BeforeEach
     void start() {
         catalog = new WireMockServer(wireMockConfig().dynamicPort());
         catalog.start();
+        tokenEndpointReturns("token-1", 300);
         client = clientFor(URI.create(catalog.baseUrl()));
     }
 
@@ -264,5 +284,113 @@ class CatalogRestClientTest {
         assertThatThrownBy(() -> client.findCustomer(NIT)).isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("HTTP 400");
         assertThat(resilience.circuitBreaker().getMetrics().getNumberOfFailedCalls()).isZero();
+    }
+
+    // ----- Identidad de sales-service (ADR 0018) -----
+
+    @Test
+    @DisplayName("cada llamada lleva el token de sales-service, pedido UNA vez y reutilizado mientras no vaya a vencer")
+    void sendsCachedServiceToken() {
+        catalog.stubFor(get(NIT_PATH).willReturn(okJson(CUSTOMER_JSON.formatted("true"))));
+        catalog.stubFor(post(LOOKUP_PATH).willReturn(okJson(LOOKUP_JSON)));
+
+        client.findCustomer(NIT);
+        client.findProducts(codes("CAFE-500"));
+
+        // client_secret_basic: "sales-service:secreto-de-prueba" en Base64.
+        catalog.verify(1, postRequestedFor(urlEqualTo(TOKEN_PATH))
+                .withHeader("Authorization", equalTo("Basic c2FsZXMtc2VydmljZTpzZWNyZXRvLWRlLXBydWViYQ=="))
+                .withRequestBody(equalTo("grant_type=client_credentials")));
+        catalog.verify(1, getRequestedFor(urlEqualTo(NIT_PATH)).withHeader("Authorization", equalTo("Bearer token-1")));
+        catalog.verify(1, postRequestedFor(urlEqualTo(LOOKUP_PATH))
+                .withHeader("Authorization", equalTo("Bearer token-1")));
+    }
+
+    @Test
+    @DisplayName("un token al que le falta menos que el margen de renovación (60 s) se renueva antes de usarlo")
+    void renewsTokenBeforeExpiry() {
+        tokenEndpointReturns("token-corto", 30);
+        catalog.stubFor(get(NIT_PATH).willReturn(okJson(CUSTOMER_JSON.formatted("true"))));
+
+        client.findCustomer(NIT);
+        client.findCustomer(NIT);
+
+        catalog.verify(2, postRequestedFor(urlEqualTo(TOKEN_PATH)));
+    }
+
+    @Test
+    @DisplayName("catalog rechaza el token (401): se descarta, el reintento pide uno nuevo y la llamada sirve")
+    void rejectedTokenIsRenewedOnRetry() {
+        catalog.stubFor(post(TOKEN_PATH).inScenario("token").whenScenarioStateIs(Scenario.STARTED)
+                .willReturn(okJson(TOKEN_JSON.formatted("token-viejo", 300))).willSetStateTo("rotado"));
+        catalog.stubFor(post(TOKEN_PATH).inScenario("token").whenScenarioStateIs("rotado")
+                .willReturn(okJson(TOKEN_JSON.formatted("token-nuevo", 300))));
+        catalog.stubFor(get(NIT_PATH).withHeader("Authorization", equalTo("Bearer token-viejo"))
+                .willReturn(unauthorized()));
+        catalog.stubFor(get(NIT_PATH).withHeader("Authorization", equalTo("Bearer token-nuevo"))
+                .willReturn(okJson(CUSTOMER_JSON.formatted("true"))));
+
+        assertThat(client.findCustomer(NIT)).isPresent();
+        catalog.verify(2, postRequestedFor(urlEqualTo(TOKEN_PATH)));
+        catalog.verify(2, getRequestedFor(urlEqualTo(NIT_PATH)));
+    }
+
+    @Test
+    @DisplayName("catalog niega el acceso (403): configuración, sin reintento; 503 para el cliente (nunca 500)")
+    void forbiddenIsATechnicalFailure() {
+        catalog.stubFor(post(LOOKUP_PATH).willReturn(aResponse().withStatus(403)));
+
+        assertThatThrownBy(() -> client.findProducts(codes("CAFE-500")))
+                .isInstanceOfSatisfying(CatalogUnavailableException.class,
+                        e -> assertThat(e.reason()).isEqualTo(Reason.FAILURE))
+                .hasMessageContaining("HTTP 403");
+        catalog.verify(1, postRequestedFor(urlEqualTo(LOOKUP_PATH)));
+    }
+
+    @Test
+    @DisplayName("Keycloak rechaza las credenciales (401 invalid_client): sin reintento, sin llamar a catalog, 503")
+    void invalidClientCredentials() {
+        catalog.stubFor(post(TOKEN_PATH).willReturn(aResponse().withStatus(401)
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"error\":\"invalid_client\",\"error_description\":\"Invalid client credentials\"}")));
+
+        assertThatThrownBy(() -> client.findCustomer(NIT))
+                .isInstanceOf(CatalogUnavailableException.class)
+                .hasMessageContaining("Keycloak rechazó")
+                .hasMessageNotContaining("Invalid client credentials");
+        catalog.verify(1, postRequestedFor(urlEqualTo(TOKEN_PATH)));
+        catalog.verify(0, getRequestedFor(urlEqualTo(NIT_PATH)));
+        assertThat(resilience.circuitBreaker().getMetrics().getNumberOfFailedCalls()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("Keycloak reiniciando (503): se reintenta una vez y la llamada sirve")
+    void keycloakTransient503() {
+        catalog.stubFor(post(TOKEN_PATH).inScenario("kc").whenScenarioStateIs(Scenario.STARTED)
+                .willReturn(aResponse().withStatus(503)).willSetStateTo("arriba"));
+        catalog.stubFor(post(TOKEN_PATH).inScenario("kc").whenScenarioStateIs("arriba")
+                .willReturn(okJson(TOKEN_JSON.formatted("token-1", 300))));
+        catalog.stubFor(get(NIT_PATH).willReturn(okJson(CUSTOMER_JSON.formatted("true"))));
+
+        assertThat(client.findCustomer(NIT)).isPresent();
+        catalog.verify(2, postRequestedFor(urlEqualTo(TOKEN_PATH)));
+    }
+
+    @Test
+    @DisplayName("Keycloak caído (sin conexión): 2 intentos que cuentan en el circuito de catalog, y 503")
+    void keycloakDown() throws Exception {
+        int closedPort;
+        try (ServerSocket socket = new ServerSocket(0)) {
+            closedPort = socket.getLocalPort();
+        }
+        CatalogRestClient withoutKeycloak = clientFor(URI.create(catalog.baseUrl()), GENEROUS_READ_TIMEOUT,
+                URI.create("http://localhost:" + closedPort + TOKEN_PATH));
+
+        assertThatThrownBy(() -> withoutKeycloak.findCustomer(NIT))
+                .isInstanceOfSatisfying(CatalogUnavailableException.class,
+                        e -> assertThat(e.retryAfter()).isEqualTo(Duration.ofSeconds(5)))
+                .hasMessageContaining("sin conexión con Keycloak");
+        assertThat(resilience.circuitBreaker().getMetrics().getNumberOfFailedCalls()).as("2 intentos").isEqualTo(2);
+        catalog.verify(0, getRequestedFor(urlEqualTo(NIT_PATH)));
     }
 }

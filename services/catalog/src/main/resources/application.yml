@@ -17,6 +17,16 @@ spring:
         default_batch_fetch_size: 100
   flyway:
     locations: classpath:db/migration
+  # Resource server (ADR 0018). Sin "issuer-uri" como fuente de descubrimiento: las claves se piden a la URL INTERNA
+  # de Keycloak (jwk-set-uri, solo con el primer token: el servicio arranca sin Keycloak) y el "iss" esperado es el
+  # FIJO del realm (KC_HOSTNAME, ADR 0017), el mismo dentro y fuera de Docker. Boot valida además firma y vigencia.
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${SECURITY_JWT_ISSUER:http://localhost:8180/realms/facturaflow}
+          jwk-set-uri: ${SECURITY_JWT_JWK_SET_URI:http://keycloak:8080/realms/facturaflow/protocol/openid-connect/certs}
+          audiences: facturaflow-api
   jackson:
     deserialization:
       # Un campo mal escrito (p. ej. "nombre") da 400 en vez de ignorarse sin aviso.
@@ -25,6 +35,10 @@ spring:
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
+    # Botón "Authorize" (ADR 0018): authorization code + PKCE con el cliente público facturaflow-swagger.
+    oauth:
+      client-id: facturaflow-swagger
+      use-pkce-with-authorization-code-grant: true
   api-docs:
     path: /v3/api-docs
 
@@ -34,7 +48,8 @@ server:
     include-message: never
     include-stacktrace: never
 
-# Actuator: solo lectura y nada sensible. El puerto solo se publica en 127.0.0.1 (docker-compose).
+# Actuator: solo lectura y nada sensible. El puerto solo se publica en 127.0.0.1 (docker-compose). El health es
+# público (healthcheck y prueba de humo); el resto exige el rol admin (ADR 0018).
 management:
   endpoints:
     web:
