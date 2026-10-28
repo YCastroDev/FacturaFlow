@@ -1,5 +1,5 @@
 # CI de UN servicio (ADR 0016). Workflow reutilizable: lo llama ci.yml una vez por servicio que cambió, así la
-# configuración existe una sola vez para invoicing, catalog y sales.
+# configuración existe una sola vez para invoicing, catalog, sales y gateway.
 #
 #   test   → compila y corre TODOS los tests con ./mvnw (Testcontainers usa el Docker del runner; los @Tag("sandbox")
 #            se excluyen en el pom); cobertura con JaCoCo; SonarCloud solo si existe el secreto SONAR_TOKEN.
@@ -13,7 +13,7 @@ on:
   workflow_call:
     inputs:
       service:
-        description: Carpeta del servicio en services/ (invoicing, catalog o sales)
+        description: Carpeta del servicio en services/ (invoicing, catalog, sales o gateway)
         required: true
         type: string
     secrets:

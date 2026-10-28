@@ -1,5 +1,5 @@
 # Actualizaciones de dependencias (ADR 0016): semanales y AGRUPADAS, para no recibir decenas de PRs. Un mismo cambio
-# en los tres servicios (p. ej. Spring Boot o Testcontainers) llega en UN solo PR, que la CI prueba en los tres.
+# en todos los servicios (p. ej. Spring Boot o Testcontainers) llega en UN solo PR, que la CI prueba en todos.
 # Las imágenes de PostgreSQL y RabbitMQ de los tests salen de infra/docker-compose.yml (InfraImages): el PR de
 # docker-compose las actualiza y dispara los tests. No cubre la de gitleaks en los scripts y el workflow ni la de
 # Maven en scripts/mvn.sh: se revisan a mano (lista en el ADR 0016).
@@ -11,6 +11,7 @@ updates:
       - /services/invoicing
       - /services/catalog
       - /services/sales
+      - /services/gateway
     schedule:
       interval: weekly
       day: monday
@@ -31,6 +32,7 @@ updates:
       - /services/invoicing
       - /services/catalog
       - /services/sales
+      - /services/gateway
     schedule:
       interval: weekly
       day: monday

@@ -192,6 +192,22 @@ El repo es público y no tenía licencia: el código era visible pero, legalment
 
 **En producción** se fijaría además el digest (`imagen:tag@sha256:…`, que Dependabot también actualiza) y la lista de imágenes vendría de un catálogo central de la plataforma.
 
+## Nota (2026-10-28): el gateway y una corrección de SnakeYAML (ADR 0017)
+
+**Un servicio más, `gateway`**, con su job en `ci.yml` (el mismo `_service.yml`) y en los `needs` de `ci-result`. La tabla de rutas queda así:
+
+| Servicio | Rutas |
+|---|---|
+| invoicing | `services/invoicing/**`, `docs/events/**`, `infra/rabbitmq/**` |
+| sales | `services/sales/**`, `docs/events/**`, `infra/rabbitmq/**` |
+| catalog | `services/catalog/**` |
+| gateway | `services/gateway/**`, `infra/keycloak/**` (el realm que importa `KeycloakRealmTest`), `.env.example` (lo lee `RealmFileSecretsTest`) |
+| todos | `.github/workflows/**`, `.github/scripts/**`, `infra/docker-compose.yml` (también es la fuente de la imagen de Keycloak); `workflow_dispatch` prueba todos |
+
+Dependabot vigila `/services/gateway` en `maven` y `docker`, y la imagen de Keycloak en `docker-compose`. SonarCloud: proyecto `ycastrodev_facturaflow-gateway`.
+
+**Corrección de la nota del 2026-10-27:** SnakeYAML **no** puede ser "dependencia de test". Con `<scope>test</scope>` salía del jar ejecutable (el scope declarado pisa el transitivo de `spring-boot-starter`) y los servicios no podían leer su `application.yml` al arrancar. La CI no lo detectó porque construye la imagen pero no la arranca. Ahora va sin scope en los cuatro poms. El test de humo de punta a punta de "Cómo se haría en producción" lo habría detectado.
+
 ## Cómo se haría en producción
 
 - **CD:**

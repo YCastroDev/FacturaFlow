@@ -41,3 +41,5 @@ SQL
 create_service_db invoicing_db invoicing_user "${INVOICING_DB_PASSWORD:-}"
 create_service_db catalog_db   catalog_user   "${CATALOG_DB_PASSWORD:-}"
 create_service_db sales_db     sales_user     "${SALES_DB_PASSWORD:-}"
+# No es un servicio de FacturaFlow, pero sigue la misma regla: Keycloak tiene su propia base (ADR 0017).
+create_service_db keycloak_db  keycloak_user  "${KEYCLOAK_DB_PASSWORD:-}"

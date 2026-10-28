@@ -140,10 +140,11 @@
             <scope>test</scope>
         </dependency>
         <!-- Lee las imágenes de PostgreSQL y RabbitMQ de infra/docker-compose.yml (InfraImages, ADR 0016) -->
+        <!-- Sin scope "test": lo trae spring-boot-starter y Spring Boot lo necesita EN EJECUCIÓN para leer
+             application.yml. Con scope test sale del jar y el servicio no arranca. -->
         <dependency>
             <groupId>org.yaml</groupId>
             <artifactId>snakeyaml</artifactId>
-            <scope>test</scope>
         </dependency>
         <!-- Tests de arquitectura (hacen cumplir el ADR 0002) -->
         <dependency>
