@@ -44,6 +44,7 @@ import com.facturaflow.invoicing.domain.model.ReferenceCode;
 import com.facturaflow.invoicing.domain.model.TaxScheme;
 import com.facturaflow.invoicing.domain.model.TaxType;
 import com.facturaflow.invoicing.domain.model.UnitOfMeasure;
+import com.facturaflow.invoicing.infrastructure.config.SecurityConfiguration;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -55,8 +56,10 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 import org.springframework.test.web.servlet.assertj.MvcTestResult;
@@ -66,6 +69,8 @@ import org.springframework.test.web.servlet.assertj.MvcTestResult;
  * casos de uso simulados. Verifica códigos HTTP, forma del JSON y Problem Details.
  */
 @WebMvcTest(InvoiceController.class)
+@Import(SecurityConfiguration.class)
+@WithMockUser(roles = "contador")
 class InvoiceControllerTest {
 
     private static final String URL = "/api/v1/invoices";

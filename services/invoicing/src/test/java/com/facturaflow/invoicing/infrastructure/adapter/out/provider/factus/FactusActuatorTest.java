@@ -3,6 +3,7 @@ package com.facturaflow.invoicing.infrastructure.adapter.out.provider.factus;
 import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMockConfig;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.facturaflow.invoicing.FakeKeycloak;
 import com.facturaflow.invoicing.TestcontainersConfiguration;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.jayway.jsonpath.JsonPath;
@@ -15,6 +16,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureRestTestClient;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -65,8 +67,13 @@ class FactusActuatorTest {
         resilience.circuitBreaker().transitionToClosedState();
     }
 
+    /** Actuator, salvo el health, es solo para admin (ADR 0018); lo demás va con el token por defecto (contador). */
     private EntityExchangeResult<String> get(String uri) {
-        return client.get().uri(uri).exchange().expectBody(String.class).returnResult();
+        var request = client.get().uri(uri);
+        if (uri.startsWith("/actuator/") && !uri.startsWith("/actuator/health")) {
+            request.header(HttpHeaders.AUTHORIZATION, "Bearer " + FakeKeycloak.userToken("admin"));
+        }
+        return request.exchange().expectBody(String.class).returnResult();
     }
 
     @Test

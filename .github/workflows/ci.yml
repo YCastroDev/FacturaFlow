@@ -61,6 +61,9 @@ jobs:
               # genera las credenciales desechables a partir de .env.example.
               - 'infra/postgres/**'
               - '.env.example'
+            realm: &realm
+              # El realm de Keycloak: lo importan los tests con Keycloak real (ADR 0018) del gateway, catalog y sales.
+              - 'infra/keycloak/**'
             events: &events
               # Contratos de eventos (los validan los tests) y el script de init de RabbitMQ (los tests lo ejecutan
               # en Testcontainers para conectarse con los usuarios reales).
@@ -79,12 +82,14 @@ jobs:
               - *events
               - *smoke
               - *smoke-db
+              - *realm
               - 'services/sales/**'
             catalog:
               - *ci
               - *infra-images
               - *smoke
               - *smoke-db
+              - *realm
               - 'services/catalog/**'
             gateway:
               # La imagen de Keycloak sale del compose (infra-images) y el realm de infra/keycloak (KeycloakRealmTest y
@@ -92,7 +97,7 @@ jobs:
               - *ci
               - *infra-images
               - *smoke
-              - 'infra/keycloak/**'
+              - *realm
               - '.env.example'
               - 'services/gateway/**'
 

@@ -31,6 +31,7 @@ class InfraImagesTest {
     @DisplayName("Los tests usan las imágenes de infraestructura que declara el compose")
     void testsUseComposeImages() {
         assertThat(InfraImages.POSTGRES.getRepository()).isEqualTo("postgres");
+        assertThat(InfraImages.KEYCLOAK.getRepository()).isEqualTo("keycloak/keycloak");
         assertThat(InfraImages.RABBITMQ.getRepository()).isEqualTo("rabbitmq");
     }
 }

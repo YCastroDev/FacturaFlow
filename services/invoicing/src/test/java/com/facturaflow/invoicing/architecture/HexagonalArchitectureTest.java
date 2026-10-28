@@ -145,6 +145,15 @@ class HexagonalArchitectureTest {
             .because("el formato AMQP de los mensajes y el cliente de RabbitMQ son detalles del adaptador: el resto "
                     + "del servicio publica solo a través del puerto EventPublisher (ADR 0015)");
 
+    // Regla 13: la seguridad es infraestructura (ADR 0018). Spring Security solo en la configuración (resource server y
+    // matriz de permisos): el dominio, los casos de uso y los adaptadores no saben del JWT ni de los roles.
+    @ArchTest
+    static final ArchRule security_stays_in_infrastructure = noClasses()
+            .that().resideOutsideOfPackage(BASE + ".infrastructure.config..")
+            .should().dependOnClassesThat().resideInAPackage("org.springframework.security..")
+            .because("el JWT y los roles son detalles de infraestructura: el dominio y los casos de uso no saben de "
+                    + "Spring Security, y las facturas que nacen de una venta llegan por eventos, sin token (ADR 0018)");
+
     // Regla 7: sin ciclos entre ningún par de paquetes.
     @ArchTest
     static final ArchRule no_package_cycles = slices()

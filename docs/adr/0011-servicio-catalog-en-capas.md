@@ -4,6 +4,8 @@
 
 Aceptado — 2026-10-23. **No reemplaza al ADR 0002**: invoicing sigue siendo hexagonal. Este ADR solo decide la arquitectura de catalog.
 
+> **Nota posterior (ADR 0018):** la API exige un token del realm (lecturas y lookup: `admin`, `vendedor` o `SCOPE_catalog.read`; clientes: también `vendedor`; el resto, `admin`). Los 401 (`unauthorized`), 403 (`forbidden`) y 503 (`authentication-unavailable`) los escribe la configuración de seguridad con el mismo formato de Problem Details; su tabla está en la decisión 6 del ADR 0018 y sus tests en `CatalogSecurityTest`. Las decisiones de este ADR no cambian.
+
 ## Contexto
 
 `catalog` es el segundo servicio del monorepo. Es dueño de los **productos** y los **clientes** de la pyme. Más adelante, `sales` lo consultará por HTTP (síncrono) al crear una venta y le pasará a invoicing una copia de esos datos; invoicing no cambia en esta tarea.

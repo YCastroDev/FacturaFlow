@@ -147,6 +147,22 @@ class HexagonalArchitectureTest {
             .because("los DTOs de los eventos de invoicing, su traducción y la topología de colas son detalles del "
                     + "contrato con invoicing: el adaptador entra por el caso de uso RecordInvoiceResult (ADR 0015)");
 
+    // Regla 13: la seguridad es infraestructura (ADR 0018). Spring Security solo en la configuración (resource server,
+    // matriz de permisos) y en el ACL de catalog (client credentials de sales-service), y el cliente OAuth2 solo ahí.
+    @ArchTest
+    static final ArchRule security_stays_in_infrastructure = noClasses()
+            .that().resideOutsideOfPackages(BASE + ".infrastructure.config..",
+                    BASE + ".infrastructure.adapter.out.catalog..")
+            .should().dependOnClassesThat().resideInAPackage("org.springframework.security..")
+            .because("el JWT, los roles y el token de sales-service son detalles de infraestructura: el dominio y los "
+                    + "casos de uso no saben de Spring Security (ADR 0018)");
+
+    @ArchTest
+    static final ArchRule oauth2_client_stays_inside_catalog_adapter = noClasses()
+            .that().resideOutsideOfPackage(BASE + ".infrastructure.adapter.out.catalog..")
+            .should().dependOnClassesThat().resideInAPackage("org.springframework.security.oauth2.client..")
+            .because("el token de sales-service solo existe para llamar a catalog: es parte de su ACL (ADR 0018)");
+
     // Regla 10: ningún código de otro servicio (ADR 0001).
     @ArchTest
     static final ArchRule no_code_from_other_services = noClasses()

@@ -200,6 +200,9 @@ services:
       SALES_RABBITMQ_VHOST: facturaflow
       SALES_RABBITMQ_USER: sales
       SALES_RABBITMQ_PASSWORD: ${SALES_RABBITMQ_PASSWORD:?Define SALES_RABBITMQ_PASSWORD en .env}
+      # Identidad de sales ante catalog (ADR 0018): client credentials con sales-service, el MISMO secreto que el realm
+      # recibe al importarse. El token se pide a keycloak:8080 (red interna) con la primera venta, no al arrancar.
+      SALES_SERVICE_CLIENT_SECRET: ${SALES_SERVICE_CLIENT_SECRET:?Define SALES_SERVICE_CLIENT_SECRET en .env}
     ports:
       - "127.0.0.1:8083:8080"
     depends_on:
@@ -220,7 +223,9 @@ services:
       start_period: 40s
     restart: unless-stopped
 
-  # Punto de entrada único a la API (ADR 0017). En la Fase 1 solo enruta, sin exigir token.
+  # Punto de entrada único a la API (ADR 0017). Exige un token del realm con algún rol de la aplicación y lo reenvía
+  # intacto: cada servicio lo vuelve a validar (zero trust, ADR 0018). Como los servicios, valida los tokens con las
+  # claves de keycloak:8080 (se piden con el primer token: arranca sin Keycloak) y el issuer fijo http://localhost:8180.
   gateway:
     build:
       context: ../services/gateway

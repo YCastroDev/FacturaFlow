@@ -12,7 +12,8 @@
 # Imprime SOLO el access token, para usarlo así:
 #   TOKEN=$(./scripts/keycloak-token.sh vendedor.demo)
 #   curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/sales/...
-# Con --claims imprime en cambio el contenido del token (roles, scope, issuer, vencimiento) para inspeccionarlo.
+# Los tokens duran 5 minutos (accessTokenLifespan del realm): al vencer, el gateway y los servicios responden 401.
+# Con --claims imprime en cambio el contenido del token (roles, scope, issuer, audiencia, vencimiento) para inspeccionarlo.
 #
 # Variables opcionales: KEYCLOAK_URL (por defecto http://localhost:8180).
 set -euo pipefail
@@ -78,6 +79,6 @@ if not show_claims:
     sys.exit()
 payload = token.split(".")[1]
 claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
-keys = ("iss", "azp", "preferred_username", "client_id", "scope", "realm_access", "exp")
+keys = ("iss", "aud", "azp", "preferred_username", "client_id", "scope", "realm_access", "exp")
 print(json.dumps({k: claims[k] for k in keys if k in claims}, indent=2, ensure_ascii=False))
 ' "$show_claims" <<<"$response"

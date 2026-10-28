@@ -8,6 +8,7 @@ Aceptado — 2026-10-21
 > - Huella v2 (ADR 0007).
 > - **ADR 0008:** adaptador real de Factus, endpoint `GET /api/v1/invoices/{id}/pdf` con su fila `invoice-not-issued` en la tabla de la decisión 8, y `electronicDocument.pdfUrl` reemplazado por `qrUrl` y `publicUrl` (también en el proveedor falso). Las decisiones de este ADR no cambian.
 > - **ADR 0009:** notas crédito con los mismos patrones (idempotencia con huella, emisión fuera de transacción, proveedor falso con las mismas palabras de simulación) y sus filas en la tabla de la decisión 8. La respuesta de una factura ISSUED agrega `credits`. `CanonicalText` se extrajo de `InvoiceRequestHasher` sin cambiar la huella. Las decisiones de este ADR no cambian.
+> - **ADR 0018:** la API exige un token del realm con el rol `admin` o `contador`. Los 401 (`unauthorized`), 403 (`forbidden`) y 503 (`authentication-unavailable`) los escribe la configuración de seguridad (los filtros actúan antes que el `ProblemDetailsHandler`), con el mismo formato; su tabla está en la decisión 6 del ADR 0018 y sus tests en `InvoicingSecurityTest`. Las decisiones de este ADR no cambian.
 
 ## Contexto
 

@@ -39,7 +39,7 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
   - sales publica el evento `SaleConfirmed` en RabbitMQ con un *transactional outbox*: la venta y su evento se guardan en la misma transacción y se publican con confirmación del broker, aunque RabbitMQ esté caído al vender ([ADR 0013](docs/adr/0013-mensajeria-y-outbox.md)). El contrato está en el [catálogo de eventos](docs/events/README.md);
   - invoicing consume ese evento: crea la factura y la emite con los mismos casos de uso de su API, reintenta las fallas técnicas con espera creciente y aparta en una DLQ lo que no puede procesar ([ADR 0014](docs/adr/0014-consumo-de-sale-confirmed.md)). Vender ya factura sola;
   - invoicing publica el resultado de cada factura en `invoicing.events` (con su propio outbox), y sales deja la venta `INVOICED` (número y CUFE) o `INVOICE_FAILED` (motivo). La Saga se cierra por coreografía ([ADR 0015](docs/adr/0015-cierre-de-la-saga-de-facturacion.md)).
-- **Seguridad (en curso):** Keycloak y el gateway ya funcionan, pero en esta Fase 1 nadie exige token; en la Fase 2, el gateway y cada servicio validarán el JWT y los roles (zero trust) ([ADR 0017](docs/adr/0017-seguridad-keycloak-y-gateway.md)).
+- **Seguridad:** Keycloak como proveedor de identidad (realm como código) y un API Gateway. El gateway **y** cada servicio validan el JWT y los roles (zero trust), y sales llama a catalog con su propia identidad (client credentials) ([ADR 0017](docs/adr/0017-seguridad-keycloak-y-gateway.md), [ADR 0018](docs/adr/0018-seguridad-resource-servers.md)).
 - **Todo corre en Docker:** no se necesita Java ni Maven instalados.
 
 Las decisiones y sus motivos están en los [ADRs](docs/adr/README.md).
@@ -70,7 +70,7 @@ Requisito: Docker Engine con Docker Compose.
    curl http://localhost:8083/actuator/health    # sales:     {"status":"UP",...}
    curl http://localhost:8080/actuator/health    # gateway:   {"status":"UP",...}
    ```
-5. **Sembrar los datos de ejemplo** en catalog (los usan los ejemplos de Swagger de sales; se puede repetir):
+5. **Sembrar los datos de ejemplo** en catalog (los usan los ejemplos de Swagger de sales; se puede repetir). Crear productos exige el rol admin: el script pide la contraseña de `admin.demo` (`KC_DEMO_ADMIN_PASSWORD` de tu `.env`) sin mostrarla:
    ```bash
    ./scripts/seed-catalog.sh
    ```
@@ -101,9 +101,26 @@ docker compose --env-file .env -f infra/docker-compose.yml up --build -d
 2. Crea `keycloak_db` como en la sección anterior: recrea `postgres` y ejecuta el script de init, que es idempotente.
 3. Levanta todo con `up --build -d`. Keycloak importa el realm la primera vez.
 
-## Seguridad: Keycloak y el gateway (Fase 1)
+### Si ya tenías el entorno levantado antes de la Fase 2 de seguridad
 
-Detalles y decisiones en el [ADR 0017](docs/adr/0017-seguridad-keycloak-y-gateway.md). **En esta fase nadie exige token**: el token se puede enviar y llega hasta los servicios, pero todavía no se valida (eso es la Fase 2).
+El realm ganó el client scope `facturaflow-api` (la audiencia que exigen el gateway y los servicios), y Keycloak solo importa el realm si no existe. Sin reimportarlo, todo token da `401`:
+
+1. En la consola de Keycloak (http://localhost:8180/admin), realm `facturaflow` → *Realm settings* → *Action* → *Delete*.
+2. `docker compose --env-file .env -f infra/docker-compose.yml up --build -d` y luego `restart keycloak`: vuelve a importar el realm.
+3. Comprueba la audiencia: `./scripts/keycloak-token.sh --claims vendedor.demo` debe mostrar `"aud"` con `facturaflow-api`.
+
+## Seguridad: Keycloak, gateway y roles
+
+Detalles y decisiones en el [ADR 0017](docs/adr/0017-seguridad-keycloak-y-gateway.md) (Keycloak, realm y gateway) y el [ADR 0018](docs/adr/0018-seguridad-resource-servers.md) (validación del token, matriz de permisos y sales → catalog). **Toda la API exige un token** del realm `facturaflow`, tanto por el gateway como por el puerto de cada servicio: sin token responde `401`, y sin el rol, `403` (en Problem Details).
+
+| Rol / identidad | Puede |
+|---|---|
+| `admin` (`admin.demo`) | todo, incluido Actuator (métricas, circuitos) |
+| `vendedor` (`vendedor.demo`) | crear y ver ventas; consultar productos y clientes; crear y editar clientes |
+| `contador` (`contador.demo`) | crear, ver y emitir facturas y notas crédito, y descargar sus PDF |
+| `sales-service` (client credentials, scope `catalog.read`) | solo leer catalog y la consulta por lote; lo usa sales internamente |
+
+El health (`/actuator/health`), Swagger UI y `/v3/api-docs` son públicos. La matriz completa, endpoint por endpoint, está en el ADR 0018.
 
 **Consola de Keycloak:** http://localhost:8180/admin, solo desde tu máquina.
 - Entra con `KEYCLOAK_ADMIN_USER` / `KEYCLOAK_ADMIN_PASSWORD` de tu `.env`.
@@ -111,41 +128,52 @@ Detalles y decisiones en el [ADR 0017](docs/adr/0017-seguridad-keycloak-y-gatewa
   - *Realm roles*: `admin`, `vendedor`, `contador`;
   - *Users*: `admin.demo`, `vendedor.demo`, `contador.demo`;
   - *Clients*: `sales-service`, `facturaflow-swagger`, `facturaflow-cli`;
-  - *Client scopes*: `catalog.read`.
+  - *Client scopes*: `catalog.read` y `facturaflow-api` (la audiencia de la API).
 
 **Obtener un token desde la terminal.** El script pide la contraseña sin mostrarla: es la variable `KC_DEMO_<ROL>_PASSWORD` de tu `.env`, o el `SALES_SERVICE_CLIENT_SECRET` para `sales-service`.
 
 ```bash
-./scripts/keycloak-token.sh --claims vendedor.demo     # issuer, usuario y roles: "realm_access": {"roles": ["vendedor"]}
+./scripts/keycloak-token.sh --claims vendedor.demo     # issuer, audiencia y roles: "realm_access": {"roles": ["vendedor"]}
 ./scripts/keycloak-token.sh --claims contador.demo
 ./scripts/keycloak-token.sh --claims admin.demo
 ./scripts/keycloak-token.sh --claims sales-service     # client credentials: "scope": "catalog.read", sin roles
 TOKEN=$(./scripts/keycloak-token.sh vendedor.demo)     # solo el token, para usarlo en curl
 ```
 
-- `facturaflow-cli` es un cliente **solo para desarrollo** (password grant). Los usuarios reales entrarán por authorization code + PKCE (`facturaflow-swagger`, Fase 2).
-- El token dura 5 minutos.
+- `facturaflow-cli` es un cliente **solo para desarrollo** (password grant). En el navegador se entra por authorization code + PKCE con el botón *Authorize* de Swagger (cliente `facturaflow-swagger`).
+- El token dura **5 minutos**: al vencer, la API responde `401` y hay que pedir otro.
 
-**Llamar a los servicios por el gateway** (http://localhost:8080). Las rutas son las mismas de cada servicio:
+**Llamar a los servicios por el gateway** (http://localhost:8080). Las rutas son las mismas de cada servicio; el gateway exige un token con algún rol y lo reenvía intacto, y cada servicio aplica su matriz:
 
 ```bash
-curl -s "http://localhost:8080/api/v1/products?size=5"                            # → catalog
-curl -s http://localhost:8080/api/v1/customers/by-document/NIT/890903938          # → catalog
-curl -s -H "Authorization: Bearer $TOKEN" -X POST http://localhost:8080/api/v1/sales \
+VENDEDOR=$(./scripts/keycloak-token.sh vendedor.demo)
+CONTADOR=$(./scripts/keycloak-token.sh contador.demo)
+curl -s "http://localhost:8080/api/v1/products?size=5"                            # → 401 (sin token)
+curl -s -H "Authorization: Bearer $VENDEDOR" "http://localhost:8080/api/v1/products?size=5"   # → catalog (200)
+curl -s -H "Authorization: Bearer $VENDEDOR" -X POST http://localhost:8080/api/v1/sales \
   -H 'Content-Type: application/json' -d '{ "referenceCode": "GW-0001",
   "customer": { "documentType": "NIT", "documentNumber": "890903938" },
   "lines": [ { "productCode": "CAFE-500", "quantity": 2 } ],
   "paymentMethod": "CASH", "paymentTerms": { "type": "CASH" } }'                 # → sales (201)
-curl -s http://localhost:8080/api/v1/sales/by-reference/GW-0001                   # → sales: INVOICED en segundos
-curl -s http://localhost:8080/api/v1/invoices/<invoiceId de la venta>             # → invoicing
-curl -s http://localhost:8080/api/v1/nada                                         # → 404 Problem Details del gateway
+curl -s -H "Authorization: Bearer $VENDEDOR" http://localhost:8080/api/v1/sales/by-reference/GW-0001   # INVOICED en segundos
+curl -s -H "Authorization: Bearer $VENDEDOR" http://localhost:8080/api/v1/invoices/<invoiceId>         # → 403 (vendedor)
+curl -s -H "Authorization: Bearer $CONTADOR" http://localhost:8080/api/v1/invoices/<invoiceId>         # → invoicing (200)
+curl -s -H "Authorization: Bearer $VENDEDOR" http://localhost:8080/api/v1/nada                         # → 404 del gateway
 ```
+
+Sales consulta catalog con **su propio** token (`sales-service`, client credentials), no con el del vendedor: lo pide a Keycloak con la primera venta, lo guarda en memoria y lo renueva antes de que venza. Si Keycloak no responde, la venta da `503 catalog-unavailable`, como si catalog estuviera caído.
 
 - **Errores del gateway:**
   - un servicio detenido da 502 `upstream-unavailable` solo en sus rutas;
   - uno que no responde en 60 s da 504 `upstream-timeout`;
   - el health del gateway sigue UP en los dos casos.
-- **Swagger UI** sigue en el puerto de cada servicio.
+- **Swagger UI** sigue en el puerto de cada servicio, con el botón *Authorize* (ver abajo).
+- **Actuator:** el health es público; el resto (`metrics`, `circuitbreakers`…) exige el token de `admin.demo`:
+  ```bash
+  ADMIN=$(./scripts/keycloak-token.sh admin.demo)
+  curl -s -H "Authorization: Bearer $ADMIN" http://localhost:8083/actuator/metrics/sales.outbox.pending
+  ```
+  En los ejemplos de Actuator de este README, agrega `-H "Authorization: Bearer $ADMIN"` salvo en `/actuator/health/**`.
 
 **Comprobar el issuer desde dentro de Docker** (debe ser el mismo `http://localhost:8180/realms/facturaflow` que en los tokens):
 
@@ -161,7 +189,11 @@ docker compose --env-file .env -f infra/docker-compose.yml exec gateway \
 
 ## Probar la API con Swagger
 
-Con el entorno levantado, abre **http://localhost:8081/swagger-ui.html**. Para probar el flujo completo:
+Con el entorno levantado, abre **http://localhost:8081/swagger-ui.html**.
+
+**Iniciar sesión (botón *Authorize*).** En cada Swagger UI (8081–8083), pulsa *Authorize* → *Authorize* en el esquema `keycloak` (el `client_id` ya viene como `facturaflow-swagger`, sin secreto). Se abre el login de Keycloak: entra con el usuario del rol que necesitas (`contador.demo` en invoicing, `admin.demo` o `vendedor.demo` en catalog y sales; las contraseñas son las `KC_DEMO_*_PASSWORD` de tu `.env`). Es authorization code + PKCE: Swagger nunca ve la contraseña. El token dura 5 minutos; al vencer, *Logout* y *Authorize* otra vez.
+
+Para probar el flujo completo (con `contador.demo`):
 
 1. **Crear** (`POST /api/v1/invoices`, sección *Facturas*): elige uno de los ejemplos del desplegable (*Contado con IVA* o *Crédito con IVA + INC*) y pulsa *Execute*. La respuesta es `201` con el header `Location` y los totales calculados.
 2. **Repetir** la misma petición: responde `200` con la misma factura, sin crear otra. Si cambias cualquier dato y mantienes el `referenceCode`, responde `409`.
@@ -214,9 +246,9 @@ El health del servicio **no** depende de Factus: `/actuator/health` sigue `UP`. 
 
 ```bash
 curl -s http://localhost:8081/actuator/health/providers    # componente "factus": estado del circuito y del limitador
-curl -s http://localhost:8081/actuator/circuitbreakers
-curl -s http://localhost:8081/actuator/metrics/resilience4j.retry.calls
-curl -s http://localhost:8081/actuator/metrics/invoicing.factus.rejected
+curl -s -H "Authorization: Bearer $ADMIN" http://localhost:8081/actuator/circuitbreakers
+curl -s -H "Authorization: Bearer $ADMIN" http://localhost:8081/actuator/metrics/resilience4j.retry.calls
+curl -s -H "Authorization: Bearer $ADMIN" http://localhost:8081/actuator/metrics/invoicing.factus.rejected
 ```
 
 **Demostración: abrir el circuito** con un Factus inalcanzable, solo para esa ejecución, sin tocar `.env`:
@@ -253,7 +285,7 @@ Los ejemplos a crédito usan un vencimiento lejano (`2030-01-31`) porque el venc
 
 ## Catálogo: productos y clientes (catalog)
 
-Swagger UI: **http://localhost:8082/swagger-ui.html**, especificación en http://localhost:8082/v3/api-docs.
+Swagger UI: **http://localhost:8082/swagger-ui.html**, especificación en http://localhost:8082/v3/api-docs. Inicia sesión con *Authorize*: `admin.demo` para todo; `vendedor.demo` consulta y crea o edita clientes, pero no productos (`403`).
 
 1. **Crear** un producto (`POST /api/v1/products`) o un cliente (`POST /api/v1/customers`) con uno de los ejemplos del desplegable. Responde `201`, con el header `ETag: "0"`.
    - El código del producto es único sin distinguir mayúsculas, y el cliente es único por tipo + número de documento: repetirlos responde `409`.
@@ -273,17 +305,18 @@ Swagger UI: **http://localhost:8082/swagger-ui.html**, especificación en http:/
 Lo mismo con curl:
 
 ```bash
-curl -si -X POST localhost:8082/api/v1/products -H 'Content-Type: application/json' \
+ADMIN=$(./scripts/keycloak-token.sh admin.demo)
+curl -si -X POST localhost:8082/api/v1/products -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' \
   -d '{"code":"CAFE-500","name":"Café molido 500 g","unitPrice":18500,"unit":"UNIT","taxes":[{"type":"IVA","rate":5}]}'
 # -> 201, ETag: "0", Location: .../api/v1/products/<id>
-curl -si -X PUT localhost:8082/api/v1/products/<id> -H 'Content-Type: application/json' -H 'If-Match: "0"' \
+curl -si -X PUT localhost:8082/api/v1/products/<id> -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -H 'If-Match: "0"' \
   -d '{"code":"CAFE-500","name":"Café molido 500 g","unitPrice":19900,"unit":"UNIT","taxes":[{"type":"IVA","rate":5}]}'
 # -> 200, ETag: "1". Repetir el mismo PUT con If-Match: "0" -> 412
 ```
 
 ## Ventas (sales): una venta de punta a punta
 
-Swagger UI: **http://localhost:8083/swagger-ui.html**. Con el entorno levantado y `./scripts/seed-catalog.sh` ejecutado:
+Swagger UI: **http://localhost:8083/swagger-ui.html** (inicia sesión con *Authorize* como `vendedor.demo`). Con el entorno levantado y `./scripts/seed-catalog.sh` ejecutado:
 
 1. **Confirmar una venta** (`POST /api/v1/sales`) con uno de los ejemplos del desplegable. La petición solo trae el documento del cliente, los códigos de producto con cantidad y descuento, y la forma de pago: precios, nombres, impuestos y datos fiscales salen de catalog.
    - *Contado*: NIT `890903938`, `CAFE-500` con 10 % de descuento y `ARROZ-KG` excluido de IVA. Responde `201` con un total de `41265.00`.
@@ -332,8 +365,8 @@ docker compose --env-file .env -f infra/docker-compose.yml stop rabbitmq
 # Confirmar una venta nueva en Swagger → 201: vender no depende del broker
 curl -s http://localhost:8083/actuator/health                    # sigue {"status":"UP",...}
 curl -s http://localhost:8083/actuator/health/dependencies       # "relay":"FAILING", "pendingEvents":1
-curl -s http://localhost:8083/actuator/metrics/sales.outbox.pending
-curl -s http://localhost:8083/actuator/metrics/sales.outbox.oldest.pending.age
+curl -s -H "Authorization: Bearer $ADMIN" http://localhost:8083/actuator/metrics/sales.outbox.pending
+curl -s -H "Authorization: Bearer $ADMIN" http://localhost:8083/actuator/metrics/sales.outbox.oldest.pending.age
 docker compose --env-file .env -f infra/docker-compose.yml start rabbitmq
 # En segundos: "relay":"OK", "pendingEvents":0, y el mensaje está en la cola de depuración
 ./scripts/rabbitmq-debug-queue.sh peek
@@ -353,14 +386,19 @@ Consola de RabbitMQ: **http://localhost:15672**. En Queues and Streams:
 
 ```bash
 # Ayudantes: confirmar una venta (el ejemplo de contado de Swagger) con un referenceCode y una observación,
-# ver su estado en sales y su factura en invoicing.
+# ver su estado en sales y su factura en invoicing. Vender y ver ventas: vendedor; ver facturas: contador; métricas:
+# admin (ADR 0018). Los tokens duran 5 min: si algo responde 401, vuelve a ejecutar "tokens".
+tokens() { VENDEDOR=$(./scripts/keycloak-token.sh vendedor.demo); CONTADOR=$(./scripts/keycloak-token.sh contador.demo)
+  ADMIN=$(./scripts/keycloak-token.sh admin.demo); }
+tokens
 venta() { curl -s -o /dev/null -w "venta $1: HTTP %{http_code}\n" -X POST http://localhost:8083/api/v1/sales \
+  -H "Authorization: Bearer $VENDEDOR" \
   -H 'Content-Type: application/json' -d "{\"referenceCode\":\"$1\",\"customer\":{\"documentType\":\"NIT\",\"documentNumber\":\"890903938\"},
   \"lines\":[{\"productCode\":\"CAFE-500\",\"quantity\":2,\"discountRate\":10}],\"paymentMethod\":\"CASH\",
   \"paymentTerms\":{\"type\":\"CASH\"},\"observation\":\"${2:-}\"}"; }
-estado() { curl -s "http://localhost:8083/api/v1/sales/by-reference/$1" | python3 -c 'import sys,json; d=json.load(sys.stdin);
+estado() { curl -s -H "Authorization: Bearer $VENDEDOR" "http://localhost:8083/api/v1/sales/by-reference/$1" | python3 -c 'import sys,json; d=json.load(sys.stdin);
 print(d["status"], d["invoice"] or "", d["invoiceFailure"] or "")'; }
-factura() { curl -s "http://localhost:8081/api/v1/invoices?referenceCode=$1"; echo; }
+factura() { curl -s -H "Authorization: Bearer $CONTADOR" "http://localhost:8081/api/v1/invoices?referenceCode=$1"; echo; }
 ```
 
 1. **Venta normal → INVOICED con el número de factura** (en segundos, sin tocar invoicing):
@@ -380,6 +418,7 @@ factura() { curl -s "http://localhost:8081/api/v1/invoices?referenceCode=$1"; ec
    estado DEMO-3        # CONFIRMED todo el tiempo: una falla técnica NO es un resultado (se puede reprocesar)
    ./scripts/rabbitmq-dlq.sh invoicing peek     # x-failure-category: technical, x-attempts-made: 4, el motivo
    ./scripts/rabbitmq-dlq.sh invoicing requeue  # o "Move messages" en la página de la DLQ en la consola
+   tokens               # pasaron más de 5 min: tokens nuevos
    estado DEMO-3        # INVOICED: el "proveedor volvió"
    ```
    Con `SIMULAR_CAIDA` (falla siempre), la venta queda `CONFIRMED` y el mensaje vuelve a la DLQ en cada reproceso: reprocesar sin corregir la causa no la arregla.
@@ -387,7 +426,7 @@ factura() { curl -s "http://localhost:8081/api/v1/invoices?referenceCode=$1"; ec
 ```bash
 curl -s http://localhost:8083/actuator/health/dependencies     # sales: messaging.outbox y messaging.consumer
 curl -s http://localhost:8081/actuator/health/dependencies     # invoicing: messaging.outbox y messaging.consumer
-curl -s "http://localhost:8083/actuator/metrics/sales.invoice_results.processed?tag=outcome:applied"
+curl -s -H "Authorization: Bearer $ADMIN" "http://localhost:8083/actuator/metrics/sales.invoice_results.processed?tag=outcome:applied"
 docker compose --env-file .env -f infra/docker-compose.yml logs invoicing sales | grep -E "Reintento|DLQ|procesada|resultado de facturación"
 ```
 

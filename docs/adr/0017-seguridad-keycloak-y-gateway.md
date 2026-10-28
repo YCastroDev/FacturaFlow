@@ -4,6 +4,8 @@
 
 Aceptado — 2026-10-28. Fase 1 de 2: Keycloak y el gateway quedan funcionando, pero **nadie exige token todavía**. La Fase 2 (validación del JWT y de los roles en el gateway y en cada servicio, y sales llamando a catalog con su identidad) tendrá su propio ADR.
 
+> **Nota posterior:** la Fase 2 está en el [ADR 0018](0018-seguridad-resource-servers.md). Agrega al realm el client scope `facturaflow-api` (audiencia que exigen el gateway y los servicios) en los tres clientes; el resto del realm y las decisiones de este ADR no cambian. Un entorno que ya tenía el realm debe reimportarlo (decisión 3, "Limitación").
+
 ## Contexto
 
 Los tres servicios (invoicing, catalog y sales) no tienen autenticación: cualquiera que llegue a sus puertos puede emitir facturas o crear ventas. Para cerrarlo se agregan un proveedor de identidad y un punto de entrada único, en dos fases, para que cada una sea revisable por separado.

@@ -7,7 +7,9 @@ import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMoc
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
+import com.facturaflow.sales.FakeKeycloak;
 import com.facturaflow.sales.InfraImages;
+import com.facturaflow.sales.TestSecurityConfiguration;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.jayway.jsonpath.JsonPath;
 import java.time.Duration;
@@ -21,6 +23,7 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -38,7 +41,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
         "spring.rabbitmq.host=127.0.0.1", "spring.rabbitmq.port=1", "spring.rabbitmq.password=sin-broker",
         "sales.outbox.poll-interval=200ms", "sales.catalog.read-timeout=10s"})   // holgado: no prueba timeouts
 @AutoConfigureRestTestClient
-@Import(BrokerDownEndToEndTest.PostgresOnly.class)
+@Import({BrokerDownEndToEndTest.PostgresOnly.class, TestSecurityConfiguration.class})
 class BrokerDownEndToEndTest {
 
     @TestConfiguration(proxyBeanMethods = false)
@@ -82,8 +85,13 @@ class BrokerDownEndToEndTest {
     @Autowired
     private JdbcClient jdbc;
 
+    /** Actuator, salvo el health, es solo para admin (ADR 0018); lo demás va con el token por defecto (vendedor). */
     private EntityExchangeResult<String> fetch(String uri) {
-        return client.get().uri(uri).exchange().expectBody(String.class).returnResult();
+        var request = client.get().uri(uri);
+        if (uri.startsWith("/actuator/") && !uri.startsWith("/actuator/health")) {
+            request.header(HttpHeaders.AUTHORIZATION, "Bearer " + FakeKeycloak.userToken("admin"));
+        }
+        return request.exchange().expectBody(String.class).returnResult();
     }
 
     @Test

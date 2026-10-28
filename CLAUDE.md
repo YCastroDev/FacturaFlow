@@ -26,6 +26,7 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 | Validación de contratos de eventos (tests) | `com.networknt:json-schema-validator` 3.0.8 (Jackson 3; solo test) |
 | Identidad | Keycloak 26.8.1 (`quay.io/keycloak/keycloak:26.8.1`, en compose y en los tests vía `InfraImages`) |
 | API Gateway | Spring Cloud 2025.1.4 (Gateway Server WebMVC 5.0.x) |
+| Seguridad | Spring Security 7.1 (de Boot): resource server en los cuatro; OAuth2 Client (client credentials) en sales |
 
 ## Estructura
 
@@ -47,6 +48,7 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 - `application/` también es Java puro: sin `@Service`, `@Transactional` ni nada de Spring. Los casos de uso se registran como beans en `infrastructure/config`.
 - En `application/port/in` y `application/port/out` solo hay interfaces (puertos) y records (comandos/resultados). Las excepciones del contrato de los puertos van en `application/exception`.
 - `infrastructure/adapter/in` nunca usa `infrastructure/adapter/out`: siempre pasa por un puerto de entrada.
+- Spring Security solo en `infrastructure/config` (y, en sales, en el ACL `adapter/out/catalog`, único lugar del cliente OAuth2): regla 13 (ADR 0018).
 - Sin ciclos entre paquetes.
 - **Prohibido** importar código de otro servicio o acceder a la base de datos de otro servicio (ADR 0001, ADR 0003). La comunicación entre servicios es solo por HTTP o eventos.
 - **Estas reglas se validan automáticamente** con ArchUnit (`src/test/java/.../architecture/HexagonalArchitectureTest.java`) y corren con `./scripts/mvn.sh <servicio> test`. Si un test de arquitectura falla, se corrige el código, no la regla; cambiar una regla requiere preguntar (y, si es una decisión nueva, un ADR).
@@ -131,12 +133,15 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 - Problem Details con el mismo formato que invoicing; una excepción nueva necesita su fila en la tabla del ADR 0011 y su test en el test del controlador.
 - Puerto local `127.0.0.1:8082`; base `catalog_db` / usuario `catalog_user` (`CATALOG_DB_PASSWORD`).
 - Consulta por lote `POST /api/v1/products/lookup` (1–100 códigos, activos o no; la usa sales). Es una lectura: no cambiarla sin revisar el adaptador de catalog en sales.
+- Permisos (ADR 0018): lecturas y lookup → `admin`, `vendedor` o `SCOPE_catalog.read` (sales-service); crear y editar clientes → `admin`, `vendedor`; activar/desactivar clientes y todo lo de productos → `admin`.
 
 ## Servicio sales (ADR 0012)
 
 - Hexagonal con las mismas reglas de ArchUnit que invoicing (`HexagonalArchitectureTest`), más: nada de `adapter/out/catalog` sale de su paquete (ACL) y ningún código de otro servicio.
 - La petición solo trae `referenceCode`, documento del cliente (tipo + número), líneas (código, cantidad, descuento), pago y observación. Precios, nombres, impuestos y datos fiscales salen SIEMPRE de catalog y la venta guarda un snapshot con los mismos nombres que pide invoicing (lo que llevará `SaleConfirmed`). Cliente o producto inexistente o inactivo → 422 `catalog-reference-invalid` con todos los problemas.
 - 2 llamadas a catalog por venta (cliente + lote de productos), nunca una por línea. Toda llamada nueva a catalog pasa por `CatalogHttp` → `CatalogResilience` (Retry → CircuitBreaker): 1 reintento solo si la petición no salió o ante 502/503/504; nunca tras un timeout de lectura; el 404 no es falla. Catalog caído o circuito abierto → 503 `catalog-unavailable` con `Retry-After`; la venta no se crea.
+- Sales llama a catalog con SU token (ADR 0018): client credentials de `sales-service` (`CatalogTokenProvider`, Spring OAuth2 Client armado a mano dentro del ACL; `sales.catalog.auth.*`, secreto `SALES_SERVICE_CLIENT_SECRET`), en memoria y renovado 60 s antes de vencer. Se pide DENTRO de `CatalogHttp.send` (reintento y circuito): Keycloak sin conexión o 502/503/504 → reintentable; credenciales rechazadas → no reintentable + ERROR; 401 de catalog → descarta el token y el reintento pide otro; 403 → no reintentable + ERROR. Todo acaba en 503 `catalog-unavailable`, nunca en 500. Nunca registrar el token ni el secreto.
+- Permisos (ADR 0018): crear y consultar ventas → `admin`, `vendedor`.
 - Health: componente `catalog` siempre UP (`/actuator/health/dependencies`); fuera de liveness/readiness.
 - Idempotencia como invoicing, pero la huella es de la PETICIÓN normalizada (no de los datos de catalog) y se resuelve ANTES de llamar a catalog (un reintento responde 200 con catalog caído). Si se agrega un campo a la petición, agregarlo a `SaleRequestHasher` y a su test.
 - Totales: COPIA deliberada del cálculo de invoicing (`Money`, `Quantity`, `DiscountRate`, `LineTax`, `SaleLine`) con sus tests copiados. Si cambia en un servicio, cambia en el otro.
@@ -183,25 +188,36 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 - Permisos: `sales` configure/write `^sales\..*`, read `^(sales\..*|invoicing\.events)$`. Los tests de sales también ejecutan el script de init real y se conectan como `sales` (publican resultados como invoicing con `TestcontainersConfiguration.invoicingTemplate`); sus colas de prueba llevan el prefijo `sales.`.
 - ArchUnit en los dos: regla 11 (AMQP solo en `adapter/in/messaging` y `adapter/out/messaging`; nada de `out/messaging` sale) y regla 12 (el ACL del otro adaptador de mensajería).
 
-## Seguridad: Keycloak y API Gateway (ADR 0017, Fase 1 de 2)
+## Seguridad: Keycloak y API Gateway (ADR 0017, Fase 1)
 
-- **Fase 1: nadie exige token todavía.** En la Fase 2 (zero trust) validarán JWT y roles el gateway Y cada servicio, y sales llamará a catalog con client credentials (`sales-service`). Los eventos de RabbitMQ no cambian.
+- Desde la Fase 2 (ADR 0018, sección propia abajo) se exige token. Los eventos de RabbitMQ no llevan token.
 - **Keycloak** (`start` con HTTP, no `start-dev`; `KC_CACHE=local`): base `keycloak_db` / `keycloak_user` (`KEYCLOAK_DB_PASSWORD`, línea propia en el init de PostgreSQL); consola y realm solo en `127.0.0.1:8180`; administrador inicial `KEYCLOAK_ADMIN_USER`/`KEYCLOAK_ADMIN_PASSWORD` (solo el primer arranque). Issuer FIJO `http://localhost:8180/realms/facturaflow` (`KC_HOSTNAME` + `KC_HOSTNAME_BACKCHANNEL_DYNAMIC`): dentro de Docker se llega por `keycloak:8080` con el mismo `iss`.
-- **Realm como código** (`infra/keycloak/import/facturaflow-realm.json`, importado con `--import-realm`): roles `admin`, `vendedor`, `contador`; usuarios `admin.demo`, `vendedor.demo`, `contador.demo` (uno por rol, con email/nombre/apellido: el user profile los exige); clientes `sales-service` (confidencial, solo service account, scope `catalog.read`), `facturaflow-swagger` (público, solo authorization code + PKCE S256) y `facturaflow-cli` (público, solo direct access grants, SOLO desarrollo). El permiso de sales en catalog es el client scope `catalog.read` (en la Fase 2: `SCOPE_catalog.read`), no un rol.
+- **Realm como código** (`infra/keycloak/import/facturaflow-realm.json`, importado con `--import-realm`): roles `admin`, `vendedor`, `contador`; usuarios `admin.demo`, `vendedor.demo`, `contador.demo` (uno por rol, con email/nombre/apellido: el user profile los exige); clientes `sales-service` (confidencial, solo service account, scopes `catalog.read` y `facturaflow-api`), `facturaflow-swagger` (público, solo authorization code + PKCE S256) y `facturaflow-cli` (público, solo direct access grants, SOLO desarrollo). El permiso de sales en catalog es el client scope `catalog.read` (`SCOPE_catalog.read`), no un rol. El client scope `facturaflow-api` (audiencia) va SOLO en esos tres clientes, nunca en `defaultDefaultClientScopes` (lo recibirían los clientes internos de Keycloak).
 - **Nunca un secreto en el realm:** contraseñas y secretos son marcadores `${VAR}` que Keycloak sustituye con variables de entorno al importar (`KC_DEMO_*_PASSWORD`, `SALES_SERVICE_CLIENT_SECRET`). Una variable nueva del realm exige su línea en `.env.example` (`CAMBIAME`) y en el `environment` de `keycloak` del compose con `:?` (`RealmFileSecretsTest` lo verifica). Los `${...}` propios de Keycloak (`${rolesScopeConsentText}`, `${client_id}`) no son variables: no usar esos nombres.
 - **Si el realm declara `clientScopes`, Keycloak no crea los estándar:** el archivo incluye los scopes OIDC tal como los exporta Keycloak 26.8.1 (sin `basic` no hay `sub`; sin `roles` no hay `realm_access.roles`). Al subir de versión, comparar con un export nuevo.
 - **La importación solo CREA el realm** (`IGNORE_EXISTING`): un cambio del archivo o de una contraseña del `.env` exige borrar el realm `facturaflow` en la consola y reiniciar Keycloak (README).
 - Tokens para demos: `./scripts/keycloak-token.sh [--claims] <admin.demo|vendedor.demo|contador.demo|sales-service>` (pide la contraseña sin eco o `KC_PASSWORD`/`KC_CLIENT_SECRET`; nunca la pasa en argumentos; no lee `.env`).
-- **Gateway** (`services/gateway`, `127.0.0.1:8080`): Spring Cloud Gateway Server **WebMVC** con hilos virtuales; sin hexagonal ni capas (`com.facturaflow.gateway.web` + `application.yml`); ArchUnit: nada de otros servicios y sin ciclos. Rutas en `application.yml` (destinos `GATEWAY_*_URI`): `/api/v1/invoices/**` y `/api/v1/credit-notes/**` → invoicing; `/api/v1/products/**` y `/api/v1/customers/**` → catalog; `/api/v1/sales/**` → sales. Una ruta nueva de un servicio exige su predicado aquí y su fila en `GatewayRoutingTest`.
+- **Gateway** (`services/gateway`, `127.0.0.1:8080`): Spring Cloud Gateway Server **WebMVC** con hilos virtuales; sin hexagonal ni capas (`com.facturaflow.gateway.web`, `com.facturaflow.gateway.security` + `application.yml`); ArchUnit: nada de otros servicios y sin ciclos. Rutas en `application.yml` (destinos `GATEWAY_*_URI`): `/api/v1/invoices/**` y `/api/v1/credit-notes/**` → invoicing; `/api/v1/products/**` y `/api/v1/customers/**` → catalog; `/api/v1/sales/**` → sales. Una ruta nueva de un servicio exige su predicado aquí y su fila en `GatewayRoutingTest`.
 - Gateway: sin reintentos (hay POST no idempotentes); timeouts `spring.http.clients.*` (conexión 2 s, lectura 60 s > ~45 s de Factus); sin `trusted-proxies` (quita los `X-Forwarded-*`/`Forwarded` del cliente). Errores propios en Problem Details: 404 `not-found`, 502 `upstream-unavailable`, 504 `upstream-timeout`, 500 `internal-error`; las respuestas de los servicios pasan intactas; nunca registrar URLs ni cabeceras (llevarán el token). Health propio que no depende de los servicios ni de Keycloak.
-- Los servicios conservan sus puertos 8081–8083 en esta fase (se decide en la Fase 2). Sin identificador de correlación propio: llegará con Micrometer Tracing (`traceparent`).
+- Los servicios conservan sus puertos 8081–8083 en `127.0.0.1` (decisión 10 del ADR 0018: con zero trust no son un atajo). Sin identificador de correlación propio: llegará con Micrometer Tracing (`traceparent`).
 - Tests del gateway: enrutamiento con WireMock (`GatewayRoutingTest`, `GatewayServiceDownTest`) y Keycloak real con `GenericContainer` (`KeycloakRealmTest`, sin `testcontainers-keycloak`: arrastra Jackson 2).
 - **SnakeYAML va SIN scope `test`** en los poms: lo necesita Spring Boot en ejecución para leer `application.yml` (con scope test el servicio no arranca; nota del ADR 0017).
+
+## Seguridad: resource servers y roles (ADR 0018, Fase 2)
+
+- **Zero trust:** el gateway Y cada servicio validan el JWT: `spring.security.oauth2.resourceserver.jwt.{issuer-uri, jwk-set-uri, audiences}`. `jwk-set-uri` (interna, `keycloak:8080`) + `issuer-uri` (fija, `localhost:8180`) → SIN descubrimiento: las claves se piden con el primer token, **nunca al arrancar** (la prueba de humo sigue sin Keycloak). No usar solo `issuer-uri` (dentro de Docker no es Keycloak). Audiencia exigida: `facturaflow-api`.
+- **Roles:** `KeycloakJwtAuthoritiesConverter` (`realm_access.roles` → `ROLE_`, `scope` → `SCOPE_`) y `SecurityProblemResponses` son **copias deliberadas** en los cuatro servicios (`infrastructure/config`, catalog `config`, gateway `security`): si cambia uno, cambian los cuatro (con sus tests).
+- **Matriz por URL** en el `SecurityConfiguration` de cada servicio (tabla en el ADR 0018), con `anyRequest().denyAll()`: un endpoint nuevo exige su fila en el `SecurityConfiguration`, en la tabla del ADR 0018 y en el test de matriz (`SaleSecurityTest`, `InvoicingSecurityTest`, `CatalogSecurityTest`). invoicing: `admin`, `contador`; sales: `admin`, `vendedor`; catalog: ver su sección. Gateway: filtro GRUESO (`/api/**` con algún rol de la app; fuera de `/api`, denegado), la matriz fina solo en los servicios.
+- **Público:** `GET /actuator/health/**`, Swagger UI y `/v3/api-docs`. El resto de Actuator: solo `admin`. Rutas desconocidas: 401 sin token, 403 con token (no 404).
+- **Errores:** 401 `unauthorized` (`WWW-Authenticate: Bearer`, o `error="invalid_token"`), 403 `forbidden`, 503 `authentication-unavailable` (`Retry-After: 10`, Keycloak sin claves en caché), en Problem Details y sin el motivo del rechazo ni el token. Los escribe `SecurityProblemResponses` (los filtros actúan antes que el `ProblemDetailsHandler`).
+- **Swagger:** esquema `oauth2` authorizationCode (URLs del issuer) + `springdoc.swagger-ui.oauth.client-id: facturaflow-swagger` con PKCE.
+- **Tests:** web con la configuración real (`@Import(SecurityConfiguration.class)`) y tokens de `FakeKeycloak` (WireMock con el JWKS de una clave de prueba: pasa por el decodificador REAL); tests de controlador con `@WithMockUser(roles = ...)`; integración con `TestSecurityConfiguration` (importada por `TestcontainersConfiguration`; token por defecto en el `RestTestClient`: vendedor en sales, contador en invoicing, admin en catalog y el gateway; Actuator salvo health necesita uno de admin). Keycloak real con `RealKeycloak` (copia en gateway, catalog y sales; imagen de `InfraImages.KEYCLOAK`): `GatewayKeycloakSecurityTest`, `CatalogKeycloakIntegrationTest`, `SalesKeycloakIntegrationTest`; estos NO importan `TestcontainersConfiguration` (traería el Keycloak falso).
+- **Pendiente (PR aparte):** registrar quién creó la venta (`SoldBy`, ADR 0018).
 
 ## Integración continua (ADR 0016)
 
 - `ci.yml` SIEMPRE arranca; el job `changes` (paths-filter) decide qué servicios probar con `_service.yml`; `ci-result` es el ÚNICO check obligatorio (junto con `gitleaks`). Nunca usar `on.paths` en un workflow cuyo check sea obligatorio: quedaría "Pending" y bloquearía el PR.
-- Rutas por servicio en `ci.yml`: invoicing y sales también por `docs/events/**` e `infra/rabbitmq/**`; invoicing, catalog y sales por `infra/postgres/**` y `.env.example` (prueba de humo); gateway por `infra/keycloak/**` y `.env.example`; todos por `.github/workflows/**`, `.github/scripts/**`, `infra/docker-compose.yml`, `scripts/smoke-test.sh` e `infra/smoke/**`. **Si un servicio empieza a depender de otra carpeta, agregarla al filtro** (y a la tabla del ADR 0016).
+- Rutas por servicio en `ci.yml`: invoicing y sales también por `docs/events/**` e `infra/rabbitmq/**`; invoicing, catalog y sales por `infra/postgres/**` y `.env.example` (prueba de humo); gateway, catalog y sales por `infra/keycloak/**` (alias `realm`: tests con Keycloak real); gateway por `.env.example`; todos por `.github/workflows/**`, `.github/scripts/**`, `infra/docker-compose.yml`, `scripts/smoke-test.sh` e `infra/smoke/**`. **Si un servicio empieza a depender de otra carpeta, agregarla al filtro** (y a la tabla del ADR 0016).
 - La CI corre `./mvnw -B -ntp verify` en el runner (no `scripts/mvn.sh`): todo test debe pasar sin `.env` ni credenciales; los que las necesitan llevan `@Tag("sandbox")`.
 - Acciones fijadas por SHA completo con `# vX.Y.Z`; permisos mínimos por job; `persist-credentials: false`; nada interpolado dentro de `run:` (va por `env`). Validar con `docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12`.
 - Ningún secreto en los workflows. SonarCloud usa el secreto opcional `SONAR_TOKEN`: sin él el paso se omite (la CI no debe fallar). Las propiedades `sonar.*` y JaCoCo viven en cada pom.
@@ -238,7 +254,7 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 ./scripts/mvn.sh sales test
 ./scripts/mvn.sh sales test -Dtest=HexagonalArchitectureTest
 
-# Tests del gateway (enrutamiento con WireMock + realm en un Keycloak real)
+# Tests del gateway (enrutamiento y seguridad con WireMock + realm y tokens en un Keycloak real)
 ./scripts/mvn.sh gateway test
 
 # Levantar el entorno (PostgreSQL + RabbitMQ + Keycloak + invoicing + catalog + sales + gateway; rabbitmq-init termina en Exited (0))
@@ -256,7 +272,8 @@ curl -s http://localhost:8082/actuator/health
 curl -s http://localhost:8083/actuator/health
 curl -s http://localhost:8083/actuator/health/dependencies   # circuito hacia catalog
 
-# Sembrar en catalog los datos de los ejemplos de Swagger de sales (idempotente)
+# Sembrar en catalog los datos de los ejemplos de Swagger de sales (idempotente). Pide la contraseña de admin.demo
+# (o usa FACTURAFLOW_TOKEN): crear productos exige el rol admin (ADR 0018)
 ./scripts/seed-catalog.sh
 
 # RabbitMQ: consola http://localhost:15672 (RABBITMQ_ADMIN_USER del .env). Sin consumidores todavía, para VER
@@ -264,10 +281,12 @@ curl -s http://localhost:8083/actuator/health/dependencies   # circuito hacia ca
 ./scripts/rabbitmq-debug-queue.sh create   # o peek / delete
 # Consumidor de invoicing: colas, esperas y DLQ; reprocesar la DLQ (shovel)
 ./scripts/rabbitmq-dlq.sh invoicing status   # o sales; y peek / requeue / purge --yes
+# Actuator: el health es público; métricas y circuitos exigen el token de admin.demo (ADR 0018)
+ADMIN=$(./scripts/keycloak-token.sh admin.demo)
 curl -s http://localhost:8081/actuator/health/dependencies          # messaging: outbox y consumidor de invoicing
-curl -s "http://localhost:8081/actuator/metrics/invoicing.sale_confirmed.processed?tag=outcome:issued"
+curl -s -H "Authorization: Bearer $ADMIN" "http://localhost:8081/actuator/metrics/invoicing.sale_confirmed.processed?tag=outcome:issued"
 curl -s http://localhost:8083/actuator/health/dependencies          # messaging: outbox y consumidor de sales
-curl -s http://localhost:8083/actuator/metrics/sales.outbox.pending
+curl -s -H "Authorization: Bearer $ADMIN" http://localhost:8083/actuator/metrics/sales.outbox.pending
 
 # Swagger UI (API documentada con ejemplos)
 # invoicing: http://localhost:8081/swagger-ui.html   catalog: http://localhost:8082/swagger-ui.html
@@ -286,13 +305,13 @@ INVOICING_PROVIDER=factus docker compose --env-file .env -f infra/docker-compose
 
 # Estado de la resiliencia hacia Factus (con INVOICING_PROVIDER=factus)
 curl -s http://localhost:8081/actuator/health/providers
-curl -s http://localhost:8081/actuator/circuitbreakers
-curl -s http://localhost:8081/actuator/metrics/resilience4j.circuitbreaker.not.permitted.calls
+curl -s -H "Authorization: Bearer $ADMIN" http://localhost:8081/actuator/circuitbreakers
+curl -s -H "Authorization: Bearer $ADMIN" http://localhost:8081/actuator/metrics/resilience4j.circuitbreaker.not.permitted.calls
 
 # Keycloak (consola http://localhost:8180/admin, usuario KEYCLOAK_ADMIN_USER del .env) y gateway
-TOKEN=$(./scripts/keycloak-token.sh vendedor.demo)        # pide la contraseña (KC_DEMO_VENDEDOR_PASSWORD)
-./scripts/keycloak-token.sh --claims sales-service         # client credentials: scope catalog.read
-curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/products?size=5"   # por el gateway
+TOKEN=$(./scripts/keycloak-token.sh vendedor.demo)        # pide la contraseña (KC_DEMO_VENDEDOR_PASSWORD); dura 5 min
+./scripts/keycloak-token.sh --claims sales-service         # client credentials: scope catalog.read, aud facturaflow-api
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/products?size=5"   # por el gateway (sin token: 401)
 curl -s http://localhost:8080/actuator/health
 
 # Prueba de humo de una imagen (la misma que la CI): arranca y espera UP en /actuator/health

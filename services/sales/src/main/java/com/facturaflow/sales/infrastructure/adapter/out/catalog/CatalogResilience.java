@@ -27,6 +27,9 @@ import org.slf4j.LoggerFactory;
  *   <tr><th>Resultado de un intento</th><th>Reintento</th><th>Falla del circuito</th></tr>
  *   <tr><td>sin conexión (rechazada, host desconocido, timeout de CONEXIÓN), 502, 503, 504</td><td>sí, 1 vez</td><td>sí</td></tr>
  *   <tr><td>timeout de LECTURA, otro 5xx</td><td>no: ya gastó el tiempo, o no es pasajero</td><td>sí</td></tr>
+ *   <tr><td>token de sales-service (ADR 0018): Keycloak sin conexión o 502/503/504; 401 de catalog (se descarta el
+ *       token)</td><td>sí, 1 vez</td><td>sí</td></tr>
+ *   <tr><td>token: Keycloak rechaza las credenciales; 403 de catalog (configuración)</td><td>no</td><td>sí</td></tr>
  *   <tr><td>2xx, 404 y otros 4xx</td><td>no: la respuesta sube tal cual</td><td>no</td></tr>
  * </table>
  * Agotados los intentos, o con el circuito abierto, {@link CatalogUnavailableException} (503 con

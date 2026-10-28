@@ -34,6 +34,16 @@ spring:
         prefetch: 1
         # Si la cola aún no existe (RabbitMQ recién levantado), el consumidor reintenta en vez de detenerse.
         missing-queues-fatal: false
+  # Resource server (ADR 0018). Sin "issuer-uri" como fuente de descubrimiento: las claves se piden a la URL INTERNA
+  # de Keycloak (jwk-set-uri, solo con el primer token: el servicio arranca sin Keycloak) y el "iss" esperado es el
+  # FIJO del realm (KC_HOSTNAME, ADR 0017), el mismo dentro y fuera de Docker. Boot valida además firma y vigencia.
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${SECURITY_JWT_ISSUER:http://localhost:8180/realms/facturaflow}
+          jwk-set-uri: ${SECURITY_JWT_JWK_SET_URI:http://keycloak:8080/realms/facturaflow/protocol/openid-connect/certs}
+          audiences: facturaflow-api
   jackson:
     deserialization:
       # Un campo mal escrito (p. ej. "cantidad") da 400 en vez de ignorarse sin aviso.
@@ -52,6 +62,16 @@ sales:
     read-timeout: 2s
     # Retry-After del 503 cuando una llamada falla (con el circuito abierto, lo que falta para que pruebe).
     failure-retry-after: 5s
+    # Identidad de sales ante catalog (ADR 0018): client credentials con el cliente confidencial sales-service.
+    # El token (5 min) se guarda en memoria y se renueva 60 s antes de vencer. El secreto, SOLO por variable de entorno.
+    auth:
+      token-uri: ${SALES_KEYCLOAK_TOKEN_URI:http://keycloak:8080/realms/facturaflow/protocol/openid-connect/token}
+      client-id: ${SALES_SERVICE_CLIENT_ID:sales-service}
+      client-secret: ${SALES_SERVICE_CLIENT_SECRET}
+      # Keycloak está en la misma red y el token endpoint responde en milisegundos (mismo criterio que catalog).
+      connect-timeout: 1s
+      read-timeout: 2s
+      renew-before-expiry: 60s
     resilience:
       retry:
         # 1 reintento (2 intentos) SOLO si la petición no salió (conexión rechazada, nombre sin resolver,
@@ -97,6 +117,10 @@ sales:
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
+    # Botón "Authorize" (ADR 0018): authorization code + PKCE con el cliente público facturaflow-swagger.
+    oauth:
+      client-id: facturaflow-swagger
+      use-pkce-with-authorization-code-grant: true
   api-docs:
     path: /v3/api-docs
 
@@ -106,7 +130,8 @@ server:
     include-message: never
     include-stacktrace: never
 
-# Actuator: solo lectura y nada sensible. El puerto solo se publica en 127.0.0.1 (docker-compose).
+# Actuator: solo lectura y nada sensible. El puerto solo se publica en 127.0.0.1 (docker-compose). El health es
+# público (healthcheck y prueba de humo); el resto exige el rol admin (ADR 0018).
 management:
   endpoints:
     web:

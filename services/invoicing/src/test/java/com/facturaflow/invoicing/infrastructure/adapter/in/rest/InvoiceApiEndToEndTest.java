@@ -239,12 +239,13 @@ class InvoiceApiEndToEndTest {
     }
 
     @Test
-    @DisplayName("una ruta inexistente responde 404 en Problem Details")
+    @DisplayName("una ruta fuera de la matriz de permisos se niega aunque no exista: 403 en Problem Details (ADR 0018)")
     void unknownRoute() {
         Response response = get("/api/v1/nada");
 
-        assertThat(response.status()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(response.status()).isEqualTo(HttpStatus.FORBIDDEN);
         assertThat(response.headers().getContentType()).isEqualTo(MediaType.APPLICATION_PROBLEM_JSON);
+        assertThat((String) response.json("$.type")).isEqualTo("urn:facturaflow:problem:forbidden");
     }
 
     @Test

@@ -2,7 +2,9 @@ package com.facturaflow.invoicing.infrastructure.adapter.in.messaging;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.facturaflow.invoicing.FakeKeycloak;
 import com.facturaflow.invoicing.InfraImages;
+import com.facturaflow.invoicing.TestSecurityConfiguration;
 import com.jayway.jsonpath.JsonPath;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
@@ -14,6 +16,7 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpHeaders;
 import org.springframework.test.web.servlet.client.EntityExchangeResult;
 import org.springframework.test.web.servlet.client.RestTestClient;
 import org.testcontainers.postgresql.PostgreSQLContainer;
@@ -26,7 +29,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
         "spring.rabbitmq.host=127.0.0.1", "spring.rabbitmq.port=1", "spring.rabbitmq.password=sin-broker"})
 @AutoConfigureRestTestClient
-@Import(BrokerDownTest.PostgresOnly.class)
+@Import({BrokerDownTest.PostgresOnly.class, TestSecurityConfiguration.class})
 class BrokerDownTest {
 
     @TestConfiguration(proxyBeanMethods = false)
@@ -42,8 +45,13 @@ class BrokerDownTest {
     @Autowired
     private RestTestClient client;
 
+    /** Actuator, salvo el health, es solo para admin (ADR 0018); lo demás va con el token por defecto (contador). */
     private EntityExchangeResult<String> fetch(String uri) {
-        return client.get().uri(uri).exchange().expectBody(String.class).returnResult();
+        var request = client.get().uri(uri);
+        if (uri.startsWith("/actuator/") && !uri.startsWith("/actuator/health")) {
+            request.header(HttpHeaders.AUTHORIZATION, "Bearer " + FakeKeycloak.userToken("admin"));
+        }
+        return request.exchange().expectBody(String.class).returnResult();
     }
 
     @Test

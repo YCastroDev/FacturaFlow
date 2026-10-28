@@ -25,6 +25,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureRestTestClient;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -39,6 +40,7 @@ import org.springframework.test.web.servlet.client.RestTestClient;
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureRestTestClient
+@Import(TestSecurityConfiguration.class)
 class GatewayRoutingTest {
 
     private static final WireMockServer INVOICING = start();
@@ -120,18 +122,17 @@ class GatewayRoutingTest {
     }
 
     @Test
-    @DisplayName("El cuerpo, la query y las cabeceras de la petición llegan al servicio sin cambios")
+    @DisplayName("El cuerpo, la query y las cabeceras (también el token, intacto) llegan al servicio sin cambios")
     void forwardsBodyQueryAndHeaders() {
         client.post().uri("/api/v1/sales?dryRun=false")
                 .contentType(MediaType.APPLICATION_JSON)
-                .header("Authorization", "Bearer token-de-prueba")
                 .header("If-Match", "\"3\"")
                 .body("{\"referenceCode\":\"VENTA-1\"}")
                 .exchange().expectStatus().isOk();
 
         SALES.verify(postRequestedFor(urlEqualTo("/api/v1/sales?dryRun=false"))
                 .withHeader("Content-Type", containing("application/json"))
-                .withHeader("Authorization", equalTo("Bearer token-de-prueba"))
+                .withHeader("Authorization", equalTo("Bearer " + TestSecurityConfiguration.DEFAULT_TOKEN))
                 .withHeader("If-Match", equalTo("\"3\""))
                 .withRequestBody(equalToJson("{\"referenceCode\":\"VENTA-1\"}")));
     }
@@ -171,11 +172,9 @@ class GatewayRoutingTest {
     @CsvSource({
             "/api/v1/unknown",
             "/api/v2/invoices",
-            "/api/v1/invoicesX",
-            "/swagger-ui.html",
-            "/"
+            "/api/v1/invoicesX"
     })
-    @DisplayName("Una ruta desconocida responde 404 Problem Details del gateway y no llega a ningún servicio")
+    @DisplayName("Una ruta desconocida bajo /api responde 404 Problem Details del gateway y no llega a ningún servicio")
     void unknownRouteIsNotFound(String path) {
         EntityExchangeResult<String> result = client.get().uri(path)
                 .exchange().expectBody(String.class).returnResult();
@@ -184,6 +183,19 @@ class GatewayRoutingTest {
         assertThat(result.getResponseHeaders().getContentType()).hasToString("application/problem+json");
         assertThat((String) JsonPath.read(result.getResponseBody(), "$.type"))
                 .isEqualTo("urn:facturaflow:problem:not-found");
+        SERVICES.values().forEach(server -> assertThat(server.getAllServeEvents()).isEmpty());
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @CsvSource({"/swagger-ui.html", "/"})
+    @DisplayName("Fuera de /api y del health no hay nada que pedir: se niega aunque el token sea de admin (ADR 0018)")
+    void outsideApiIsDenied(String path) {
+        EntityExchangeResult<String> result = client.get().uri(path)
+                .exchange().expectBody(String.class).returnResult();
+
+        assertThat(result.getStatus().value()).isEqualTo(403);
+        assertThat((String) JsonPath.read(result.getResponseBody(), "$.type"))
+                .isEqualTo("urn:facturaflow:problem:forbidden");
         SERVICES.values().forEach(server -> assertThat(server.getAllServeEvents()).isEmpty());
     }
 
