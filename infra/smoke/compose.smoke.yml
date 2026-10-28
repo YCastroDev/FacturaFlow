@@ -1,0 +1,18 @@
+# Override de infra/docker-compose.yml para la prueba de humo de las imágenes (scripts/smoke-test.sh, ADR 0016).
+# Solo quita lo que estorba a una prueba; imágenes, variables, init de PostgreSQL y healthchecks son los del compose.
+#   ports: !reset []  no publica nada en el host: no choca con el entorno local levantado (8080–8083).
+#   restart: "no"     una imagen que no arranca termina y "up --wait" falla enseguida, en vez de reintentar hasta
+#                     agotar el tiempo.
+services:
+  invoicing:
+    ports: !reset []
+    restart: "no"
+  catalog:
+    ports: !reset []
+    restart: "no"
+  sales:
+    ports: !reset []
+    restart: "no"
+  gateway:
+    ports: !reset []
+    restart: "no"

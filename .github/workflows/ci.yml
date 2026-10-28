@@ -50,8 +50,17 @@ jobs:
               - '.github/scripts/**'
             infra-images: &infra-images
               # Fuente de las imágenes de PostgreSQL y RabbitMQ de los tests (InfraImages): un PR de Dependabot que
-              # las sube debe probar los servicios con la versión nueva.
+              # las sube debe probar los servicios con la versión nueva. También es la base de la prueba de humo.
               - 'infra/docker-compose.yml'
+            smoke: &smoke
+              # Prueba de humo de la imagen (job "imagen"): script y override del compose.
+              - 'scripts/smoke-test.sh'
+              - 'infra/smoke/**'
+            smoke-db: &smoke-db
+              # Los servicios con base: la prueba de humo levanta el PostgreSQL del compose con su script de init y
+              # genera las credenciales desechables a partir de .env.example.
+              - 'infra/postgres/**'
+              - '.env.example'
             events: &events
               # Contratos de eventos (los validan los tests) y el script de init de RabbitMQ (los tests lo ejecutan
               # en Testcontainers para conectarse con los usuarios reales).
@@ -61,21 +70,28 @@ jobs:
               - *ci
               - *infra-images
               - *events
+              - *smoke
+              - *smoke-db
               - 'services/invoicing/**'
             sales:
               - *ci
               - *infra-images
               - *events
+              - *smoke
+              - *smoke-db
               - 'services/sales/**'
             catalog:
               - *ci
               - *infra-images
+              - *smoke
+              - *smoke-db
               - 'services/catalog/**'
             gateway:
               # La imagen de Keycloak sale del compose (infra-images) y el realm de infra/keycloak (KeycloakRealmTest y
               # RealmFileSecretsTest, que además lee .env.example).
               - *ci
               - *infra-images
+              - *smoke
               - 'infra/keycloak/**'
               - '.env.example'
               - 'services/gateway/**'

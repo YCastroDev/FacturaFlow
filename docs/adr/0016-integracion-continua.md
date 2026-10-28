@@ -6,6 +6,8 @@ Aceptado — 2026-10-26. Cumple lo anticipado en el [ADR 0001](0001-monorepo.md)
 
 Nota del 2026-10-27: las imágenes de PostgreSQL y RabbitMQ de los tests salen del compose y el compose dispara los tests (ver la nota al final de la decisión).
 
+Nota del 2026-10-28 (segunda): Java 25 fijado en las imágenes (sin la imagen `maven`) y prueba de humo de cada imagen en la CI (ver la nota al final).
+
 ## Contexto
 
 FacturaFlow es un monorepo público en GitHub con tres servicios Spring Boot (invoicing, catalog y sales) y hasta ahora no tenía CI. Todo se probaba en local con `./scripts/mvn.sh`.
@@ -52,7 +54,7 @@ FacturaFlow es un monorepo público en GitHub con tres servicios Spring Boot (in
 - `docs/events/` dispara a invoicing y sales porque sus tests validan los eventos contra esos esquemas (ADR 0013–0015).
 - `infra/rabbitmq/` los dispara porque sus tests ejecutan el script de init real en Testcontainers.
 - `infra/docker-compose.yml` dispara a los tres porque es la fuente de las imágenes de PostgreSQL y RabbitMQ de sus tests (ver la nota de 2026-10-27). También los dispara un cambio del compose que no toque imágenes: se acepta, porque filtrar por contenido sería más frágil que probar de más.
-- **`scripts/mvn.sh` no dispara nada:** la CI no lo usa. Corre `./mvnw` directamente en el runner, con Java 25 de `actions/setup-java`. El mismo Maven (3.9.16, por el wrapper) y el mismo JDK que en local.
+- **`scripts/mvn.sh` no dispara nada:** la CI no lo usa. Corre `./mvnw` directamente en el runner, con Java 25 de `actions/setup-java`. El mismo Maven (el del wrapper, `.mvn/wrapper/maven-wrapper.properties`) y el mismo JDK que en local.
 
 **Concurrencia:** en una rama de PR, un push nuevo cancela la ejecución anterior. En `main` no se cancela, porque cada commit publica su imagen.
 
@@ -208,12 +210,77 @@ Dependabot vigila `/services/gateway` en `maven` y `docker`, y la imagen de Keyc
 
 **Corrección de la nota del 2026-10-27:** SnakeYAML **no** puede ser "dependencia de test". Con `<scope>test</scope>` salía del jar ejecutable (el scope declarado pisa el transitivo de `spring-boot-starter`) y los servicios no podían leer su `application.yml` al arrancar. La CI no lo detectó porque construye la imagen pero no la arranca. Ahora va sin scope en los cuatro poms. El test de humo de punta a punta de "Cómo se haría en producción" lo habría detectado.
 
+## Nota (2026-10-28): Java 25 en las imágenes y prueba de humo de cada imagen
+
+### Problema 1: Dependabot subió la compilación a Java 26
+
+El PR #2 de Dependabot cambió `maven:3.9.16-eclipse-temurin-25` por `maven:3.9-eclipse-temurin-26` en los Dockerfiles. Pasaron dos cosas:
+- en la imagen `maven`, **Java va en el sufijo del tag**; la regla `ignore` (`semver-major`) solo mira la versión de Maven (3.9), así que no lo frenó;
+- de paso, el tag dejó de fijar el parche de Maven (`3.9.16` → `3.9`).
+
+Además, el Maven de esa imagen **nunca se usaba**: los Dockerfiles compilan con `./mvnw`, que descarga el Maven de `.mvn/wrapper/maven-wrapper.properties`. La imagen solo aportaba el JDK.
+
+**Decisión.**
+- **Las dos etapas usan `eclipse-temurin` con el parche fijado:** `25.0.4.1_1-jdk-alpine` (compilación) y `25.0.4.1_1-jre-alpine` (ejecución, antes `25-jre-alpine`, flotante). Java va en la versión del tag: la regla `eclipse-temurin` + `semver-major` lo deja en 25 y Dependabot propone los parches como PRs (antes entraban sin pasar por la CI). Mismo parche en las dos etapas.
+- **Maven tiene una sola fuente: el wrapper**, el mismo en local, en la CI y en la imagen. El ecosistema `maven` de Dependabot ya lo actualiza (PR #3: 3.9.16 → 3.10.0). Se quitan la regla `ignore` de `maven` y el `ENV MAVEN_CONFIG=""`.
+- **Por verificar en el primer lunes:** que Dependabot interprete los tags de Temurin con `_` y cuatro componentes (`25.0.4.1_1`). Si no, no propondrá parches (no rompe nada) y habría que actualizarlos a mano.
+- **Alternativa descartada:** seguir con `maven:*` e ignorar `*-eclipse-temurin-26*`, `-27*`… Una línea por cada Java nuevo, dependiente de cómo compara Dependabot los sufijos, y dos fuentes para la versión de Maven.
+
+**Pendiente:** `scripts/mvn.sh` sigue usando `maven:3.9.16-eclipse-temurin-25`, fuera de la vista de Dependabot (ya estaba en la lista de "no cubre"). Pasarlo a `eclipse-temurin` cambia cómo se monta el HOME de Maven (`/home/maven`): se hará en un PR aparte.
+
+| Ecosistema | Dónde | Grupos |
+|---|---|---|
+| `docker` | los cuatro Dockerfiles (`eclipse-temurin`, parche fijado) | uno; **ignora** los cambios mayores de `eclipse-temurin` (Java 25 LTS) |
+| `maven` | los cuatro servicios: dependencias **y el Maven del wrapper** | `maven-minor-patch` y `maven-major` |
+
+### Problema 2: las imágenes de `main` no arrancaban y la CI no lo vio
+
+Desde el PR #5 (SnakeYAML con scope `test`, nota anterior) ninguna imagen arrancaba, y el job `imagen` seguía en verde: construía la imagen, pero nunca la ejecutaba.
+
+**Qué necesita cada servicio para arrancar (Fase 1):**
+
+| Servicio | PostgreSQL | RabbitMQ | Keycloak |
+|---|---|---|---|
+| gateway | no | no | no |
+| catalog | sí (datasource y Flyway al arrancar) | — | no |
+| invoicing | sí | no: `health.rabbit` apagado y el listener reintenta (ADR 0014) | no |
+| sales | sí | no: ídem (ADR 0013) | no |
+
+**Decisión: prueba de humo en el job `imagen`, con el compose real y un override mínimo.**
+- **`scripts/smoke-test.sh <servicio> <imagen>`**, el mismo en local y en la CI:
+  - usa `infra/docker-compose.yml` (mismas variables de entorno, init de PostgreSQL y healthcheck que el despliegue) + `infra/smoke/compose.smoke.yml`, que solo quita los puertos publicados (`ports: !reset []`, para no chocar con el entorno local) y los reinicios (`restart: "no"`: una imagen que se cae falla enseguida, no al agotar el tiempo);
+  - proyecto aparte (`facturaflow-smoke`); la imagen se etiqueta como `facturaflow-smoke-<servicio>` y compose la usa con `--no-build`;
+  - **credenciales desechables:** un env temporal generado de `.env.example` (cada `CAMBIAME` → valor aleatorio), borrado al terminar. Nunca lee `.env` y la CI no necesita secretos. De paso comprueba que `.env.example` tiene todo lo que exige el compose;
+  - levanta **solo PostgreSQL** (salvo el gateway, que arranca solo) y luego el servicio con `--no-deps --wait --wait-timeout 180` (`SMOKE_WAIT_TIMEOUT`), que espera al healthcheck del compose (`/actuator/health` con `UP`). RabbitMQ y Keycloak quedan fuera a propósito: así la prueba comprueba también que invoicing y sales arrancan sin el broker;
+  - si falla, imprime los logs del servicio y sale con 1; siempre hace `down -v`.
+- **`_service.yml`:** construir (`load: true`) → prueba de humo (máx. 5 min) → **publicar en GHCR solo si pasó** (en `main`, segunda pasada de build-push desde la caché `gha`). Una imagen que no arranca no llega a `latest`.
+- **Rutas nuevas:** `scripts/smoke-test.sh` e `infra/smoke/**` disparan a los cuatro servicios; `infra/postgres/**` y `.env.example`, a invoicing, catalog y sales.
+
+| Servicio | Rutas (tabla completa) |
+|---|---|
+| invoicing | `services/invoicing/**`, `docs/events/**`, `infra/rabbitmq/**`, `infra/postgres/**`, `.env.example` |
+| sales | `services/sales/**`, `docs/events/**`, `infra/rabbitmq/**`, `infra/postgres/**`, `.env.example` |
+| catalog | `services/catalog/**`, `infra/postgres/**`, `.env.example` |
+| gateway | `services/gateway/**`, `infra/keycloak/**`, `.env.example` |
+| todos | `.github/workflows/**`, `.github/scripts/**`, `infra/docker-compose.yml`, `scripts/smoke-test.sh`, `infra/smoke/**`; `workflow_dispatch` prueba todos |
+
+**Alternativas descartadas.**
+- *Un compose reducido propio para la CI:* duplicaría imágenes y variables (otra fuente que Dependabot no vigila).
+- *`docker run` con las variables en el workflow:* duplicaría el `environment` de cada servicio.
+- *Levantar también RabbitMQ y Keycloak:* más lento y no comprueba nada que el arranque necesite. En la Fase 2, si los servicios validan JWT, se revisa si Keycloak entra.
+
+**Verificación local:**
+- **Control positivo:** las cuatro imágenes nuevas responden `UP` (gateway y catalog en ~6 s; invoicing y sales, sin RabbitMQ, en ~11 s).
+- **Control negativo:** se reconstruyeron catalog y gateway con SnakeYAML otra vez en scope `test`. La prueba falló en segundos, con código 1 y el error real en los logs (`snakeyaml was not found on the classpath`), y el cambio se revirtió.
+- **Tiempo agotado:** con `SMOKE_WAIT_TIMEOUT=1`, una imagen sana también falla.
+- `actionlint` 1.7.12 sin errores.
+
 ## Cómo se haría en producción
 
 - **CD:**
   - desplegar la imagen `sha-…` en un entorno de staging tras `main` y promoverla a producción con aprobación (*environments* de GitHub);
   - firmar las imágenes (cosign) y publicar su SBOM y procedencia (build-push-action ya genera una procedencia mínima).
-- **Tests de contrato entre servicios** en un job que se dispare con `docs/events/**`, y un test de humo de punta a punta con `docker compose` en la CI.
+- **Tests de contrato entre servicios** en un job que se dispare con `docs/events/**`, y un test de humo de punta a punta (todo el compose, con un flujo venta → factura) en la CI. La prueba de humo actual (nota del 2026-10-28) solo comprueba que cada imagen arranca.
 - **Seguridad:**
   - escaneo de vulnerabilidades de las imágenes (Trivy, Grype) y de dependencias (OWASP dependency-check o el *dependency review* de GitHub);
   - CodeQL;

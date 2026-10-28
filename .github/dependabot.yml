@@ -2,7 +2,8 @@
 # en todos los servicios (p. ej. Spring Boot o Testcontainers) llega en UN solo PR, que la CI prueba en todos.
 # Las imágenes de PostgreSQL y RabbitMQ de los tests salen de infra/docker-compose.yml (InfraImages): el PR de
 # docker-compose las actualiza y dispara los tests. No cubre la de gitleaks en los scripts y el workflow ni la de
-# Maven en scripts/mvn.sh: se revisan a mano (lista en el ADR 0016).
+# Maven en scripts/mvn.sh (maven:3.9.16-eclipse-temurin-25, pendiente de pasar a eclipse-temurin): se revisan a mano
+# (lista en el ADR 0016).
 version: 2
 
 updates:
@@ -40,11 +41,13 @@ updates:
       timezone: America/Bogota
     commit-message:
       prefix: build(docker)
+    # Las dos etapas usan eclipse-temurin con el parche fijado (25.0.x_y-jdk/jre-alpine): la versión de Java es la del
+    # tag, así que basta ignorar los cambios mayores para quedarse en Java 25 y recibir los parches. Sin imagen
+    # "maven": su tag llevaba Java en el sufijo, que esta regla no ve (PR #2 la subió a temurin-26). Maven sale del
+    # wrapper (.mvn/wrapper), que actualiza el ecosistema "maven" de arriba. Nota del 2026-10-28 en el ADR 0016.
     ignore:
       # Java 25 es la versión LTS elegida (CLAUDE.md): no proponer Java 26+ (no LTS) en las imágenes base.
       - dependency-name: eclipse-temurin
-        update-types: [version-update:semver-major]
-      - dependency-name: maven
         update-types: [version-update:semver-major]
     groups:
       docker-images:
