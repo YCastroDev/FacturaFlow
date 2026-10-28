@@ -1,5 +1,6 @@
 package com.facturaflow.sales.infrastructure.adapter.out.persistence;
 
+import static com.facturaflow.sales.domain.model.SaleFixtures.SOLD_BY;
 import static com.facturaflow.sales.domain.model.SaleFixtures.customer;
 import static com.facturaflow.sales.domain.model.SaleFixtures.excludedLine;
 import static com.facturaflow.sales.domain.model.SaleFixtures.line;
@@ -74,7 +75,7 @@ class JpaSaleRepositoryAdapterTest {
         return Sale.confirm(SaleId.generate(), new ReferenceCode(reference), DATE, createdAt, customer(),
                 List.of(line("2", "50000.00", "10", LineTax.of(TaxType.IVA, "19"), LineTax.of(TaxType.INC, "8")),
                         excludedLine("1", "20000.00")),
-                PaymentMethod.BANK_TRANSFER, terms, "Entregar en portería");
+                PaymentMethod.BANK_TRANSFER, terms, "Entregar en portería", SOLD_BY);
     }
 
     @Test
@@ -93,6 +94,7 @@ class JpaSaleRepositoryAdapterTest {
         assertThat(reloaded.lines()).isEqualTo(original.lines());
         assertThat(reloaded.lines().getFirst().taxes()).extracting(LineTax::type).containsExactly(TaxType.IVA, TaxType.INC);
         assertThat(reloaded.paymentTerms()).isEqualTo(PaymentTerms.credit(DATE.plusDays(30)));
+        assertThat(reloaded.soldBy()).contains(SOLD_BY);
         assertThat(reloaded.total()).isEqualTo(original.total()).isEqualTo(Money.of("134300.00"));
         assertThat(repository.findById(original.id())).isPresent();
     }
@@ -220,6 +222,41 @@ class JpaSaleRepositoryAdapterTest {
                 new InvoiceReference(UUID.randomUUID(), "SETP1", "ab".repeat(48)), T0)))
                 .isInstanceOf(SaleConcurrentModificationException.class);
         assertThat(repository.findById(saved.id()).orElseThrow().status()).isEqualTo(SaleStatus.INVOICE_FAILED);
+    }
+
+    @Test
+    @DisplayName("una venta creada antes de registrar quién la hizo (columnas en NULL) se lee, se lista y se factura")
+    void legacySaleWithoutSoldBy() {
+        Sale saved = repository.saveNew(sale("VENTA-1", T0, PaymentTerms.cash()), HASH);
+        jdbc.sql("UPDATE sales SET sold_by_user_id = NULL, sold_by_username = NULL WHERE id = :id")
+                .param("id", saved.id().value()).update();
+
+        Sale legacy = repository.findById(saved.id()).orElseThrow();
+        assertThat(legacy.soldBy()).isEmpty();
+        assertThat(repository.findPage(null, 0, 10).items()).singleElement()
+                .satisfies(sale -> assertThat(sale.soldBy()).isEmpty());
+        Sale invoiced = repository.save(legacy.invoiced(new InvoiceReference(UUID.randomUUID(), "SETP990000001",
+                "ab".repeat(48)), T0.plusSeconds(5)));
+        assertThat(invoiced.soldBy()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("cambiar el estado no toca quién hizo la venta")
+    void saveKeepsSoldBy() {
+        Sale saved = repository.saveNew(sale("VENTA-1", T0, PaymentTerms.cash()), HASH);
+
+        repository.save(saved.invoiceFailed("motivo", null, T0.plusSeconds(5)));
+
+        assertThat(repository.findById(saved.id()).orElseThrow().soldBy()).contains(SOLD_BY);
+    }
+
+    @Test
+    @DisplayName("la base exige el identificador y el nombre de quien vendió juntos, o ninguno (defensa en profundidad)")
+    void databaseChecksSoldBy() {
+        Sale saved = repository.saveNew(sale("VENTA-1", T0, PaymentTerms.cash()), HASH);
+
+        assertThatThrownBy(() -> jdbc.sql("UPDATE sales SET sold_by_username = NULL WHERE id = :id")
+                .param("id", saved.id().value()).update()).hasMessageContaining("ck_sales_sold_by");
     }
 
     @Test

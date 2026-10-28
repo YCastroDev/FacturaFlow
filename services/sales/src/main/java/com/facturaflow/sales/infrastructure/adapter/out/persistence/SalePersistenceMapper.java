@@ -19,6 +19,7 @@ import com.facturaflow.sales.domain.model.Sale;
 import com.facturaflow.sales.domain.model.SaleId;
 import com.facturaflow.sales.domain.model.SaleLine;
 import com.facturaflow.sales.domain.model.SaleStatus;
+import com.facturaflow.sales.domain.model.SoldBy;
 import com.facturaflow.sales.domain.model.TaxRate;
 import com.facturaflow.sales.domain.model.TaxScheme;
 import com.facturaflow.sales.domain.model.TaxType;
@@ -53,6 +54,10 @@ class SalePersistenceMapper {
             }
         }
         entity.observation = sale.observation().orElse(null);
+        sale.soldBy().ifPresent(soldBy -> {
+            entity.soldByUserId = soldBy.userId();
+            entity.soldByUsername = soldBy.username();
+        });
         CustomerSnapshot customer = sale.customer();
         entity.customerId = customer.customerId();
         entity.customerDocumentType = customer.documentType().name();
@@ -91,8 +96,13 @@ class SalePersistenceMapper {
         };
         return Sale.reconstitute(new SaleId(entity.id), new ReferenceCode(entity.referenceCode), entity.saleDate,
                 entity.createdAt, customer, entity.lines.stream().map(this::toDomain).toList(),
-                PaymentMethod.valueOf(entity.paymentMethod), terms, entity.observation,
+                PaymentMethod.valueOf(entity.paymentMethod), terms, entity.observation, soldBy(entity),
                 SaleStatus.valueOf(entity.status), invoicing(entity), entity.version);
+    }
+
+    /** Vacío en una venta creada antes de registrar quién la hizo (el CHECK garantiza las dos columnas o ninguna). */
+    private static SoldBy soldBy(SaleEntity entity) {
+        return entity.soldByUserId == null ? null : new SoldBy(entity.soldByUserId, entity.soldByUsername);
     }
 
     /** El resultado de la facturación según las columnas que estén llenas (el CHECK garantiza la coherencia). */

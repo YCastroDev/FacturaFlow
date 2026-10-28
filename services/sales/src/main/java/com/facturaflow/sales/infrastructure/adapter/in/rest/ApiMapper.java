@@ -37,7 +37,11 @@ final class ApiMapper {
     private ApiMapper() {
     }
 
-    static CreateSaleCommand command(CreateSaleRequest request) {
+    /**
+     * @param soldByUserId   el {@code sub} del token de quien vende
+     * @param soldByUsername su {@code preferred_username}
+     */
+    static CreateSaleCommand command(CreateSaleRequest request, String soldByUserId, String soldByUsername) {
         List<CreateSaleCommand.Line> lines = request.lines().stream()
                 .map(line -> new CreateSaleCommand.Line(line.productCode(), line.quantity(), line.discountRate()))
                 .toList();
@@ -47,7 +51,8 @@ final class ApiMapper {
         };
         return new CreateSaleCommand(request.referenceCode(),
                 convert(request.customer().documentType(), DocumentType.class), request.customer().documentNumber(),
-                lines, convert(request.paymentMethod(), PaymentMethod.class), terms, request.observation());
+                lines, convert(request.paymentMethod(), PaymentMethod.class), terms, request.observation(),
+                soldByUserId, soldByUsername);
     }
 
     static SaleResponse response(Sale sale) {
@@ -80,8 +85,11 @@ final class ApiMapper {
             case InvoicingOutcome.Failed failed -> failure = new SaleResponse.InvoiceFailure(failed.reason(),
                     failed.invoiceId(), failed.at());
         }
+        SaleResponse.SoldBy soldBy = sale.soldBy()
+                .map(seller -> new SaleResponse.SoldBy(seller.userId(), seller.username())).orElse(null);
         return new SaleResponse(sale.id().value(), sale.referenceCode().value(),
-                convert(sale.status(), ApiSaleStatus.class), sale.saleDate(), sale.createdAt(), customerDto, lines,
+                convert(sale.status(), ApiSaleStatus.class), sale.saleDate(), sale.createdAt(), soldBy, customerDto,
+                lines,
                 convert(sale.paymentMethod(), ApiPaymentMethod.class), terms, sale.observation().orElse(null), totals,
                 invoice, failure);
     }

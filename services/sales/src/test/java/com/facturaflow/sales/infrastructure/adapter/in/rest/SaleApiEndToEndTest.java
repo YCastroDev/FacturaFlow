@@ -163,6 +163,39 @@ class SaleApiEndToEndTest {
     }
 
     @Test
+    @DisplayName("la venta guarda quién la hizo; otro vendedor y el admin la ven, y el reintento de otro conserva al original")
+    void soldByIsRecordedAndVisibleToEveryone() {
+        catalogUp();
+        String ana = "Bearer " + FakeKeycloak.userToken(c -> c.subject("a0000000-0000-4000-8000-0000000000a1")
+                .claim("preferred_username", "ana.vendedora"), "vendedor");
+        String beto = "Bearer " + FakeKeycloak.userToken(c -> c.subject("b0000000-0000-4000-8000-0000000000b2")
+                .claim("preferred_username", "beto.vendedor"), "vendedor");
+
+        String id = JsonPath.read(client.post().uri("/api/v1/sales").header(HttpHeaders.AUTHORIZATION, ana)
+                .contentType(MediaType.APPLICATION_JSON).body(SALE.formatted("VENTA-SOLD-BY")).exchange()
+                .expectStatus().isCreated().expectBody(String.class).returnResult().getResponseBody(), "$.id");
+
+        // Autorización por datos (ADR 0018, decisión 13): vendedor y admin ven TODAS las ventas, no solo las suyas.
+        for (String reader : List.of(beto, "Bearer " + FakeKeycloak.userToken("admin"))) {
+            String body = client.get().uri("/api/v1/sales/" + id).header(HttpHeaders.AUTHORIZATION, reader).exchange()
+                    .expectStatus().isOk().expectBody(String.class).returnResult().getResponseBody();
+            assertThat((String) JsonPath.read(body, "$.soldBy.userId")).isEqualTo("a0000000-0000-4000-8000-0000000000a1");
+            assertThat((String) JsonPath.read(body, "$.soldBy.username")).isEqualTo("ana.vendedora");
+        }
+        String list = client.get().uri("/api/v1/sales").header(HttpHeaders.AUTHORIZATION, beto).exchange()
+                .expectStatus().isOk().expectBody(String.class).returnResult().getResponseBody();
+        assertThat((String) JsonPath.read(list, "$.items[0].soldBy.username")).isEqualTo("ana.vendedora");
+
+        String replay = client.post().uri("/api/v1/sales").header(HttpHeaders.AUTHORIZATION, beto)
+                .contentType(MediaType.APPLICATION_JSON).body(SALE.formatted("VENTA-SOLD-BY")).exchange()
+                .expectStatus().isOk().expectBody(String.class).returnResult().getResponseBody();
+        assertThat((String) JsonPath.read(replay, "$.soldBy.username")).as("la huella no incluye al vendedor")
+                .isEqualTo("ana.vendedora");
+        assertThat(jdbc.sql("SELECT sold_by_username FROM sales").query(String.class).single())
+                .isEqualTo("ana.vendedora");
+    }
+
+    @Test
     @DisplayName("un producto que catalog no tiene es 422 y no se guarda nada")
     void unknownProduct() {
         CATALOG.stubFor(get("/api/v1/customers/by-document/NIT/890903938").willReturn(okJson(CUSTOMER)));

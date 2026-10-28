@@ -3,6 +3,7 @@ package com.facturaflow.sales.domain.model;
 import static com.facturaflow.sales.domain.model.SaleFixtures.CREATED_AT;
 import static com.facturaflow.sales.domain.model.SaleFixtures.SALE_DATE;
 import static com.facturaflow.sales.domain.model.SaleFixtures.SALE_ID;
+import static com.facturaflow.sales.domain.model.SaleFixtures.SOLD_BY;
 import static com.facturaflow.sales.domain.model.SaleFixtures.customer;
 import static com.facturaflow.sales.domain.model.SaleFixtures.excludedLine;
 import static com.facturaflow.sales.domain.model.SaleFixtures.line;
@@ -22,7 +23,7 @@ class SaleTest {
 
     private static Sale sale(PaymentTerms terms, String observation) {
         return Sale.confirm(SALE_ID, new ReferenceCode("VENTA-0001"), SALE_DATE, CREATED_AT, customer(),
-                List.of(line("1", "1000", "0", "19")), PaymentMethod.CASH, terms, observation);
+                List.of(line("1", "1000", "0", "19")), PaymentMethod.CASH, terms, observation, SOLD_BY);
     }
 
     @Nested
@@ -73,9 +74,29 @@ class SaleTest {
         void reconstituteDoesNotRevalidateDueDate() {
             Sale sale = Sale.reconstitute(SALE_ID, new ReferenceCode("VENTA-0001"), SALE_DATE, CREATED_AT, customer(),
                     List.of(line("1", "1000", "0", "19")), PaymentMethod.CASH, PaymentTerms.credit(SALE_DATE.plusDays(1)),
-                    null, SaleStatus.CONFIRMED, 3);
+                    null, SOLD_BY, SaleStatus.CONFIRMED, 3);
 
             assertThat(sale.version()).contains(3L);
+        }
+
+        @Test
+        @DisplayName("una venta nueva guarda quién la hizo y no se puede confirmar sin ese dato")
+        void newSaleRequiresSoldBy() {
+            assertThat(sale(PaymentTerms.cash(), null).soldBy()).contains(SOLD_BY);
+            assertThatThrownBy(() -> Sale.confirm(SALE_ID, new ReferenceCode("VENTA-0001"), SALE_DATE, CREATED_AT,
+                    customer(), List.of(line("1", "1000", "0", "19")), PaymentMethod.CASH, PaymentTerms.cash(), null,
+                    null))
+                    .isInstanceOf(InvalidSaleException.class).hasMessageContaining("quién la hizo");
+        }
+
+        @Test
+        @DisplayName("una venta creada antes de registrar quién la hizo se reconstruye sin ese dato")
+        void legacySaleWithoutSoldBy() {
+            Sale sale = Sale.reconstitute(SALE_ID, new ReferenceCode("VENTA-0001"), SALE_DATE, CREATED_AT, customer(),
+                    List.of(line("1", "1000", "0", "19")), PaymentMethod.CASH, PaymentTerms.cash(), null, null,
+                    SaleStatus.CONFIRMED, 0);
+
+            assertThat(sale.soldBy()).isEmpty();
         }
 
         @Test
@@ -157,7 +178,7 @@ class SaleTest {
         @DisplayName("una venta reconstituida no trae eventos: ya se guardaron con la venta y no se repiten")
         void reconstitutedSaleHasNoEvents() {
             Sale sale = Sale.reconstitute(SALE_ID, new ReferenceCode("VENTA-0001"), SALE_DATE, CREATED_AT, customer(),
-                    List.of(line("1", "1000", "0", "19")), PaymentMethod.CASH, PaymentTerms.cash(), null,
+                    List.of(line("1", "1000", "0", "19")), PaymentMethod.CASH, PaymentTerms.cash(), null, SOLD_BY,
                     SaleStatus.CONFIRMED, 0);
 
             assertThat(sale.pendingEvents()).isEmpty();

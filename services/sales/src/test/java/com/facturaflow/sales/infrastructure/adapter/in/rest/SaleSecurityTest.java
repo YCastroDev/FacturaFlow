@@ -5,8 +5,10 @@ import static com.facturaflow.sales.domain.model.SaleFixtures.saleWith;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.verify;
 
 import com.facturaflow.sales.FakeKeycloak;
+import com.facturaflow.sales.application.port.in.CreateSaleCommand;
 import com.facturaflow.sales.application.port.in.CreateSaleResult;
 import com.facturaflow.sales.application.port.in.CreateSaleUseCase;
 import com.facturaflow.sales.application.port.in.GetSaleUseCase;
@@ -29,6 +31,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
@@ -154,6 +158,23 @@ class SaleSecurityTest {
         } else {
             assertProblem(result, HttpStatus.FORBIDDEN, "forbidden");
         }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"vendedor", "admin"})
+    @DisplayName("quién hace la venta sale del token validado: su sub y su preferred_username llegan al comando")
+    void soldByComesFromValidatedToken(String role) {
+        String token = FakeKeycloak.userToken(claims -> claims.subject("4b9e0000-0000-4000-8000-0000000000c3")
+                .claim("preferred_username", role + ".demo"), role);
+
+        MvcTestResult result = mvc.post().uri("/api/v1/sales").header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON).content(BODY).exchange();
+
+        assertThat(result).hasStatus(HttpStatus.CREATED);
+        ArgumentCaptor<CreateSaleCommand> command = ArgumentCaptor.forClass(CreateSaleCommand.class);
+        verify(createSale).create(command.capture());
+        assertThat(command.getValue().soldByUserId()).isEqualTo("4b9e0000-0000-4000-8000-0000000000c3");
+        assertThat(command.getValue().soldByUsername()).isEqualTo(role + ".demo");
     }
 
     @Test

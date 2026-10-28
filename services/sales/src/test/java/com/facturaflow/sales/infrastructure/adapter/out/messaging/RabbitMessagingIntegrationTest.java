@@ -2,6 +2,7 @@ package com.facturaflow.sales.infrastructure.adapter.out.messaging;
 
 import static com.facturaflow.sales.domain.model.SaleFixtures.CREATED_AT;
 import static com.facturaflow.sales.domain.model.SaleFixtures.SALE_DATE;
+import static com.facturaflow.sales.domain.model.SaleFixtures.SOLD_BY;
 import static com.facturaflow.sales.domain.model.SaleFixtures.customer;
 import static com.facturaflow.sales.domain.model.SaleFixtures.line;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -84,7 +85,7 @@ class RabbitMessagingIntegrationTest {
 
     private Sale confirmedSale(String reference) {
         Sale sale = Sale.confirm(SaleId.generate(), new ReferenceCode(reference), SALE_DATE, CREATED_AT, customer(),
-                List.of(line("2", "18500", "10", "5")), PaymentMethod.CASH, PaymentTerms.cash(), null);
+                List.of(line("2", "18500", "10", "5")), PaymentMethod.CASH, PaymentTerms.cash(), null, SOLD_BY);
         return sales.saveNew(sale, HASH);
     }
 

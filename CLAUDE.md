@@ -48,7 +48,7 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 - `application/` también es Java puro: sin `@Service`, `@Transactional` ni nada de Spring. Los casos de uso se registran como beans en `infrastructure/config`.
 - En `application/port/in` y `application/port/out` solo hay interfaces (puertos) y records (comandos/resultados). Las excepciones del contrato de los puertos van en `application/exception`.
 - `infrastructure/adapter/in` nunca usa `infrastructure/adapter/out`: siempre pasa por un puerto de entrada.
-- Spring Security solo en `infrastructure/config` (y, en sales, en el ACL `adapter/out/catalog`, único lugar del cliente OAuth2): regla 13 (ADR 0018).
+- Spring Security solo en `infrastructure/config` (y, en sales, en `adapter/in/rest`, que lee el `Jwt` para `SoldBy`, y en el ACL `adapter/out/catalog`, único lugar del cliente OAuth2): regla 13 (ADR 0018).
 - Sin ciclos entre paquetes.
 - **Prohibido** importar código de otro servicio o acceder a la base de datos de otro servicio (ADR 0001, ADR 0003). La comunicación entre servicios es solo por HTTP o eventos.
 - **Estas reglas se validan automáticamente** con ArchUnit (`src/test/java/.../architecture/HexagonalArchitectureTest.java`) y corren con `./scripts/mvn.sh <servicio> test`. Si un test de arquitectura falla, se corrige el código, no la regla; cambiar una regla requiere preguntar (y, si es una decisión nueva, un ADR).
@@ -147,6 +147,7 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 - Totales: COPIA deliberada del cálculo de invoicing (`Money`, `Quantity`, `DiscountRate`, `LineTax`, `SaleLine`) con sus tests copiados. Si cambia en un servicio, cambia en el otro.
 - `SaleStatus`: `CONFIRMED` (pendiente de facturar) → `INVOICED` | `INVOICE_FAILED`; `INVOICE_FAILED` → `INVOICED`; `INVOICED` final (ADR 0015, sección propia abajo). Un estado nuevo exige su caso en `canTransitionTo`, migración (CHECK de estado y de coherencia) y su fila en la tabla del ADR 0015.
 - El snapshot del cliente solo se valida en estructura (las reglas fiscales las validan catalog e invoicing).
+- **Quién hizo la venta (ADR 0018, decisión 13):** `SoldBy(userId, username)` = `sub` y `preferred_username` del token, copia al vender (sin `preferred_username`, el `sub`). El controlador lo lee del `Jwt` y lo pasa como texto en `CreateSaleCommand`; NUNCA viene del cuerpo. `Sale.confirm` lo exige; `reconstitute` lo acepta vacío solo para ventas anteriores a V4 (columnas `sold_by_*` en NULL, sin valores ficticios; API `soldBy: null`). NO entra en la huella (el reintento de otro usuario devuelve la venta con su vendedor original) ni en `SaleConfirmed`. Vendedor y admin ven TODAS las ventas (sin filtro por dueño).
 - Puerto local `127.0.0.1:8083`; base `sales_db` / usuario `sales_user` (`SALES_DB_PASSWORD`); `SALES_CATALOG_BASE_URL` (por defecto `http://catalog:8080`); RabbitMQ con el usuario `sales` (`SALES_RABBITMQ_PASSWORD`).
 
 ## Mensajería y outbox (ADR 0013; en invoicing, copia en el ADR 0015)
@@ -212,7 +213,6 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 - **Errores:** 401 `unauthorized` (`WWW-Authenticate: Bearer`, o `error="invalid_token"`), 403 `forbidden`, 503 `authentication-unavailable` (`Retry-After: 10`, Keycloak sin claves en caché), en Problem Details y sin el motivo del rechazo ni el token. Los escribe `SecurityProblemResponses` (los filtros actúan antes que el `ProblemDetailsHandler`).
 - **Swagger:** esquema `oauth2` authorizationCode (URLs del issuer) + `springdoc.swagger-ui.oauth.client-id: facturaflow-swagger` con PKCE.
 - **Tests:** web con la configuración real (`@Import(SecurityConfiguration.class)`) y tokens de `FakeKeycloak` (WireMock con el JWKS de una clave de prueba: pasa por el decodificador REAL); tests de controlador con `@WithMockUser(roles = ...)`; integración con `TestSecurityConfiguration` (importada por `TestcontainersConfiguration`; token por defecto en el `RestTestClient`: vendedor en sales, contador en invoicing, admin en catalog y el gateway; Actuator salvo health necesita uno de admin). Keycloak real con `RealKeycloak` (copia en gateway, catalog y sales; imagen de `InfraImages.KEYCLOAK`): `GatewayKeycloakSecurityTest`, `CatalogKeycloakIntegrationTest`, `SalesKeycloakIntegrationTest`; estos NO importan `TestcontainersConfiguration` (traería el Keycloak falso).
-- **Pendiente (PR aparte):** registrar quién creó la venta (`SoldBy`, ADR 0018).
 
 ## Integración continua (ADR 0016)
 

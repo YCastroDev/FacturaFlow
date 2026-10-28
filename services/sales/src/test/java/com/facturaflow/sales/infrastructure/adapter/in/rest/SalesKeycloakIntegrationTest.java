@@ -26,6 +26,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.web.servlet.client.EntityExchangeResult;
 import org.springframework.test.web.servlet.client.RestTestClient;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
@@ -99,10 +100,14 @@ class SalesKeycloakIntegrationTest {
     }
 
     private int createSale(String referenceCode, String token) {
+        return postSale(referenceCode, token).getStatus().value();
+    }
+
+    private EntityExchangeResult<String> postSale(String referenceCode, String token) {
         return RestTestClient.bindToServer().baseUrl("http://localhost:" + port).build()
                 .post().uri("/api/v1/sales").contentType(MediaType.APPLICATION_JSON).body(SALE.formatted(referenceCode))
                 .headers(h -> h.setBearerAuth(token))
-                .exchange().expectBody(String.class).returnResult().getStatus().value();
+                .exchange().expectBody(String.class).returnResult();
     }
 
     private static String claims(String bearer) {
@@ -122,6 +127,20 @@ class SalesKeycloakIntegrationTest {
         assertThat((String) JsonPath.read(claims, "$.azp")).isEqualTo("sales-service");
         assertThat(((String) JsonPath.read(claims, "$.scope")).split(" ")).contains("catalog.read");
         assertThat(claims).contains("facturaflow-api").doesNotContain("\"vendedor\"");
+    }
+
+    @Test
+    @DisplayName("la venta registra quién la hizo con el sub y el preferred_username del token real del vendedor")
+    void saleRecordsTheRealSeller() {
+        String token = RealKeycloak.userToken("vendedor.demo");
+
+        EntityExchangeResult<String> created = postSale("VENTA-KC-SELLER", token);
+
+        assertThat(created.getStatus().value()).as(created.getResponseBody()).isEqualTo(201);
+        String tokenClaims = claims("Bearer " + token);
+        assertThat((String) JsonPath.read(created.getResponseBody(), "$.soldBy.userId"))
+                .isEqualTo(JsonPath.read(tokenClaims, "$.sub"));
+        assertThat((String) JsonPath.read(created.getResponseBody(), "$.soldBy.username")).isEqualTo("vendedor.demo");
     }
 
     @Test

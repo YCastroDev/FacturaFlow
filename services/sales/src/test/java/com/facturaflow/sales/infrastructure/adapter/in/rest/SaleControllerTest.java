@@ -1,5 +1,6 @@
 package com.facturaflow.sales.infrastructure.adapter.in.rest;
 
+import static com.facturaflow.sales.domain.model.SaleFixtures.SOLD_BY;
 import static com.facturaflow.sales.domain.model.SaleFixtures.excludedLine;
 import static com.facturaflow.sales.domain.model.SaleFixtures.line;
 import static com.facturaflow.sales.domain.model.SaleFixtures.saleWith;
@@ -8,6 +9,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 
 import com.facturaflow.sales.application.exception.CatalogUnavailableException;
 import com.facturaflow.sales.application.exception.InvalidCatalogReferencesException;
@@ -33,6 +35,7 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -42,10 +45,12 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 import org.springframework.test.web.servlet.assertj.MvcTestResult;
+import org.springframework.test.web.servlet.request.RequestPostProcessor;
 
 /**
  * Capa web aislada: controlador + manejador de errores + Jackson + Bean Validation, con los casos de uso
@@ -58,6 +63,7 @@ import org.springframework.test.web.servlet.assertj.MvcTestResult;
 class SaleControllerTest {
 
     private static final String URL = "/api/v1/sales";
+    private static final String SELLER_ID = "7d3b0000-0000-4000-8000-0000000000b2";
     private static final String BODY = """
             { "referenceCode": "VENTA-1",
               "customer": { "documentType": "NIT", "documentNumber": "890903938" },
@@ -84,8 +90,23 @@ class SaleControllerTest {
                 excludedLine("1", "20000.00")));
     }
 
+    /**
+     * POST con un JWT de vendedor (sin pasar por el decodificador: eso lo prueba {@link SaleSecurityTest}). El
+     * controlador lee de él {@code sub} y {@code preferred_username}; {@code @WithMockUser} no trae un {@code Jwt}.
+     */
     private MvcTestResult post(String body) {
-        return mvc.post().uri(URL).contentType(MediaType.APPLICATION_JSON).content(body).exchange();
+        return post(body, jwt().jwt(token -> token.subject(SELLER_ID).claim("preferred_username", "ana.vendedora"))
+                .authorities(new SimpleGrantedAuthority("ROLE_vendedor")));
+    }
+
+    private MvcTestResult post(String body, RequestPostProcessor token) {
+        return mvc.post().uri(URL).with(token).contentType(MediaType.APPLICATION_JSON).content(body).exchange();
+    }
+
+    private CreateSaleCommand capturedCommand() {
+        ArgumentCaptor<CreateSaleCommand> command = ArgumentCaptor.forClass(CreateSaleCommand.class);
+        verify(createSale).create(command.capture());
+        return command.getValue();
     }
 
     private static void assertProblem(MvcTestResult result, HttpStatus status, String slug) {
@@ -127,6 +148,48 @@ class SaleControllerTest {
                 new CreateSaleCommand.Line("ARROZ-KG", new BigDecimal("1.5"), null));
         assertThat(command.getValue().paymentMethod()).isEqualTo(PaymentMethod.BANK_TRANSFER);
         assertThat(command.getValue().paymentTerms()).isEqualTo(new CreateSaleCommand.CreditTerms(LocalDate.of(2030, 1, 31)));
+    }
+
+    @Test
+    @DisplayName("quién hace la venta sale del token (sub y preferred_username), nunca del cuerpo")
+    void soldByComesFromToken() {
+        given(createSale.create(any())).willReturn(CreateSaleResult.created(sale()));
+
+        post(BODY);
+
+        assertThat(capturedCommand().soldByUserId()).isEqualTo(SELLER_ID);
+        assertThat(capturedCommand().soldByUsername()).isEqualTo("ana.vendedora");
+    }
+
+    @Test
+    @DisplayName("un soldBy en el cuerpo es un campo que no existe: 400 (no se puede vender a nombre de otro)")
+    void soldByInBodyIsRejected() {
+        String body = BODY.replace("\"referenceCode\"", "\"soldBy\": { \"userId\": \"x\", \"username\": \"otro\" }, "
+                + "\"referenceCode\"");
+
+        assertProblem(post(body), HttpStatus.BAD_REQUEST, "malformed-request");
+        verifyNoInteractions(createSale);
+    }
+
+    @Test
+    @DisplayName("un token sin preferred_username usa el sub como nombre")
+    void usernameFallsBackToSubject() {
+        given(createSale.create(any())).willReturn(CreateSaleResult.created(sale()));
+
+        post(BODY, jwt().jwt(token -> token.subject(SELLER_ID).claims(claims -> claims.remove("preferred_username")))
+                .authorities(new SimpleGrantedAuthority("ROLE_vendedor")));
+
+        assertThat(capturedCommand().soldByUsername()).isEqualTo(SELLER_ID);
+    }
+
+    @Test
+    @DisplayName("un token sin sub es un error de configuración del realm: 500 sin detalles y la venta no se crea")
+    void tokenWithoutSubjectIs500() {
+        MvcTestResult result = post(BODY, jwt().jwt(token -> token.claims(claims -> claims.remove("sub")))
+                .authorities(new SimpleGrantedAuthority("ROLE_vendedor")));
+
+        assertProblem(result, HttpStatus.INTERNAL_SERVER_ERROR, "internal-error");
+        verifyNoInteractions(createSale);
     }
 
     @Test
@@ -205,11 +268,25 @@ class SaleControllerTest {
         UUID missing = UUID.randomUUID();
         given(getSale.byId(new SaleId(missing))).willThrow(new SaleNotFoundException("No existe"));
 
-        assertThat(mvc.get().uri(URL + "/{id}", sale.id().value()).exchange()).hasStatusOk();
+        assertThat(mvc.get().uri(URL + "/{id}", sale.id().value()).exchange()).hasStatusOk()
+                .bodyJson().extractingPath("$.soldBy").isEqualTo(Map.of("userId", SOLD_BY.userId(), "username",
+                        SOLD_BY.username()));
         assertThat(mvc.get().uri(URL + "/by-reference/VENTA-0001").exchange()).hasStatusOk()
                 .bodyJson().extractingPath("$.referenceCode").isEqualTo("VENTA-0001");
         assertProblem(mvc.get().uri(URL + "/{id}", missing).exchange(), HttpStatus.NOT_FOUND, "sale-not-found");
         assertProblem(mvc.get().uri(URL + "/no-es-uuid").exchange(), HttpStatus.BAD_REQUEST, "invalid-parameter");
+    }
+
+    @Test
+    @DisplayName("una venta creada antes de registrar quién la hizo responde soldBy null")
+    void legacySaleHasNullSoldBy() {
+        Sale sale = sale();
+        Sale legacy = Sale.reconstitute(sale.id(), sale.referenceCode(), sale.saleDate(), sale.createdAt(),
+                sale.customer(), sale.lines(), sale.paymentMethod(), sale.paymentTerms(), null, null, sale.status(), 0);
+        given(getSale.byId(sale.id())).willReturn(legacy);
+
+        assertThat(mvc.get().uri(URL + "/{id}", sale.id().value()).exchange()).hasStatusOk()
+                .bodyJson().extractingPath("$.soldBy").isNull();
     }
 
     @Test

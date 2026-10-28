@@ -1,5 +1,6 @@
 package com.facturaflow.sales.application.service;
 
+import static com.facturaflow.sales.domain.model.SaleFixtures.SOLD_BY;
 import static com.facturaflow.sales.domain.model.SaleFixtures.customer;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -15,6 +16,7 @@ import com.facturaflow.sales.application.port.out.StoredSale;
 import com.facturaflow.sales.domain.exception.InvalidPaymentTermsException;
 import com.facturaflow.sales.domain.exception.InvalidQuantityException;
 import com.facturaflow.sales.domain.exception.InvalidSaleException;
+import com.facturaflow.sales.domain.exception.InvalidSoldByException;
 import com.facturaflow.sales.domain.model.DocumentType;
 import com.facturaflow.sales.domain.model.LineTax;
 import com.facturaflow.sales.domain.model.Money;
@@ -23,6 +25,7 @@ import com.facturaflow.sales.domain.model.Sale;
 import com.facturaflow.sales.domain.model.SaleEvent;
 import com.facturaflow.sales.domain.model.SaleLine;
 import com.facturaflow.sales.domain.model.SaleStatus;
+import com.facturaflow.sales.domain.model.SoldBy;
 import com.facturaflow.sales.domain.model.TaxType;
 import com.facturaflow.sales.domain.model.UnitOfMeasure;
 import java.math.BigDecimal;
@@ -64,11 +67,18 @@ class CreateSaleServiceTest {
     private static CreateSaleCommand command(String reference, CreateSaleCommand.Terms terms,
                                              CreateSaleCommand.Line... lines) {
         return new CreateSaleCommand(reference, DocumentType.NIT, " 890903938 ", List.of(lines), PaymentMethod.CASH,
-                terms, "Entregar en portería");
+                terms, "Entregar en portería", SOLD_BY.userId(), SOLD_BY.username());
     }
 
     private static CreateSaleCommand cash(String reference, CreateSaleCommand.Line... lines) {
         return command(reference, new CreateSaleCommand.CashTerms(), lines);
+    }
+
+    /** La misma venta pedida por otro usuario. */
+    private static CreateSaleCommand soldBy(CreateSaleCommand command, String userId, String username) {
+        return new CreateSaleCommand(command.referenceCode(), command.customerDocumentType(),
+                command.customerDocumentNumber(), command.lines(), command.paymentMethod(), command.paymentTerms(),
+                command.observation(), userId, username);
     }
 
     private static CreateSaleCommand.Line line(String code, String quantity, String discount) {
@@ -93,6 +103,39 @@ class CreateSaleServiceTest {
         // 2 x 18.500 = 37.000 - 10% = 33.300 + 5% (1.665) = 34.965; arroz 1,5 x 4.200 = 6.300 excluido.
         assertThat(sale.total()).isEqualTo(Money.of("41265.00"));
         assertThat(repository.count()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("la venta guarda quién la hizo, con los datos que trae el comando (del token)")
+    void savesSoldBy() {
+        Sale sale = service.create(soldBy(cash("VENTA-1", line("CAFE-500", "1", null)), " sub-123 ", "ana.vendedora"))
+                .sale();
+
+        assertThat(sale.soldBy()).contains(new SoldBy("sub-123", "ana.vendedora"));
+        assertThat(repository.findById(sale.id()).orElseThrow().soldBy()).contains(new SoldBy("sub-123",
+                "ana.vendedora"));
+    }
+
+    @Test
+    @DisplayName("si otro vendedor reintenta la misma venta, recibe la existente con su vendedor original (200, no 409)")
+    void replayByAnotherSellerKeepsOriginalSoldBy() {
+        Sale first = service.create(cash("VENTA-1", line("CAFE-500", "2", "10"))).sale();
+
+        CreateSaleResult replay = service.create(soldBy(cash("VENTA-1", line("CAFE-500", "2", "10")), "otro-sub",
+                "otro.vendedor"));
+
+        assertThat(replay.created()).isFalse();
+        assertThat(replay.sale().id()).isEqualTo(first.id());
+        assertThat(replay.sale().soldBy()).contains(SOLD_BY);
+    }
+
+    @Test
+    @DisplayName("sin quién hace la venta: 422 ANTES de consultar a catalog")
+    void missingSoldByDoesNotCallCatalog() {
+        assertThatThrownBy(() -> service.create(soldBy(cash("VENTA-1", line("CAFE-500", "1", null)), " ", "x")))
+                .isInstanceOf(InvalidSoldByException.class);
+        assertThat(catalog.calls()).isZero();
+        assertThat(repository.count()).isZero();
     }
 
     @Test
@@ -170,7 +213,8 @@ class CreateSaleServiceTest {
     @DisplayName("cliente inexistente: 422 y la venta no se crea")
     void missingCustomer() {
         CreateSaleCommand command = new CreateSaleCommand("VENTA-1", DocumentType.CITIZENSHIP_CARD, "1234567",
-                List.of(line("CAFE-500", "1", null)), PaymentMethod.CASH, new CreateSaleCommand.CashTerms(), null);
+                List.of(line("CAFE-500", "1", null)), PaymentMethod.CASH, new CreateSaleCommand.CashTerms(), null,
+                SOLD_BY.userId(), SOLD_BY.username());
 
         assertThatThrownBy(() -> service.create(command))
                 .isInstanceOf(InvalidCatalogReferencesException.class)

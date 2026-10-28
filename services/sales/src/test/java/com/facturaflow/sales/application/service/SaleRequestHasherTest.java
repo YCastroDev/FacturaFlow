@@ -16,9 +16,12 @@ import java.util.stream.Stream;
 
 class SaleRequestHasherTest {
 
+    private static final String SELLER_ID = "7d3b0000-0000-4000-8000-0000000000a1";
+    private static final String SELLER = "vendedor.demo";
+
     private static final CreateSaleCommand BASE = new CreateSaleCommand("VENTA-1", DocumentType.NIT, "890903938",
             List.of(new CreateSaleCommand.Line("CAFE-500", new BigDecimal("2"), new BigDecimal("10"))),
-            PaymentMethod.CASH, new CreateSaleCommand.CashTerms(), "Nota");
+            PaymentMethod.CASH, new CreateSaleCommand.CashTerms(), "Nota", SELLER_ID, SELLER);
 
     private static String hash(CreateSaleCommand command) {
         return SaleRequestHasher.hash(SaleRequest.from(command)).value();
@@ -26,19 +29,24 @@ class SaleRequestHasherTest {
 
     private static CreateSaleCommand withLines(CreateSaleCommand.Line... lines) {
         return new CreateSaleCommand(BASE.referenceCode(), BASE.customerDocumentType(), BASE.customerDocumentNumber(),
-                List.of(lines), BASE.paymentMethod(), BASE.paymentTerms(), BASE.observation());
+                List.of(lines), BASE.paymentMethod(), BASE.paymentTerms(), BASE.observation(), SELLER_ID, SELLER);
     }
 
     static Stream<Arguments> sameRequest() {
         return Stream.of(
                 Arguments.of("otro código de referencia (es la clave)", new CreateSaleCommand("VENTA-2", DocumentType.NIT,
-                        "890903938", BASE.lines(), PaymentMethod.CASH, new CreateSaleCommand.CashTerms(), "Nota")),
+                        "890903938", BASE.lines(), PaymentMethod.CASH, new CreateSaleCommand.CashTerms(), "Nota",
+                        SELLER_ID, SELLER)),
                 Arguments.of("código en minúsculas y con espacios", withLines(
                         new CreateSaleCommand.Line(" cafe-500 ", new BigDecimal("2"), new BigDecimal("10")))),
                 Arguments.of("cantidad y descuento con otra escala", withLines(
                         new CreateSaleCommand.Line("CAFE-500", new BigDecimal("2.00"), new BigDecimal("10.0")))),
                 Arguments.of("observación con espacios", new CreateSaleCommand("VENTA-1", DocumentType.NIT, " 890903938",
-                        BASE.lines(), PaymentMethod.CASH, new CreateSaleCommand.CashTerms(), "  Nota ")));
+                        BASE.lines(), PaymentMethod.CASH, new CreateSaleCommand.CashTerms(), "  Nota ", SELLER_ID,
+                        SELLER)),
+                Arguments.of("otro vendedor (quién pide la venta no es su contenido: ADR 0018)",
+                        new CreateSaleCommand("VENTA-1", DocumentType.NIT, "890903938", BASE.lines(), PaymentMethod.CASH,
+                                new CreateSaleCommand.CashTerms(), "Nota", "otro-sub", "otro.vendedor")));
     }
 
     static Stream<Arguments> differentRequest() {
@@ -47,13 +55,15 @@ class SaleRequestHasherTest {
                         new BigDecimal("10")))),
                 Arguments.of("sin descuento", withLines(new CreateSaleCommand.Line("CAFE-500", new BigDecimal("2"), null))),
                 Arguments.of("otro cliente", new CreateSaleCommand("VENTA-1", DocumentType.NIT, "800197268", BASE.lines(),
-                        PaymentMethod.CASH, new CreateSaleCommand.CashTerms(), "Nota")),
+                        PaymentMethod.CASH, new CreateSaleCommand.CashTerms(), "Nota", SELLER_ID, SELLER)),
                 Arguments.of("a crédito", new CreateSaleCommand("VENTA-1", DocumentType.NIT, "890903938", BASE.lines(),
-                        PaymentMethod.CASH, new CreateSaleCommand.CreditTerms(LocalDate.of(2030, 1, 31)), "Nota")),
+                        PaymentMethod.CASH, new CreateSaleCommand.CreditTerms(LocalDate.of(2030, 1, 31)), "Nota",
+                        SELLER_ID, SELLER)),
                 Arguments.of("otro medio de pago", new CreateSaleCommand("VENTA-1", DocumentType.NIT, "890903938",
-                        BASE.lines(), PaymentMethod.CREDIT_CARD, new CreateSaleCommand.CashTerms(), "Nota")),
+                        BASE.lines(), PaymentMethod.CREDIT_CARD, new CreateSaleCommand.CashTerms(), "Nota", SELLER_ID,
+                        SELLER)),
                 Arguments.of("sin observación", new CreateSaleCommand("VENTA-1", DocumentType.NIT, "890903938",
-                        BASE.lines(), PaymentMethod.CASH, new CreateSaleCommand.CashTerms(), null)));
+                        BASE.lines(), PaymentMethod.CASH, new CreateSaleCommand.CashTerms(), null, SELLER_ID, SELLER)));
     }
 
     @ParameterizedTest(name = "{0}")

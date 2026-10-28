@@ -33,6 +33,9 @@ import java.util.function.Function;
  * <p>Facturación (ADR 0015): {@link #invoiced} e {@link #invoiceFailed} aplican el resultado que informa invoicing y
  * devuelven una venta NUEVA (el agregado es inmutable), con el estado y el {@link InvoicingOutcome}. Las
  * transiciones permitidas son las de {@link SaleStatus#canTransitionTo}.
+ *
+ * <p>Quién la hizo (ADR 0018, decisión 13): {@link #confirm} exige un {@link SoldBy}; {@link #reconstitute} lo acepta
+ * vacío solo para las ventas creadas antes de registrarlo, que no tienen ese dato (sin valores ficticios).
  */
 public final class Sale {
 
@@ -49,6 +52,7 @@ public final class Sale {
     private final PaymentMethod paymentMethod;
     private final PaymentTerms paymentTerms;
     private final String observation;
+    private final SoldBy soldBy;
     private final SaleStatus status;
     private final InvoicingOutcome invoicing;
     private final Long version;
@@ -56,8 +60,8 @@ public final class Sale {
 
     private Sale(SaleId id, ReferenceCode referenceCode, LocalDate saleDate, Instant createdAt,
                  CustomerSnapshot customer, List<SaleLine> lines, PaymentMethod paymentMethod,
-                 PaymentTerms paymentTerms, String observation, SaleStatus status, InvoicingOutcome invoicing,
-                 Long version, List<SaleEvent> pendingEvents) {
+                 PaymentTerms paymentTerms, String observation, SoldBy soldBy, SaleStatus status,
+                 InvoicingOutcome invoicing, Long version, List<SaleEvent> pendingEvents) {
         this.id = id;
         this.referenceCode = referenceCode;
         this.saleDate = saleDate;
@@ -67,6 +71,7 @@ public final class Sale {
         this.paymentMethod = paymentMethod;
         this.paymentTerms = paymentTerms;
         this.observation = observation;
+        this.soldBy = soldBy;
         this.status = status;
         this.invoicing = invoicing;
         this.version = version;
@@ -79,28 +84,33 @@ public final class Sale {
      *
      * @param saleDate  fecha de la venta en Colombia (la pone el caso de uso con su reloj)
      * @param createdAt instante de creación (para ordenar el listado)
+     * @param soldBy    quién la hizo (obligatorio en una venta nueva)
      */
     public static Sale confirm(SaleId id, ReferenceCode referenceCode, LocalDate saleDate, Instant createdAt,
                                CustomerSnapshot customer, List<SaleLine> lines, PaymentMethod paymentMethod,
-                               PaymentTerms paymentTerms, String observation) {
+                               PaymentTerms paymentTerms, String observation, SoldBy soldBy) {
         validate(id, referenceCode, saleDate, createdAt, customer, lines, paymentMethod, paymentTerms);
+        require(soldBy, "quién la hizo");
         if (paymentTerms instanceof PaymentTerms.Credit credit && !credit.dueDate().isAfter(saleDate)) {
             throw InvalidPaymentTermsException.dueDateNotAfterSaleDate(credit.dueDate().toString(), saleDate.toString());
         }
         return new Sale(id, referenceCode, saleDate, createdAt, customer, List.copyOf(lines), paymentMethod,
-                paymentTerms, normalizeObservation(observation), SaleStatus.CONFIRMED, null, null,
+                paymentTerms, normalizeObservation(observation), soldBy, SaleStatus.CONFIRMED, null, null,
                 List.of(new SaleEvent.SaleConfirmed(id, createdAt)));
     }
 
     /**
      * Reconstruye una venta guardada, con las mismas validaciones salvo la del vencimiento (que se
      * comprobó contra la fecha de la venta al confirmarla y no depende de "hoy").
+     *
+     * @param soldBy quién la hizo, o {@code null} en una venta creada antes de registrarlo
      */
     public static Sale reconstitute(SaleId id, ReferenceCode referenceCode, LocalDate saleDate, Instant createdAt,
                                     CustomerSnapshot customer, List<SaleLine> lines, PaymentMethod paymentMethod,
-                                    PaymentTerms paymentTerms, String observation, SaleStatus status, long version) {
+                                    PaymentTerms paymentTerms, String observation, SoldBy soldBy, SaleStatus status,
+                                    long version) {
         return reconstitute(id, referenceCode, saleDate, createdAt, customer, lines, paymentMethod, paymentTerms,
-                observation, status, null, version);
+                observation, soldBy, status, null, version);
     }
 
     /**
@@ -109,7 +119,7 @@ public final class Sale {
      */
     public static Sale reconstitute(SaleId id, ReferenceCode referenceCode, LocalDate saleDate, Instant createdAt,
                                     CustomerSnapshot customer, List<SaleLine> lines, PaymentMethod paymentMethod,
-                                    PaymentTerms paymentTerms, String observation, SaleStatus status,
+                                    PaymentTerms paymentTerms, String observation, SoldBy soldBy, SaleStatus status,
                                     InvoicingOutcome invoicing, long version) {
         validate(id, referenceCode, saleDate, createdAt, customer, lines, paymentMethod, paymentTerms);
         if (status == null) {
@@ -117,7 +127,7 @@ public final class Sale {
         }
         requireCoherent(status, invoicing);
         return new Sale(id, referenceCode, saleDate, createdAt, customer, List.copyOf(lines), paymentMethod,
-                paymentTerms, normalizeObservation(observation), status, invoicing, version, List.of());
+                paymentTerms, normalizeObservation(observation), soldBy, status, invoicing, version, List.of());
     }
 
     // ----- Facturación (ADR 0015) -----
@@ -141,7 +151,7 @@ public final class Sale {
             throw new InvalidSaleStateTransitionException(id.value(), status.name(), target.name());
         }
         return new Sale(id, referenceCode, saleDate, createdAt, customer, lines, paymentMethod, paymentTerms,
-                observation, target, outcome, version, List.of());
+                observation, soldBy, target, outcome, version, List.of());
     }
 
     private static void requireCoherent(SaleStatus status, InvoicingOutcome invoicing) {
@@ -263,6 +273,11 @@ public final class Sale {
 
     public Optional<String> observation() {
         return Optional.ofNullable(observation);
+    }
+
+    /** Quién hizo la venta; vacío solo en las ventas creadas antes de registrarlo. */
+    public Optional<SoldBy> soldBy() {
+        return Optional.ofNullable(soldBy);
     }
 
     public SaleStatus status() {

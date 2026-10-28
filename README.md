@@ -156,6 +156,8 @@ curl -s -H "Authorization: Bearer $VENDEDOR" -X POST http://localhost:8080/api/v
   "lines": [ { "productCode": "CAFE-500", "quantity": 2 } ],
   "paymentMethod": "CASH", "paymentTerms": { "type": "CASH" } }'                 # → sales (201)
 curl -s -H "Authorization: Bearer $VENDEDOR" http://localhost:8080/api/v1/sales/by-reference/GW-0001   # INVOICED en segundos
+curl -s -H "Authorization: Bearer $VENDEDOR" http://localhost:8080/api/v1/sales/by-reference/GW-0001 \
+  | grep -o '"soldBy":{[^}]*}'                                                   # "soldBy":{"userId":"<sub>","username":"vendedor.demo"}
 curl -s -H "Authorization: Bearer $VENDEDOR" http://localhost:8080/api/v1/invoices/<invoiceId>         # → 403 (vendedor)
 curl -s -H "Authorization: Bearer $CONTADOR" http://localhost:8080/api/v1/invoices/<invoiceId>         # → invoicing (200)
 curl -s -H "Authorization: Bearer $VENDEDOR" http://localhost:8080/api/v1/nada                         # → 404 del gateway
@@ -324,6 +326,10 @@ Swagger UI: **http://localhost:8083/swagger-ui.html** (inicia sesión con *Autho
    - *422*: un producto inactivo (`DEMO-CAFE`, si existe en tu catalog) y uno inexistente. Responde `422` con `missingProducts` e `inactiveProducts`.
 2. **Repetir** la misma petición: `200` con la misma venta. Con otro contenido y el mismo `referenceCode`: `409`.
 3. **Consultar:** `GET /api/v1/sales/{id}`, `GET /api/v1/sales/by-reference/{referenceCode}` o el listado `GET /api/v1/sales?page=0&size=20`. La venta trae la copia del cliente y de cada producto, y los totales (calculados con las mismas reglas que invoicing).
+   - **`soldBy`** muestra quién hizo la venta: `{"userId": "<sub del token>", "username": "vendedor.demo"}`. Sale del token, nunca del cuerpo: un `soldBy` en la petición responde `400`.
+   - Las ventas creadas antes de este cambio tienen `"soldBy": null`.
+   - Vendedores y administradores ven todas las ventas, no solo las suyas ([ADR 0018](docs/adr/0018-seguridad-resource-servers.md), decisión 13).
+   - Si `admin.demo` repite la petición de una venta de `vendedor.demo`, recibe `200` con la venta existente, y `soldBy` sigue siendo `vendedor.demo`: quién pide la venta no entra en la idempotencia.
 4. **Cambiar un precio en catalog** (`PUT` con `If-Match`) y consultar la venta: no cambia, porque guarda una copia.
 
 ### Catalog caído: demostración

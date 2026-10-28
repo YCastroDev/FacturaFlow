@@ -114,6 +114,7 @@ La venta guarda una copia de lo que devolvió catalog, con los mismos nombres de
 | Cliente | `customerId` (catalog), tipo, número y DV del documento, tipo de persona, razón social o nombres, tributo, responsabilidades fiscales, municipio, dirección, teléfono, email |
 | Cada línea | `productId` (catalog), código, nombre, unidad, precio unitario neto, `ivaExcluded`, impuestos (tipo y tarifa), cantidad, descuento |
 | Venta | `referenceCode` (será el de la factura), fecha de la venta, medio de pago, forma de pago y vencimiento, observación, estado |
+| Quién la hizo | `soldBy {userId, username}`: `sub` y `preferred_username` del token del vendedor (agregado después: ADR 0018, decisión 13) |
 
 Las versiones de catalog no se guardan: bastan los ids para la trazabilidad. Los totales no se guardan: se calculan del snapshot, que no cambia, y así no hay dos fuentes.
 

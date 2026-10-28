@@ -3,6 +3,7 @@ package com.facturaflow.sales.domain.model;
 import static com.facturaflow.sales.domain.model.SaleFixtures.CREATED_AT;
 import static com.facturaflow.sales.domain.model.SaleFixtures.SALE_DATE;
 import static com.facturaflow.sales.domain.model.SaleFixtures.SALE_ID;
+import static com.facturaflow.sales.domain.model.SaleFixtures.SOLD_BY;
 import static com.facturaflow.sales.domain.model.SaleFixtures.customer;
 import static com.facturaflow.sales.domain.model.SaleFixtures.line;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -27,7 +28,8 @@ class SaleInvoicingTest {
 
     private static Sale saved(SaleStatus status, InvoicingOutcome invoicing) {
         return Sale.reconstitute(SALE_ID, new ReferenceCode("VENTA-0001"), SALE_DATE, CREATED_AT, customer(),
-                List.of(line("1", "1000", "0", "19")), PaymentMethod.CASH, PaymentTerms.cash(), null, status, invoicing, 0);
+                List.of(line("1", "1000", "0", "19")), PaymentMethod.CASH, PaymentTerms.cash(), null, SOLD_BY, status,
+                invoicing, 0);
     }
 
     private static Sale confirmed() {
@@ -67,6 +69,15 @@ class SaleInvoicingTest {
         assertThat(failed.status()).isEqualTo(SaleStatus.INVOICE_FAILED);
         assertThat(failed.invoicing()).contains(new InvoicingOutcome.Failed("La DIAN no validó el documento", null, AT));
         assertThat(failed.invoiced(INVOICE, AT.plusSeconds(60)).status()).isEqualTo(SaleStatus.INVOICED);
+    }
+
+    @Test
+    @DisplayName("facturarla o fallar no cambia quién hizo la venta")
+    void transitionsKeepSoldBy() {
+        Sale failed = confirmed().invoiceFailed("motivo", null, AT);
+
+        assertThat(failed.soldBy()).contains(SOLD_BY);
+        assertThat(failed.invoiced(INVOICE, AT).soldBy()).contains(SOLD_BY);
     }
 
     @Test
