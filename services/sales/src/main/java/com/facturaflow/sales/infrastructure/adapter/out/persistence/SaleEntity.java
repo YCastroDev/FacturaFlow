@@ -59,6 +59,13 @@ class SaleEntity {
     @Column(updatable = false, length = 250)
     String observation;
 
+    /** Quién hizo la venta (V4): las dos o ninguna, NULL solo en las ventas creadas antes de registrarlo. */
+    @Column(name = "sold_by_user_id", updatable = false, length = 255)
+    String soldByUserId;
+
+    @Column(name = "sold_by_username", updatable = false, length = 255)
+    String soldByUsername;
+
     @Column(name = "customer_id", nullable = false, updatable = false)
     UUID customerId;
 

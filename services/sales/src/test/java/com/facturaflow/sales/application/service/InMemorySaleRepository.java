@@ -44,7 +44,7 @@ public class InMemorySaleRepository implements SaleRepository {
         }
         Sale saved = Sale.reconstitute(sale.id(), sale.referenceCode(), sale.saleDate(), sale.createdAt(),
                 sale.customer(), sale.lines(), sale.paymentMethod(), sale.paymentTerms(),
-                sale.observation().orElse(null), sale.status(), 0);
+                sale.observation().orElse(null), sale.soldBy().orElse(null), sale.status(), 0);
         byReference.put(sale.referenceCode().value(), new StoredSale(saved, requestHash));
         savedEvents.addAll(sale.pendingEvents());
         return saved;
@@ -60,7 +60,8 @@ public class InMemorySaleRepository implements SaleRepository {
         }
         Sale saved = Sale.reconstitute(sale.id(), sale.referenceCode(), sale.saleDate(), sale.createdAt(),
                 sale.customer(), sale.lines(), sale.paymentMethod(), sale.paymentTerms(),
-                sale.observation().orElse(null), sale.status(), sale.invoicing().orElse(null), version + 1);
+                sale.observation().orElse(null), sale.soldBy().orElse(null), sale.status(),
+                sale.invoicing().orElse(null), version + 1);
         byReference.put(sale.referenceCode().value(), new StoredSale(saved, stored.requestHash()));
         saves++;
         return saved;

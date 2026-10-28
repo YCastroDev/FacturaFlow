@@ -16,6 +16,7 @@ import com.facturaflow.sales.domain.model.CustomerDocumentRef;
 import com.facturaflow.sales.domain.model.Sale;
 import com.facturaflow.sales.domain.model.SaleId;
 import com.facturaflow.sales.domain.model.SaleLine;
+import com.facturaflow.sales.domain.model.SoldBy;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -35,7 +36,9 @@ import java.util.stream.Collectors;
  * <ol>
  *   <li>se valida y normaliza la petición, y se calcula su huella;</li>
  *   <li>si el código ya existe: misma huella → la venta existente (200), otra huella → 409. Esto ocurre
- *       ANTES de consultar a catalog: un reintento funciona aunque catalog esté caído;</li>
+ *       ANTES de consultar a catalog: un reintento funciona aunque catalog esté caído. Quién pide la venta no
+ *       entra en la huella (ADR 0018, decisión 13): si otro vendedor reintenta la misma venta, recibe la existente,
+ *       que conserva a quien la hizo;</li>
  *   <li>se consultan a catalog el cliente (1 llamada) y TODOS los productos (1 llamada por lote, sin N+1);
  *       inexistentes o inactivos → 422 con todos los problemas juntos;</li>
  *   <li>se confirma la venta con la copia de esos datos y se guarda. Si otra petición simultánea la creó
@@ -58,6 +61,7 @@ public final class CreateSaleService implements CreateSaleUseCase {
     @Override
     public CreateSaleResult create(CreateSaleCommand command) {
         SaleRequest request = SaleRequest.from(command);
+        SoldBy soldBy = new SoldBy(command.soldByUserId(), command.soldByUsername());
         RequestHash requestHash = SaleRequestHasher.hash(request);
 
         Optional<StoredSale> existing = repository.findStoredByReferenceCode(request.referenceCode());
@@ -78,7 +82,7 @@ public final class CreateSaleService implements CreateSaleUseCase {
                 .toList();
         Sale sale = Sale.confirm(SaleId.generate(), request.referenceCode(), LocalDate.now(clock), clock.instant(),
                 customer.orElseThrow().snapshot(), lines, request.paymentMethod(), request.paymentTerms(),
-                request.observation());
+                request.observation(), soldBy);
         try {
             return CreateSaleResult.created(repository.saveNew(sale, requestHash));
         } catch (DuplicateReferenceCodeException race) {

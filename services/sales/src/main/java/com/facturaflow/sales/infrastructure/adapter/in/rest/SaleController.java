@@ -29,6 +29,8 @@ import java.net.URI;
 import java.util.UUID;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -63,6 +65,8 @@ class SaleController {
               "lines": [ { "productCode": "DEMO-CAFE", "quantity": 1 }, { "productCode": "NO-EXISTE", "quantity": 1 } ],
               "paymentMethod": "CASH", "paymentTerms": { "type": "CASH" } }""";
 
+    private static final String PREFERRED_USERNAME = "preferred_username";
+
     private final CreateSaleUseCase createSale;
     private final GetSaleUseCase getSale;
     private final ListSalesUseCase listSales;
@@ -82,6 +86,8 @@ class SaleController {
             **Idempotente** por `referenceCode`: repetir la misma petición devuelve la venta existente (200), \
             aunque catalog esté caído o un precio haya cambiado; con otro contenido, 409.
 
+            **Quién la hizo** (`soldBy`) sale del token (`sub` y `preferred_username`), nunca del cuerpo. No entra en             la idempotencia: si otro usuario repite la petición, recibe la venta existente con su vendedor original.
+
             Los ejemplos usan los datos de `scripts/seed-catalog.sh`.""")
     @io.swagger.v3.oas.annotations.parameters.RequestBody(content = @Content(examples = {
             @ExampleObject(name = "Contado (NIT, café con descuento y arroz excluido)", value = CASH_EXAMPLE),
@@ -96,8 +102,9 @@ class SaleController {
             + "regla incumplida (cantidad, descuento, vencimiento...)")
     @ApiResponse(responseCode = "503", description = "Catalog no responde: la venta no se creó; reintente después de "
             + "Retry-After", headers = @Header(name = HttpHeaders.RETRY_AFTER, schema = @Schema(type = "integer")))
-    ResponseEntity<SaleResponse> create(@Valid @RequestBody CreateSaleRequest request) {
-        CreateSaleResult result = createSale.create(ApiMapper.command(request));
+    ResponseEntity<SaleResponse> create(@Valid @RequestBody CreateSaleRequest request,
+                                        @AuthenticationPrincipal Jwt token) {
+        CreateSaleResult result = createSale.create(ApiMapper.command(request, subject(token), username(token)));
         SaleResponse body = ApiMapper.response(result.sale());
         if (!result.created()) {
             return ResponseEntity.ok(body);
@@ -105,6 +112,24 @@ class SaleController {
         URI location = ServletUriComponentsBuilder.fromCurrentRequestUri().path("/{id}")
                 .buildAndExpand(body.id()).toUri();
         return ResponseEntity.created(location).body(body);
+    }
+
+    /**
+     * El {@code sub} identifica al usuario. Un token de nuestro realm siempre lo trae (scope {@code basic}): si falta,
+     * es un error de configuración de Keycloak, no del vendedor, y responde 500 con un log ERROR.
+     */
+    private static String subject(Jwt token) {
+        String subject = token.getSubject();
+        if (subject == null || subject.isBlank()) {
+            throw new IllegalStateException("El token no trae el claim 'sub': revisar el realm (scope basic)");
+        }
+        return subject;
+    }
+
+    /** {@code preferred_username} para mostrar; sin él (scope {@code profile} ausente), el {@code sub}. */
+    private static String username(Jwt token) {
+        String username = token.getClaimAsString(PREFERRED_USERNAME);
+        return username == null || username.isBlank() ? token.getSubject() : username;
     }
 
     @GetMapping("/{id}")

@@ -14,6 +14,7 @@ public final class SaleFixtures {
     public static final SaleId SALE_ID = new SaleId(UUID.fromString("5a1e0000-0000-4000-8000-000000000001"));
     public static final UUID PRODUCT_ID = UUID.fromString("9f000000-0000-4000-8000-000000000001");
     public static final UUID CUSTOMER_ID = UUID.fromString("c0000000-0000-4000-8000-000000000001");
+    public static final SoldBy SOLD_BY = new SoldBy("7d3b0000-0000-4000-8000-0000000000a1", "vendedor.demo");
 
     private SaleFixtures() {
     }
@@ -42,6 +43,6 @@ public final class SaleFixtures {
 
     public static Sale saleWith(List<SaleLine> lines) {
         return Sale.confirm(SALE_ID, new ReferenceCode("VENTA-0001"), SALE_DATE, CREATED_AT, customer(), lines,
-                PaymentMethod.CASH, PaymentTerms.cash(), null);
+                PaymentMethod.CASH, PaymentTerms.cash(), null, SOLD_BY);
     }
 }

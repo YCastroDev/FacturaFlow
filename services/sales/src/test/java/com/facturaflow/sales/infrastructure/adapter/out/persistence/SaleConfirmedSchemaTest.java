@@ -3,6 +3,7 @@ package com.facturaflow.sales.infrastructure.adapter.out.persistence;
 import static com.facturaflow.sales.domain.model.SaleFixtures.CREATED_AT;
 import static com.facturaflow.sales.domain.model.SaleFixtures.SALE_DATE;
 import static com.facturaflow.sales.domain.model.SaleFixtures.SALE_ID;
+import static com.facturaflow.sales.domain.model.SaleFixtures.SOLD_BY;
 import static com.facturaflow.sales.domain.model.SaleFixtures.customer;
 import static com.facturaflow.sales.domain.model.SaleFixtures.excludedLine;
 import static com.facturaflow.sales.domain.model.SaleFixtures.line;
@@ -63,7 +64,7 @@ class SaleConfirmedSchemaTest {
         return Sale.confirm(SALE_ID, new ReferenceCode("VENTA-0001"), SALE_DATE, CREATED_AT, customer(),
                 List.of(line("2", "50000.00", "10", LineTax.of(TaxType.IVA, "19"), LineTax.of(TaxType.INC, "8")),
                         excludedLine("1.5", "4200")),
-                PaymentMethod.CASH, PaymentTerms.cash(), "Entregar en portería");
+                PaymentMethod.CASH, PaymentTerms.cash(), "Entregar en portería", SOLD_BY);
     }
 
     /** Crédito, persona natural sin datos opcionales y sin observación. */
@@ -71,7 +72,7 @@ class SaleConfirmedSchemaTest {
         return Sale.confirm(new SaleId(UUID.fromString("5a1e0000-0000-4000-8000-000000000002")),
                 new ReferenceCode("VENTA_0002"), SALE_DATE, CREATED_AT, naturalPersonWithoutOptionals(),
                 List.of(excludedLine("3", "1000.50")), PaymentMethod.BANK_TRANSFER,
-                PaymentTerms.credit(SALE_DATE.plusDays(30)), null);
+                PaymentTerms.credit(SALE_DATE.plusDays(30)), null, SOLD_BY);
     }
 
     static Stream<Arguments> sales() {
@@ -140,6 +141,14 @@ class SaleConfirmedSchemaTest {
         assertThat(totals.get("totalTax").decimalValue()).isEqualByComparingTo("24300.00");
         assertThat(totals.get("total").decimalValue()).isEqualByComparingTo(sale.total().amount())
                 .isEqualByComparingTo("120600.00");
+    }
+
+    @Test
+    @DisplayName("el evento no lleva quién hizo la venta: invoicing no lo usa y el usuario no sale de sales (ADR 0018)")
+    void eventDoesNotCarrySoldBy() {
+        String payload = messageOf(cashSale()).payload();
+
+        assertThat(payload).doesNotContain(SOLD_BY.userId(), SOLD_BY.username(), "soldBy");
     }
 
     @Test

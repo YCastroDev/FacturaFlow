@@ -19,6 +19,9 @@ public record SaleResponse(
         @Schema(description = "Fecha de la venta en Colombia")
         LocalDate saleDate,
         Instant createdAt,
+        @Schema(description = "Quién hizo la venta, tal como era al vender; null en las ventas creadas antes de "
+                + "registrarlo")
+        SoldBy soldBy,
         Customer customer,
         List<Line> lines,
         ApiPaymentMethod paymentMethod,
@@ -29,6 +32,12 @@ public record SaleResponse(
         Invoice invoice,
         @Schema(description = "Por qué no se pudo facturar; solo con status INVOICE_FAILED")
         InvoiceFailure invoiceFailure) {
+
+    @Schema(description = "Usuario que hizo la venta, tomado de su token (ADR 0018)")
+    public record SoldBy(@Schema(description = "Identificador estable del usuario en Keycloak (sub)") String userId,
+                         @Schema(description = "Nombre de usuario al momento de la venta (preferred_username)",
+                                 example = "vendedor.demo") String username) {
+    }
 
     @Schema(description = "Factura emitida por invoicing para la venta (ADR 0015)")
     public record Invoice(UUID invoiceId, @Schema(example = "SETP990000001") String number, String cufe,

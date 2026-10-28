@@ -4,6 +4,8 @@
 
 Aceptado — 2026-10-28. Fase 2 de 2 del ADR 0017, que anunció un ADR propio para esta fase. Completa los ADR 0006, 0011 y 0012 (tablas de errores) y el 0016 (filtros de la CI y prueba de humo).
 
+> **Nota posterior (2026-10-28):** se resolvió el punto "Pendiente" (D6, quién hizo la venta) en un PR aparte: decisión 13, con la regla 13 de ArchUnit ampliada al adaptador REST de sales (decisión 9).
+
 ## Contexto
 
 Tras la Fase 1 (ADR 0017) hay un Keycloak con el realm `facturaflow` como código y un gateway, pero nadie exige token. Las decisiones de las dos fases ya estaban tomadas:
@@ -136,7 +138,8 @@ Se escribe **por URL**, en un único `SecurityConfiguration` por servicio (el mi
 
 - **invoicing:** `org.springframework.security` solo en `infrastructure.config`.
 - **sales:** también en el ACL `infrastructure.adapter.out.catalog`, y el cliente OAuth2 (`org.springframework.security.oauth2.client`) solo en ese ACL.
-- **Si algún día se registra quién hizo algo:** el controlador leerá el `Jwt`, y la regla se ampliará a `adapter.in.rest` (ver "Pendiente").
+- **Ampliada al registrar quién hizo la venta (decisión 13):** en sales también se permite en `infrastructure.adapter.in.rest`, porque el controlador lee el `Jwt` (`@AuthenticationPrincipal`) y pasa `sub` y `preferred_username` como texto en el comando. Dominio y aplicación siguen sin Spring Security.
+  - Se descartó un resolvedor de argumentos en `config` que entregara un tipo propio al controlador: la regla quedaba igual, pero era una indirección sin beneficio.
 - **Catalog (en capas) y el gateway:** no tienen esta regla. Su configuración de seguridad vive en `config` y en `security`, respectivamente.
 
 ### 10. Puertos: los servicios siguen publicados en `127.0.0.1`
@@ -170,9 +173,38 @@ Se escribe **por URL**, en un único `SecurityConfiguration` por servicio (el mi
 - **`seed-catalog.sh`:** usa `FACTURAFLOW_TOKEN`, o pide el token de `admin.demo` con `keycloak-token.sh`. La cabecera `Authorization` va a curl por un descriptor de archivo (`-H @<(...)`), no en los argumentos.
 - **`keycloak-token.sh --claims`:** muestra también `aud`.
 
-## Pendiente
+### 13. Quién hizo la venta (`SoldBy`, decisión D6 de la planificación)
 
-- **Registrar quién creó la venta** (decisión D6 de la planificación): `sub` y `preferred_username` del token, como strings en `CreateSaleCommand`, a un value object `SoldBy` del dominio (Java puro). Va con migración y en `GET /sales/{id}`, sin entrar en la huella ni en el evento. Toca dominio y caso de uso, por eso va en un PR aparte.
+Resuelve el punto que esta fase dejó pendiente. Toca dominio y caso de uso, por eso fue un PR aparte.
+
+- **Qué se guarda:** un value object `SoldBy(userId, username)` en el agregado `Sale` (Java puro). Es una **copia** del usuario al momento de vender, como el snapshot del cliente.
+  - `userId` = `sub`: el identificador estable, que no cambia si el usuario se renombra o cambia su email.
+  - `username` = `preferred_username`: el nombre para mostrar, tal como era al vender. Si el token no lo trae (sin el scope `profile`), se usa el `sub`.
+  - Ninguno vacío, sin espacios a los lados, máximo 255 caracteres (el tope de Keycloak). `userId` es opaco: sales no asume que sea un UUID.
+  - **Descartados:** `email`, `name`, `given_name` y `family_name`. Son datos personales que pueden cambiar y no hacen falta para saber quién vendió (mínimo de datos).
+- **De dónde sale:** el controlador lo lee del `Jwt` ya validado y lo pasa en `CreateSaleCommand` (`soldByUserId`, `soldByUsername`) como texto. Nunca viene del cuerpo: un `soldBy` en la petición es un campo desconocido (400). Un token sin `sub` es un error de configuración del realm (el scope `basic` lo emite siempre): responde 500 con log ERROR, no 422.
+- **Ventas que ya existían:** la migración V4 agrega `sold_by_user_id` y `sold_by_username` **opcionales**, con el CHECK `ck_sales_sold_by` (las dos o ninguna).
+  - `Sale.confirm` exige `SoldBy`; solo `reconstitute` lo acepta vacío. La API responde `"soldBy": null` en esas ventas.
+  - **Descartado:** rellenarlas con un valor ficticio (`unknown`), porque guardaría una identidad falsa. Borrar los datos (`down -v`) tampoco sirve, porque una migración debe aplicarse sobre un volumen con datos.
+  - En una base nueva (CI, tests) todas las ventas lo tienen; el `NULL` queda solo para la historia.
+- **Idempotencia: `SoldBy` NO entra en la huella.** La huella identifica el contenido de la venta, no a quien la pide.
+  - Si otro usuario reintenta la misma petición (cambio de turno, o un cliente que reintenta con otro token), recibe 200 con la venta existente, que conserva al vendedor original.
+  - Si `SoldBy` entrara en la huella, ese reintento daría un 409, como si fuera otra venta. `SaleRequestHasher` no cambia: no hace falta un formato `v2`.
+- **Evento `SaleConfirmed`: no lo lleva.**
+  - Invoicing no lo usa, y así el nombre de usuario no sale de sales (mínimo de datos).
+  - `docs/events/` no cambia. `SaleConfirmedSchemaTest` comprueba que el mensaje no lo incluye.
+  - Si algún consumidor lo necesitara, sería un campo opcional nuevo: un cambio compatible de la v1 (`docs/events/README.md`).
+- **Autorización a nivel de datos: vendedor y admin ven TODAS las ventas.**
+  - En una pyme con una caja compartida, cualquier vendedor necesita consultar ventas de otros: devoluciones, o revisar si una venta ya se facturó.
+  - La matriz de la decisión 4 no cambia.
+  - `SaleApiEndToEndTest` lo fija: la vendedora A vende, y el vendedor B y el admin leen la venta (200, `soldBy` = A); el reintento de B devuelve la venta de A.
+  - La alternativa ("cada vendedor solo ve las suyas") queda en "Cómo se haría en producción".
+- **Tests:**
+  - dominio: `SoldByTest`, `SaleTest` y `SaleInvoicingTest` (las transiciones lo conservan);
+  - caso de uso: `CreateSaleServiceTest` (un `SoldBy` inválido es 422 antes de llamar a catalog, y un reintento de otro vendedor da 200 con el original), y `SaleRequestHasherTest` (otro vendedor, misma huella);
+  - persistencia: `JpaSaleRepositoryAdapterTest` (ida y vuelta, venta antigua en `NULL`, cambio de estado sin tocarlo, CHECK);
+  - web: `SaleControllerTest` (`jwt()` de spring-security-test: 400 con `soldBy` en el cuerpo, `sub` como nombre de respaldo, 500 sin `sub`) y `SaleSecurityTest` (token de `FakeKeycloak` por el decodificador real);
+  - Keycloak real: `SalesKeycloakIntegrationTest` (`soldBy` = `sub` y `vendedor.demo` del token).
 
 ## Cómo se haría en producción
 
@@ -180,9 +212,15 @@ Se escribe **por URL**, en un único `SecurityConfiguration` por servicio (el mi
 - **TLS en todo**, incluido el JWKS (`https://`), y Keycloak con `sslRequired: all` (ADR 0017).
 - **Una audiencia por servicio** (`aud: catalog` para el token de `sales-service`, `aud: gateway` para el de los usuarios), o token exchange (RFC 8693) en el gateway, para que un token robado a un servicio no sirva contra otro.
 - **Secretos de cliente rotados desde un gestor** (Vault, AWS Secrets Manager), o mejor `private_key_jwt` (RFC 7523) en vez de `client_secret` para `sales-service`.
-- **Permisos más finos:** roles de cliente o scopes por operación (`invoices:issue`), y quizás autorización por atributos (el vendedor solo ve sus ventas) con una política externa (OPA) si crece la matriz.
+- **Permisos más finos:** roles de cliente o scopes por operación (`invoices:issue`), y quizás autorización por atributos con una política externa (OPA) si crece la matriz.
+- **Cada vendedor solo ve sus ventas** (alternativa a la decisión 13), si el negocio lo pidiera. Habría que:
+  - pasar quién consulta (`userId` y si es admin) a `GetSaleUseCase` y `ListSalesUseCase`;
+  - filtrar el listado por `sold_by_user_id`, con un índice nuevo;
+  - responder 404, no 403, a una venta ajena, para no revelar que existe;
+  - definir el reintento de una venta ajena: el 200 idempotente la mostraría, así que tendría que ser un 409;
+  - decidir qué pasa con las ventas sin `soldBy`: solo el admin las vería.
 - **Revocación:** tokens cortos (5 min, ya) y, para cortar una sesión al instante, introspección (RFC 7662) en las operaciones sensibles o un evento de logout de Keycloak.
-- **Auditoría:** eventos de Keycloak y quién hizo qué en cada servicio (ver "Pendiente"), con el `traceparent` de la fase de observabilidad.
+- **Auditoría:** eventos de Keycloak y quién hizo qué en cada servicio (en sales, la venta ya guarda quién la hizo: decisión 13), con el `traceparent` de la fase de observabilidad.
 - **Limitador por cliente en el gateway** y cabeceras de seguridad (ADR 0017).
 
 ## Consecuencias

@@ -2,6 +2,7 @@ package com.facturaflow.sales.application.service;
 
 import static com.facturaflow.sales.domain.model.SaleFixtures.CREATED_AT;
 import static com.facturaflow.sales.domain.model.SaleFixtures.SALE_DATE;
+import static com.facturaflow.sales.domain.model.SaleFixtures.SOLD_BY;
 import static com.facturaflow.sales.domain.model.SaleFixtures.customer;
 import static com.facturaflow.sales.domain.model.SaleFixtures.line;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -41,8 +42,8 @@ class RecordInvoiceResultServiceTest {
     @BeforeEach
     void confirmSale() {
         sale = repository.saveNew(Sale.confirm(SaleId.generate(), new ReferenceCode(REFERENCE), SALE_DATE, CREATED_AT,
-                customer(), List.of(line("1", "1000", "0", "19")), PaymentMethod.CASH, PaymentTerms.cash(), null),
-                new RequestHash("a".repeat(64)));
+                customer(), List.of(line("1", "1000", "0", "19")), PaymentMethod.CASH, PaymentTerms.cash(), null,
+                SOLD_BY), new RequestHash("a".repeat(64)));
     }
 
     private static RecordInvoiceResultCommand issued(UUID invoiceId, String number) {
