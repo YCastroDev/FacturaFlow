@@ -33,7 +33,7 @@
              -Dgroups=sandbox -DexcludedGroups=none -->
         <excludedGroups>sandbox</excludedGroups>
         <!-- Cobertura de los tests para SonarCloud (ADR 0016). 0.8.14+ soporta Java 25; la 0.8.16 recién salió -->
-        <jacoco.version>0.8.15</jacoco.version>
+        <jacoco.version>0.8.16</jacoco.version>
         <!-- SonarCloud (ADR 0016): solo lo usa la CI, y solo si existe el secreto SONAR_TOKEN. Un proyecto por servicio. -->
         <sonar.organization>ycastrodev</sonar.organization>
         <sonar.projectKey>ycastrodev_facturaflow-invoicing</sonar.projectKey>
