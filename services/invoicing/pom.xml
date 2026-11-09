@@ -28,12 +28,12 @@
         <!-- No la gestiona Spring Boot (su BOM no incluye este módulo); 2.4.0 es la primera para Boot 4 (ADR 0010) -->
         <resilience4j.version>2.4.0</resilience4j.version>
         <!-- No la gestiona Spring Boot; la línea 3.x usa Jackson 3, el de Boot 4 (solo tests, ADR 0014) -->
-        <json-schema-validator.version>3.0.8</json-schema-validator.version>
+        <json-schema-validator.version>3.0.9</json-schema-validator.version>
         <!-- Los tests contra el sandbox real de Factus no corren por defecto (ADR 0008). Para correrlos:
              -Dgroups=sandbox -DexcludedGroups=none -->
         <excludedGroups>sandbox</excludedGroups>
         <!-- Cobertura de los tests para SonarCloud (ADR 0016). 0.8.14+ soporta Java 25; la 0.8.16 recién salió -->
-        <jacoco.version>0.8.15</jacoco.version>
+        <jacoco.version>0.8.16</jacoco.version>
         <!-- SonarCloud (ADR 0016): solo lo usa la CI, y solo si existe el secreto SONAR_TOKEN. Un proyecto por servicio. -->
         <sonar.organization>ycastrodev</sonar.organization>
         <sonar.projectKey>ycastrodev_facturaflow-invoicing</sonar.projectKey>
