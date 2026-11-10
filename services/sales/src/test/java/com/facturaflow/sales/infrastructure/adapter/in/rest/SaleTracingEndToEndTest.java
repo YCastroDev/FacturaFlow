@@ -183,14 +183,20 @@ class SaleTracingEndToEndTest {
     void eventWithoutStoredContextIsPublishedWithANewTrace() {
         client.post().uri("/api/v1/sales").contentType(MediaType.APPLICATION_JSON)
                 .body(SALE.formatted("VENTA-TRAZA-3")).exchange().expectStatus().isCreated();
+        String saleTrace = traceId(jdbc.sql("SELECT trace_parent FROM outbox_events").query(String.class).single());
         jdbc.sql("UPDATE outbox_events SET trace_parent = NULL, trace_state = NULL").update();
 
         relay.publishPending();
 
         Message message = rabbit.receive(TEST_QUEUE, 5_000);
         assertThat(message).isNotNull();
-        assertThat((String) message.getMessageProperties().getHeader("traceparent"))
-                .matches(W3C);
-        assertThat(spans.getFinishedSpanItems()).noneMatch(span -> span.getName().equals("outbox SaleConfirmed"));
+        String header = message.getMessageProperties().getHeader("traceparent");
+        assertThat(header).matches(W3C);
+        assertThat(traceId(header)).as("una traza nueva, no la de la venta").isNotEqualTo(saleTrace);
+        // Esperar el span de envío asegura que el lote ya se exportó; los spans de otros tests (exportados tarde) no
+        // cuentan: se mira solo la traza de esta venta.
+        awaitSpan(spans, span -> span.getKind() == SpanKind.PRODUCER && span.getTraceId().equals(traceId(header)));
+        assertThat(spans.getFinishedSpanItems()).noneMatch(span -> span.getName().equals("outbox SaleConfirmed")
+                && span.getTraceId().equals(saleTrace));
     }
 }

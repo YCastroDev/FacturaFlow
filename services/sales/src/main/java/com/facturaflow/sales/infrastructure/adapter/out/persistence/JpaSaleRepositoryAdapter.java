@@ -42,15 +42,17 @@ class JpaSaleRepositoryAdapter implements SaleRepository {
     private final EntityManager entityManager;
     private final SaleEventMessages messages;
     private final OutboxTraceContext traceContext;
+    private final SaleMetrics metrics;
 
     JpaSaleRepositoryAdapter(SaleJpaRepository jpaRepository, SalePersistenceMapper mapper,
                              EntityManager entityManager, SaleEventMessages messages,
-                             OutboxTraceContext traceContext) {
+                             OutboxTraceContext traceContext, SaleMetrics metrics) {
         this.jpaRepository = jpaRepository;
         this.mapper = mapper;
         this.entityManager = entityManager;
         this.messages = messages;
         this.traceContext = traceContext;
+        this.metrics = metrics;
     }
 
     @Override
@@ -73,6 +75,7 @@ class JpaSaleRepositoryAdapter implements SaleRepository {
             });
             // flush() DENTRO del try: si no, el UNIQUE saltaría en el commit y no podríamos traducirlo.
             jpaRepository.flush();
+            metrics.confirmed(sale);   // al confirmarse la transacción (ADR 0020)
             return mapper.toDomain(entity);
         } catch (DataIntegrityViolationException e) {
             if (violates(e, REFERENCE_CODE_CONSTRAINT)) {
@@ -97,8 +100,10 @@ class JpaSaleRepositoryAdapter implements SaleRepository {
             if (entity.version != expected) {
                 throw new SaleConcurrentModificationException(sale.id().value(), null);
             }
+            SaleStatus previous = SaleStatus.valueOf(entity.status);
             mapper.applyMutableState(sale, entity);
             jpaRepository.flush();   // dentro del try: el conflicto de versión se traduce aquí, no en el commit
+            metrics.transitioned(previous, sale);   // al confirmarse la transacción (ADR 0020)
             return mapper.toDomain(entity);
         } catch (OptimisticLockingFailureException e) {
             throw new SaleConcurrentModificationException(sale.id().value(), e);

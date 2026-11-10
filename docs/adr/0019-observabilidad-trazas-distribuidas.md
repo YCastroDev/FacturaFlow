@@ -4,6 +4,8 @@
 
 Aceptado — 2026-11-10. Fase 1 de 2 de la observabilidad. La Fase 2 (logs JSON correlacionados en Loki y dashboards como código con métricas de negocio) tendrá su propio ADR. Completa los ADR 0010 (health independiente), 0013, 0014 y 0015 (outbox, consumo y republicación), 0016 (prueba de humo) y 0018 (cabeceras que no se registran).
 
+> **Nota posterior (2026-11-10):** la Fase 2 es el [ADR 0020](0020-observabilidad-logs-y-metricas.md). Enciende la exportación OTLP de métricas que la decisión 3 dejaba apagada y envía los logs a Loki.
+
 ## Contexto
 
 Una venta recorre cuatro procesos y un broker:

@@ -43,16 +43,18 @@ class JpaInvoiceRepositoryAdapter implements InvoiceRepository {
     private final InvoiceEventMessages messages;
     private final Clock clock;
     private final OutboxTraceContext traceContext;
+    private final IssuanceMetrics metrics;
 
     JpaInvoiceRepositoryAdapter(InvoiceJpaRepository jpaRepository, InvoicePersistenceMapper mapper,
                                 EntityManager entityManager, InvoiceEventMessages messages, Clock clock,
-                                OutboxTraceContext traceContext) {
+                                OutboxTraceContext traceContext, IssuanceMetrics metrics) {
         this.jpaRepository = jpaRepository;
         this.mapper = mapper;
         this.entityManager = entityManager;
         this.messages = messages;
         this.clock = clock;
         this.traceContext = traceContext;
+        this.metrics = metrics;
     }
 
     @Override
@@ -135,7 +137,9 @@ class JpaInvoiceRepositoryAdapter implements InvoiceRepository {
         if (!entity.version.equals(invoice.version().orElseThrow())) {
             throw new InvoiceConcurrentModificationException(invoice.id().value(), null);
         }
+        String previous = entity.status;
         mapper.applyMutableState(invoice, entity);
+        metrics.invoiceTransitioned(previous, entity.status);   // al confirmarse la transacción (ADR 0020)
         return entity;
     }
 

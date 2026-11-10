@@ -21,6 +21,10 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: build(deps)
+    ignore:
+      # Debe usar la misma opentelemetry-api que Spring Boot (ADR 0020): una versión nueva del appender pide una API
+      # más nueva que la que fija Boot. Se sube a mano, junto con Boot.
+      - dependency-name: io.opentelemetry.instrumentation:opentelemetry-logback-appender-1.0
     groups:
       # Menores y parches juntos; las versiones mayores aparte, porque piden revisar notas de migración.
       maven-minor-patch:

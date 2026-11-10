@@ -68,8 +68,19 @@ management:
   otlp:
     metrics:
       export:
-        # El starter de OpenTelemetry trae el registro OTLP de métricas; las métricas se deciden en la Fase 2.
+        # Métricas por OTLP (push) al colector de lgtm (ADR 0020, D3). Apagado por defecto: el compose lo enciende con
+        # MANAGEMENT_OTLP_METRICS_EXPORT_ENABLED y MANAGEMENT_OTLP_METRICS_EXPORT_URL. Sin colector, cada envío falla con
+        # un WARN y el servicio sigue igual. Paso de 10 s para que los dashboards reaccionen rápido en local (en
+        # producción, 30–60 s).
         enabled: false
+        step: 10s
+  # Logs por OTLP (ADR 0020, D1): el exportador existe solo si se define MANAGEMENT_OPENTELEMETRY_LOGGING_EXPORT_OTLP_ENDPOINT
+  # (compose). Como con las trazas, ningún valor aquí: con la propiedad presente, Boot crearía el exportador.
+  metrics:
+    distribution:
+      # Histogramas para calcular percentiles (p95) en Grafana sin percentiles precalculados por instancia.
+      percentiles-histogram:
+        http.server.requests: true
   endpoints:
     web:
       exposure:

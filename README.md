@@ -25,7 +25,7 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
   | `sales` | Ventas confirmadas, con cliente y productos tomados de catalog | Hexagonal ([ADR 0012](docs/adr/0012-servicio-sales.md)) | `127.0.0.1:8083` | `sales_db` |
   | `gateway` | Punto de entrada único a la API: enruta a los tres servicios | Spring Cloud Gateway WebMVC ([ADR 0017](docs/adr/0017-seguridad-keycloak-y-gateway.md)) | `127.0.0.1:8080` | — |
   | Keycloak | Proveedor de identidad: realm `facturaflow` como código (roles, usuarios de demostración, clientes) | Imagen oficial 26.8 ([ADR 0017](docs/adr/0017-seguridad-keycloak-y-gateway.md)) | `127.0.0.1:8180` | `keycloak_db` |
-  | Grafana (`lgtm`) | Trazas distribuidas: colector OpenTelemetry, Tempo, Prometheus, Loki y Grafana en un contenedor | `grafana/otel-lgtm` ([ADR 0019](docs/adr/0019-observabilidad-trazas-distribuidas.md)) | `127.0.0.1:3000` | — |
+  | Grafana (`lgtm`) | Observabilidad: trazas, logs y métricas (colector OpenTelemetry, Tempo, Loki, Prometheus y Grafana en un contenedor) y los dashboards de FacturaFlow | `grafana/otel-lgtm` ([ADR 0019](docs/adr/0019-observabilidad-trazas-distribuidas.md), [ADR 0020](docs/adr/0020-observabilidad-logs-y-metricas.md)) | `127.0.0.1:3000` | — |
 
 - **Cada servicio usa la arquitectura que necesita:**
   - invoicing, hexagonal: integra un proveedor externo intercambiable;
@@ -41,7 +41,9 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
   - invoicing consume ese evento: crea la factura y la emite con los mismos casos de uso de su API, reintenta las fallas técnicas con espera creciente y aparta en una DLQ lo que no puede procesar ([ADR 0014](docs/adr/0014-consumo-de-sale-confirmed.md)). Vender ya factura sola;
   - invoicing publica el resultado de cada factura en `invoicing.events` (con su propio outbox), y sales deja la venta `INVOICED` (número y CUFE) o `INVOICE_FAILED` (motivo). La Saga se cierra por coreografía ([ADR 0015](docs/adr/0015-cierre-de-la-saga-de-facturacion.md)).
 - **Seguridad:** Keycloak como proveedor de identidad (realm como código) y un API Gateway. El gateway **y** cada servicio validan el JWT y los roles (zero trust), y sales llama a catalog con su propia identidad (client credentials) ([ADR 0017](docs/adr/0017-seguridad-keycloak-y-gateway.md), [ADR 0018](docs/adr/0018-seguridad-resource-servers.md)).
-- **Observabilidad:** trazas distribuidas con OpenTelemetry. Una venta se ve como **una sola traza** en Grafana, del gateway a catalog, RabbitMQ, invoicing y de vuelta a sales; el contexto de la traza viaja guardado en el outbox ([ADR 0019](docs/adr/0019-observabilidad-trazas-distribuidas.md)).
+- **Observabilidad:**
+  - trazas distribuidas con OpenTelemetry: una venta se ve como **una sola traza** en Grafana, del gateway a catalog, RabbitMQ, invoicing y de vuelta a sales; el contexto de la traza viaja guardado en el outbox ([ADR 0019](docs/adr/0019-observabilidad-trazas-distribuidas.md));
+  - logs en Loki enlazados a su traza, métricas de negocio y dashboards de Grafana como código ([ADR 0020](docs/adr/0020-observabilidad-logs-y-metricas.md)).
 - **Todo corre en Docker:** no se necesita Java ni Maven instalados.
 
 Las decisiones y sus motivos están en los [ADRs](docs/adr/README.md).
@@ -444,7 +446,7 @@ docker compose --env-file .env -f infra/docker-compose.yml logs invoicing sales 
 
 Con RabbitMQ detenido, sales sigue vendiendo e invoicing sigue atendiendo su API; los eventos esperan en el outbox de cada uno. Al volver, todo se publica y la Saga continúa. El proveedor falso cuenta los fallos de `SIMULAR_FALLA_TEMPORAL` en memoria: un reinicio de invoicing los pone en cero.
 
-## Observabilidad: una venta como una sola traza
+## Observabilidad: trazas, logs y métricas
 
 Cada servicio envía sus trazas por OpenTelemetry (OTLP) al contenedor `lgtm`, y Grafana las muestra con Tempo. El contexto de la traza (`traceparent`) viaja por HTTP, en las cabeceras de RabbitMQ y **guardado en la fila del outbox**, así una venta es UNA traza: gateway → sales → catalog → outbox → RabbitMQ → invoicing (proveedor) → outbox → RabbitMQ → sales. Detalles en el [ADR 0019](docs/adr/0019-observabilidad-trazas-distribuidas.md).
 
@@ -471,7 +473,33 @@ curl -s -o /dev/null -w "HTTP %{http_code}\n" -X POST http://localhost:8080/api/
 
 Con `SIMULAR_FALLA_TEMPORAL` en la observación (sección anterior), la misma traza muestra los intentos fallidos de invoicing, la espera en `wait-10s`/`wait-1m`/`wait-5m` y, tras reprocesar la DLQ, el intento que emitió. Cada línea de log lleva `[traceId-spanId]`: `docker compose --env-file .env -f infra/docker-compose.yml logs | grep $TRACE_ID`.
 
-Sin el contenedor `lgtm` (o con él detenido), los servicios funcionan igual: las trazas se descartan con un WARN y el health no cambia.
+### Dashboards, métricas de negocio y logs
+
+En Grafana, **Dashboards → FacturaFlow** (vienen del repositorio, `infra/grafana/dashboards/`; no se editan desde la interfaz):
+
+- **FacturaFlow · Negocio:**
+  - ventas confirmadas y monto vendido (COP) por medio de pago;
+  - porcentaje de ventas facturadas;
+  - tiempo de la venta a la factura (p50 y p95: la Saga completa);
+  - facturas y notas crédito emitidas o rechazadas;
+  - eventos pendientes en los outbox y mensajes en la DLQ.
+- **FacturaFlow · Servicios:** peticiones, errores 5xx y latencia p95 por servicio y ruta; circuitos; consumidores; JVM; y los WARN/ERROR de los cuatro servicios desde Loki.
+
+```bash
+# Unas cuantas ventas (con los ayudantes "tokens" y "venta" de la sección de la Saga): normales y un rechazo
+tokens
+for i in 1 2 3 4 5; do venta "DASH-$(date +%s)-$i"; done
+venta "DASH-$(date +%s)-R" SIMULAR_RECHAZO
+# En ~10-20 s el dashboard de negocio muestra 6 ventas, el monto, 5 facturadas y 1 fallida (83 %) y el p95 de la Saga
+```
+
+**De un log a su traza, y de una traza a sus logs:**
+1. **Del log a la traza.** En *FacturaFlow · Servicios*, panel de logs (o Explore → Loki con `{service_name="invoicing"} |= "REJECTED"`): al abrir un registro, el campo `trace_id` tiene el enlace **Trace**, que abre la traza en Tempo.
+2. **De la traza a los logs.** En una traza de Tempo (sección anterior), el ícono de logs de cada span (**Logs for this span**) muestra los registros de esa venta en ese servicio.
+
+Los logs también salen en JSON (formato ECS, con `traceId` y `spanId`) en la consola de cada contenedor: `docker compose --env-file .env -f infra/docker-compose.yml logs sales`.
+
+Sin el contenedor `lgtm` (o con él detenido), los servicios funcionan igual: trazas, logs y métricas se descartan con un WARN y el health no cambia.
 
 ## Integración continua (GitHub Actions)
 

@@ -1,0 +1,15 @@
+# Dashboards como código (ADR 0020, D6). Grafana los carga de infra/grafana/dashboards/ (montado en el contenedor
+# lgtm) y NO admite cambios desde la interfaz: para cambiar un panel se edita el JSON en el repositorio. Los nombres
+# de las métricas de negocio que consultan los verifica BusinessMetricsContractTest (sales e invoicing).
+apiVersion: 1
+
+providers:
+  - name: FacturaFlow
+    folder: FacturaFlow
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /otel-lgtm/facturaflow-dashboards
+      foldersFromFilesStructure: false

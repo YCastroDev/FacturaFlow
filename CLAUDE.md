@@ -27,13 +27,13 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 | Identidad | Keycloak 26.8.2 (`quay.io/keycloak/keycloak:26.8.2`, en compose y en los tests vía `InfraImages`) |
 | API Gateway | Spring Cloud 2025.1.4 (Gateway Server WebMVC 5.0.x) |
 | Seguridad | Spring Security 7.1 (de Boot): resource server en los cuatro; OAuth2 Client (client credentials) en sales |
-| Trazas | Micrometer Tracing + OpenTelemetry (`spring-boot-starter-opentelemetry`, de Boot; exportación OTLP/HTTP) en los cuatro; `spring-boot-starter-restclient` (builder instrumentado) en sales e invoicing; `opentelemetry-sdk-testing` (solo test) |
+| Trazas, logs y métricas | Micrometer Tracing + OpenTelemetry (`spring-boot-starter-opentelemetry`, de Boot; OTLP/HTTP) en los cuatro; `opentelemetry-logback-appender-1.0` 2.28.1-alpha (logs a Loki; atada a la `opentelemetry-api` 1.62 de Boot, Dependabot la ignora); registro OTLP de Micrometer (métricas); `spring-boot-starter-restclient` (builder instrumentado) en sales e invoicing; `opentelemetry-sdk-testing` (solo test) |
 | Backend de observabilidad | `grafana/otel-lgtm:0.40.0` (colector OTel + Tempo + Prometheus + Loki + Grafana; solo en compose) |
 
 ## Estructura
 
 - `services/<servicio>/` — un proyecto Spring Boot independiente por servicio: `invoicing` (hexagonal, ADR 0002), `catalog` (en capas, ADR 0011), `sales` (hexagonal, ADR 0012) y `gateway` (API Gateway, ADR 0017).
-- `infra/` — `docker-compose.yml` (incluye `lgtm`: Grafana y el colector de trazas), scripts de init de PostgreSQL (`postgres/init`) y de RabbitMQ (`rabbitmq/init`), el realm de Keycloak (`keycloak/import/facturaflow-realm.json`) y el override de la prueba de humo (`smoke/compose.smoke.yml`).
+- `infra/` — `docker-compose.yml` (incluye `lgtm`: Grafana y el colector de trazas, logs y métricas), los dashboards como código (`grafana/dashboards`, `grafana/provisioning`), scripts de init de PostgreSQL (`postgres/init`) y de RabbitMQ (`rabbitmq/init`), el realm de Keycloak (`keycloak/import/facturaflow-realm.json`) y el override de la prueba de humo (`smoke/compose.smoke.yml`).
 - `scripts/` — utilidades (`mvn.sh`, `check-secrets.sh`, `seed-catalog.sh`, `rabbitmq-debug-queue.sh`, `rabbitmq-dlq.sh`, `keycloak-token.sh`, `smoke-test.sh`).
 - `docs/events/` — catálogo y contratos (JSON Schema) de los eventos entre servicios (ADR 0013).
 - `.githooks/` — hook pre-commit con gitleaks.
@@ -220,7 +220,7 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 
 - Micrometer Tracing + OpenTelemetry en los cuatro; propagación W3C (`traceparent`/`tracestate`). Una venta es UNA traza: gateway → sales → catalog → outbox → RabbitMQ → invoicing → outbox → RabbitMQ → sales. Observabilidad = infraestructura: dominio y casos de uso no cambian.
 - **Exportación solo por variable** (`MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT`, en el compose → `http://lgtm:4318/v1/traces`). NUNCA un valor (ni vacío) en `application.yml`: con la propiedad presente Boot crea el exportador. Sin colector todo funciona igual (WARN y spans descartados); sin `depends_on: lgtm`; el health no depende de él (criterio del ADR 0010). La prueba de humo lo prueba.
-- Muestreo `management.tracing.sampling.probability: ${TRACING_SAMPLING_PROBABILITY:1.0}` (parent-based). Métricas OTLP apagadas hasta la Fase 2.
+- Muestreo `management.tracing.sampling.probability: ${TRACING_SAMPLING_PROBABILITY:1.0}` (parent-based).
 - **Clientes HTTP con el `RestClient.Builder` de Boot** (instrumentado): `CatalogHttp`, `CatalogTokenProvider`, `FactusHttp`. Un cliente HTTP nuevo NUNCA usa `RestClient.builder()` estático en producción (solo en constructores para tests sin Spring). El gateway WebMVC ya usa el de Boot.
 - **Outbox con la traza:** columnas `trace_parent`/`trace_state` (sales V5, invoicing V8). El adaptador de persistencia las llena al guardar con `OutboxTraceContext` (Propagator de Micrometer; copia en cada servicio), en la MISMA transacción; vuelven en `OutboxMessage.traceContext()` (campo opaco del puerto: la aplicación no lo interpreta). `RabbitEventPublisher` reanuda el contexto (span `outbox <evento>`) antes de `template.send`. Todo evento nuevo pasa por ese camino.
 - RabbitMQ: `spring.rabbitmq.template.observation-enabled` y `listener.simple.observation-enabled` en sales e invoicing. El consumidor es span HIJO del productor (no link); `ConfirmedRepublisher` usa el mismo template, así esperas y DLQ siguen en la traza.
@@ -229,10 +229,19 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 - **Tests:** en Boot 4 el tracing está INACTIVO en los tests salvo con `@AutoConfigureTracing`. Los de propagación usan `TracingTestConfiguration` (`InMemorySpanExporter`, copia en sales e invoicing) + `management.opentelemetry.tracing.export.schedule-delay=50ms`: `SaleTracingEndToEndTest`, `InvoiceResultTracingTest`, `SaleConfirmedTracingTest`, `GatewayTracingTest`. Nunca dependen del contenedor de Grafana.
 - Los spans no llevan cabeceras ni cuerpos (el `Authorization` nunca entra en un span).
 
+## Observabilidad: logs, métricas y dashboards (ADR 0020, Fase 2)
+
+- **Logs:** `OpenTelemetryLogsConfiguration` (copia deliberada en los cuatro, con su test) agrega POR CÓDIGO el appender de OpenTelemetry al logger raíz (sin `logback-spring.xml`) y descarta los logs de `io.opentelemetry` (bucle). Exporta solo con `MANAGEMENT_OPENTELEMETRY_LOGGING_EXPORT_OTLP_ENDPOINT` (compose); nunca un valor en `application.yml`. Consola en JSON ECS solo en los contenedores (`LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs`); tests y ejecución local en texto.
+- **La versión del appender DEBE usar la misma `opentelemetry-api` que Boot** (2.28.x ↔ 1.62.0). Al subir Boot, subirla a mano a la que use la nueva API (Dependabot la ignora).
+- **Métricas:** registro OTLP de Micrometer, apagado en `application.yml` y encendido por el compose (`MANAGEMENT_OTLP_METRICS_EXPORT_ENABLED`/`_URL`), paso 10 s. Histogramas de `http.server.requests`.
+- **Métricas de negocio SOLO en los adaptadores de persistencia y al confirmar la transacción** (`SaleMetrics`, `IssuanceMetrics`, `afterCommit`), nunca en dominio ni casos de uso: `sales.confirmed`/`sales.amount{payment_method}`, `sales.invoicing.outcome{status}`, `sales.time_to_invoice`, `invoicing.invoices.issuance{outcome}`, `invoicing.credit_notes.issuance{outcome}`. Etiquetas de BAJA cardinalidad: nunca cliente, producto, `referenceCode` ni ids (eso va en trazas y logs). Una métrica nueva con valores conocidos se registra en cero al arrancar.
+- **Dashboards como código:** JSON en `infra/grafana/dashboards/` (`facturaflow-negocio`, `facturaflow-servicios`), aprovisionados de solo lectura en la carpeta FacturaFlow. Se cambian editando el JSON (o exportando desde Grafana y pegándolo), nunca desde la interfaz. Datasources de la imagen: `prometheus`, `loki`, `tempo` (uid). Nombres en Prometheus vía OTLP: puntos → `_`, más sufijos de unidad (`_milliseconds`, `_seconds`) y tipo (`_total`, `_bucket`…); el servicio en `job`.
+- **Contrato:** `BusinessMetricsContractTest` (sales e invoicing) verifica que cada métrica `sales_*`/`invoicing_*` y cada etiqueta fija del dashboard de negocio exista. Renombrar una métrica exige cambiar el dashboard (y al revés). `infra/grafana/**` dispara sales e invoicing en la CI.
+
 ## Integración continua (ADR 0016)
 
 - `ci.yml` SIEMPRE arranca; el job `changes` (paths-filter) decide qué servicios probar con `_service.yml`; `ci-result` es el ÚNICO check obligatorio (junto con `gitleaks`). Nunca usar `on.paths` en un workflow cuyo check sea obligatorio: quedaría "Pending" y bloquearía el PR.
-- Rutas por servicio en `ci.yml`: invoicing y sales también por `docs/events/**` e `infra/rabbitmq/**`; invoicing, catalog y sales por `infra/postgres/**` y `.env.example` (prueba de humo); gateway, catalog y sales por `infra/keycloak/**` (alias `realm`: tests con Keycloak real); gateway por `.env.example`; todos por `.github/workflows/**`, `.github/scripts/**`, `infra/docker-compose.yml`, `scripts/smoke-test.sh` e `infra/smoke/**`. **Si un servicio empieza a depender de otra carpeta, agregarla al filtro** (y a la tabla del ADR 0016).
+- Rutas por servicio en `ci.yml`: invoicing y sales también por `docs/events/**`, `infra/rabbitmq/**` e `infra/grafana/**` (contrato del dashboard); invoicing, catalog y sales por `infra/postgres/**` y `.env.example` (prueba de humo); gateway, catalog y sales por `infra/keycloak/**` (alias `realm`: tests con Keycloak real); gateway por `.env.example`; todos por `.github/workflows/**`, `.github/scripts/**`, `infra/docker-compose.yml`, `scripts/smoke-test.sh` e `infra/smoke/**`. **Si un servicio empieza a depender de otra carpeta, agregarla al filtro** (y a la tabla del ADR 0016).
 - La CI corre `./mvnw -B -ntp verify` en el runner (no `scripts/mvn.sh`): todo test debe pasar sin `.env` ni credenciales; los que las necesitan llevan `@Tag("sandbox")`.
 - Acciones fijadas por SHA completo con `# vX.Y.Z`; permisos mínimos por job; `persist-credentials: false`; nada interpolado dentro de `run:` (va por `env`). Validar con `docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12`.
 - Ningún secreto en los workflows. SonarCloud usa el secreto opcional `SONAR_TOKEN`: sin él el paso se omite (la CI no debe fallar). Las propiedades `sonar.*` y JaCoCo viven en cada pom.
@@ -332,6 +341,7 @@ curl -s http://localhost:8080/actuator/health
 # Prueba de humo de una imagen (la misma que la CI): arranca y espera UP en /actuator/health
 docker build -t facturaflow-catalog:local services/catalog && ./scripts/smoke-test.sh catalog facturaflow-catalog:local
 
+# Dashboards: Grafana http://localhost:3000 → Dashboards → FacturaFlow (Negocio y Servicios); logs en Explore → Loki
 # Trazas: Grafana http://localhost:3000 (Explore → Tempo). Crear una venta con un trace id propio y buscarlo (README)
 TRACE_ID=$(openssl rand -hex 16)
 curl -s -X POST http://localhost:8080/api/v1/sales -H "Authorization: Bearer $TOKEN" \

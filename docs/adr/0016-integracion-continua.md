@@ -319,3 +319,8 @@ Desde el PR #5 (SnakeYAML con scope `test`, nota anterior) ninguna imagen arranc
 - **Versiones fijadas que Dependabot no ve** (gitleaks y la imagen de Maven de `scripts/mvn.sh`): hay que revisarlas a mano.
 - **Los tests dependen de la estructura del compose:** los servicios `postgres` y `rabbitmq` deben declarar `image:` (si no, `InfraImages` falla con un mensaje claro).
 - **Pasos manuales:** SonarCloud, la visibilidad de los paquetes de GHCR y el ruleset de `main` (README).
+
+## Nota (2026-11-10): el dashboard de negocio dispara sales e invoicing, y una dependencia fuera de Dependabot (ADR 0020)
+
+- **`infra/grafana/**` dispara a invoicing y sales** (alias `dashboards` en `ci.yml`): su `BusinessMetricsContractTest` lee `infra/grafana/dashboards/facturaflow-negocio.json` y comprueba que existan las métricas que consulta. Es el mismo criterio que con `docs/events/**`.
+- **Dependabot ignora `io.opentelemetry.instrumentation:opentelemetry-logback-appender-1.0`:** debe usar la misma `opentelemetry-api` que fija Spring Boot (2.28.x ↔ 1.62.0), y una versión nueva del appender pide una API más nueva. Se sube a mano junto con Boot (lista de lo que se revisa a mano).

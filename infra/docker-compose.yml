@@ -140,6 +140,9 @@ services:
     volumes:
       # Trazas, métricas, logs y la base de Grafana: sobreviven a un "down" (se borran con "down -v").
       - lgtm-data:/data
+      # Dashboards como código (ADR 0020): el provider y los JSON, de solo lectura.
+      - ./grafana/provisioning/facturaflow-dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/facturaflow-dashboards.yaml:ro
+      - ./grafana/dashboards:/otel-lgtm/facturaflow-dashboards:ro
     ports:
       # Solo Grafana, solo en la máquina local. OTLP (4317/4318) queda dentro de la red de Docker.
       - "127.0.0.1:3000:3000"
@@ -179,9 +182,15 @@ services:
       # Proveedor falso: emisiones que fallan antes de funcionar con SIMULAR_FALLA_TEMPORAL. 4 = los intentos
       # del consumidor (1 + 3 esperas): la venta llega a la DLQ y al reprocesarla se emite (README).
       INVOICING_FAKE_TEMPORARY_FAILURES: ${INVOICING_FAKE_TEMPORARY_FAILURES:-4}
-      # Trazas (ADR 0019): OTLP/HTTP al colector de lgtm. Sin depends_on: si no está, los spans se descartan con un WARN.
+      # Trazas, logs y métricas por OTLP/HTTP al colector de lgtm (ADR 0019 y 0020). Sin depends_on: si no está, se
+      # descartan con un WARN y el servicio sigue igual.
       MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT: http://lgtm:4318/v1/traces
       TRACING_SAMPLING_PROBABILITY: ${TRACING_SAMPLING_PROBABILITY:-1.0}
+      MANAGEMENT_OPENTELEMETRY_LOGGING_EXPORT_OTLP_ENDPOINT: http://lgtm:4318/v1/logs
+      MANAGEMENT_OTLP_METRICS_EXPORT_ENABLED: "true"
+      MANAGEMENT_OTLP_METRICS_EXPORT_URL: http://lgtm:4318/v1/metrics
+      # Consola en JSON (ECS, con el trace id) solo en los contenedores; los tests y una ejecución local, en texto.
+      LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
     ports:
       - "127.0.0.1:8081:8080"
     depends_on:
@@ -205,9 +214,15 @@ services:
       CATALOG_DB_URL: jdbc:postgresql://postgres:5432/catalog_db
       CATALOG_DB_USER: catalog_user
       CATALOG_DB_PASSWORD: ${CATALOG_DB_PASSWORD:?Define CATALOG_DB_PASSWORD en .env}
-      # Trazas (ADR 0019): OTLP/HTTP al colector de lgtm. Sin depends_on: si no está, los spans se descartan con un WARN.
+      # Trazas, logs y métricas por OTLP/HTTP al colector de lgtm (ADR 0019 y 0020). Sin depends_on: si no está, se
+      # descartan con un WARN y el servicio sigue igual.
       MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT: http://lgtm:4318/v1/traces
       TRACING_SAMPLING_PROBABILITY: ${TRACING_SAMPLING_PROBABILITY:-1.0}
+      MANAGEMENT_OPENTELEMETRY_LOGGING_EXPORT_OTLP_ENDPOINT: http://lgtm:4318/v1/logs
+      MANAGEMENT_OTLP_METRICS_EXPORT_ENABLED: "true"
+      MANAGEMENT_OTLP_METRICS_EXPORT_URL: http://lgtm:4318/v1/metrics
+      # Consola en JSON (ECS, con el trace id) solo en los contenedores; los tests y una ejecución local, en texto.
+      LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
     ports:
       - "127.0.0.1:8082:8080"
     depends_on:
@@ -239,9 +254,15 @@ services:
       # Identidad de sales ante catalog (ADR 0018): client credentials con sales-service, el MISMO secreto que el realm
       # recibe al importarse. El token se pide a keycloak:8080 (red interna) con la primera venta, no al arrancar.
       SALES_SERVICE_CLIENT_SECRET: ${SALES_SERVICE_CLIENT_SECRET:?Define SALES_SERVICE_CLIENT_SECRET en .env}
-      # Trazas (ADR 0019): OTLP/HTTP al colector de lgtm. Sin depends_on: si no está, los spans se descartan con un WARN.
+      # Trazas, logs y métricas por OTLP/HTTP al colector de lgtm (ADR 0019 y 0020). Sin depends_on: si no está, se
+      # descartan con un WARN y el servicio sigue igual.
       MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT: http://lgtm:4318/v1/traces
       TRACING_SAMPLING_PROBABILITY: ${TRACING_SAMPLING_PROBABILITY:-1.0}
+      MANAGEMENT_OPENTELEMETRY_LOGGING_EXPORT_OTLP_ENDPOINT: http://lgtm:4318/v1/logs
+      MANAGEMENT_OTLP_METRICS_EXPORT_ENABLED: "true"
+      MANAGEMENT_OTLP_METRICS_EXPORT_URL: http://lgtm:4318/v1/metrics
+      # Consola en JSON (ECS, con el trace id) solo en los contenedores; los tests y una ejecución local, en texto.
+      LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
     ports:
       - "127.0.0.1:8083:8080"
     depends_on:
@@ -269,9 +290,15 @@ services:
     build:
       context: ../services/gateway
     environment:
-      # Trazas (ADR 0019): OTLP/HTTP al colector de lgtm. Sin depends_on: si no está, los spans se descartan con un WARN.
+      # Trazas, logs y métricas por OTLP/HTTP al colector de lgtm (ADR 0019 y 0020). Sin depends_on: si no está, se
+      # descartan con un WARN y el servicio sigue igual.
       MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT: http://lgtm:4318/v1/traces
       TRACING_SAMPLING_PROBABILITY: ${TRACING_SAMPLING_PROBABILITY:-1.0}
+      MANAGEMENT_OPENTELEMETRY_LOGGING_EXPORT_OTLP_ENDPOINT: http://lgtm:4318/v1/logs
+      MANAGEMENT_OTLP_METRICS_EXPORT_ENABLED: "true"
+      MANAGEMENT_OTLP_METRICS_EXPORT_URL: http://lgtm:4318/v1/metrics
+      # Consola en JSON (ECS, con el trace id) solo en los contenedores; los tests y una ejecución local, en texto.
+      LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
     ports:
       - "127.0.0.1:8080:8080"
     depends_on:

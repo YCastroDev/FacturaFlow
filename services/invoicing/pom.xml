@@ -19,6 +19,10 @@
 
     <properties>
         <java.version>25</java.version>
+        <!-- No la gestiona Spring Boot. Puente de Logback a OpenTelemetry (logs a Loki, ADR 0020). DEBE usar la misma
+             versión de opentelemetry-api que Boot (4.1.2 → 1.62.0, que es la de la 2.28.x): una más nueva exige una API
+             más nueva. Dependabot la ignora; se sube a mano junto con Spring Boot. -->
+        <opentelemetry-logback-appender.version>2.28.1-alpha</opentelemetry-logback-appender.version>
         <!-- No la gestiona Spring Boot; 1.4.1+ soporta Java 25 -->
         <archunit.version>1.5.1</archunit.version>
         <!-- No la gestiona Spring Boot; la línea 3.x es la de Boot 4 (3.1.1 se construye sobre Boot 4.1.0) -->
@@ -58,6 +62,12 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-opentelemetry</artifactId>
+        </dependency>
+        <!-- Logs por OTLP al colector (Loki), con el trace_id de cada registro (ADR 0020) -->
+        <dependency>
+            <groupId>io.opentelemetry.instrumentation</groupId>
+            <artifactId>opentelemetry-logback-appender-1.0</artifactId>
+            <version>${opentelemetry-logback-appender.version}</version>
         </dependency>
         <!-- RestClient.Builder de Spring Boot (en Boot 4, módulo propio), instrumentado: los clientes HTTP propagan
              traceparent (ADR 0019) -->

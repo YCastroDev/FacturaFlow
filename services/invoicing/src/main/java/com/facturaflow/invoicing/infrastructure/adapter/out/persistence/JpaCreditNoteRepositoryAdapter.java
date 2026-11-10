@@ -32,12 +32,14 @@ class JpaCreditNoteRepositoryAdapter implements CreditNoteRepository {
     private final CreditNoteJpaRepository jpaRepository;
     private final InvoiceJpaRepository invoiceJpaRepository;
     private final CreditNotePersistenceMapper mapper;
+    private final IssuanceMetrics metrics;
 
     JpaCreditNoteRepositoryAdapter(CreditNoteJpaRepository jpaRepository, InvoiceJpaRepository invoiceJpaRepository,
-                                   CreditNotePersistenceMapper mapper) {
+                                   CreditNotePersistenceMapper mapper, IssuanceMetrics metrics) {
         this.jpaRepository = jpaRepository;
         this.invoiceJpaRepository = invoiceJpaRepository;
         this.mapper = mapper;
+        this.metrics = metrics;
     }
 
     /**
@@ -80,8 +82,10 @@ class JpaCreditNoteRepositoryAdapter implements CreditNoteRepository {
             if (entity.version != readVersion) {
                 throw new CreditNoteConcurrentModificationException(creditNote.id().value(), null);
             }
+            String previous = entity.status;
             mapper.applyMutableState(creditNote, entity);
             jpaRepository.flush();
+            metrics.creditNoteTransitioned(previous, entity.status);   // al confirmarse la transacción (ADR 0020)
             return mapper.toDomain(entity);
         } catch (OptimisticLockingFailureException e) {
             throw new CreditNoteConcurrentModificationException(creditNote.id().value(), e);
