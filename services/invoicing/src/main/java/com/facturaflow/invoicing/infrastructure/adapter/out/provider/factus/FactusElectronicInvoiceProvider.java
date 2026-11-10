@@ -16,6 +16,7 @@ import io.github.resilience4j.retry.RetryRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
 import java.util.UUID;
+import org.springframework.web.client.RestClient;
 import tools.jackson.core.JacksonException;
 
 /**
@@ -49,10 +50,19 @@ final class FactusElectronicInvoiceProvider implements ElectronicInvoiceProvider
                 RetryRegistry.ofDefaults(), RateLimiterRegistry.ofDefaults(), new SimpleMeterRegistry()));
     }
 
-    /** Arma el adaptador completo; la configuración de Spring le pasa los registros de Resilience4j. */
+    /** Arma el adaptador con los registros dados y un cliente HTTP sin instrumentar (tests sin Spring). */
     static FactusElectronicInvoiceProvider create(FactusProperties properties, Clock clock,
                                                   FactusResilience resilience) {
-        FactusHttp http = new FactusHttp(properties, resilience);
+        return create(properties, clock, resilience, RestClient.builder());
+    }
+
+    /**
+     * Arma el adaptador completo; la configuración de Spring le pasa los registros de Resilience4j y el
+     * {@code RestClient.Builder} instrumentado de Spring Boot (ADR 0019).
+     */
+    static FactusElectronicInvoiceProvider create(FactusProperties properties, Clock clock,
+                                                  FactusResilience resilience, RestClient.Builder builder) {
+        FactusHttp http = new FactusHttp(properties, resilience, builder);
         TokenProvider tokens = new InMemoryTokenProvider(new FactusTokenEndpoint(http, properties), clock,
                 properties.tokenRefreshMargin());
         return new FactusElectronicInvoiceProvider(

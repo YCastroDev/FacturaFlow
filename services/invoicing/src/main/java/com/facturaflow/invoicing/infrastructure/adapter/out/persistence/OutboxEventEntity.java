@@ -42,6 +42,13 @@ class OutboxEventEntity {
     @Column(name = "occurred_at", nullable = false, updatable = false)
     Instant occurredAt;
 
+    /** Contexto W3C de la traza en la que se guardó el evento (ADR 0019); nulo si no había traza. */
+    @Column(name = "trace_parent", updatable = false)
+    String traceParent;
+
+    @Column(name = "trace_state", updatable = false)
+    String traceState;
+
     @Column(name = "published_at")
     Instant publishedAt;
 
@@ -55,7 +62,7 @@ class OutboxEventEntity {
     }
 
     OutboxEventEntity(UUID id, String aggregateType, UUID aggregateId, String eventType, int eventVersion,
-                      String routingKey, String payload, Instant occurredAt) {
+                      String routingKey, String payload, Instant occurredAt, OutboxTraceContext.Columns trace) {
         this.id = id;
         this.aggregateType = aggregateType;
         this.aggregateId = aggregateId;
@@ -64,5 +71,7 @@ class OutboxEventEntity {
         this.routingKey = routingKey;
         this.payload = payload;
         this.occurredAt = occurredAt;
+        this.traceParent = trace.traceParent();
+        this.traceState = trace.traceState();
     }
 }

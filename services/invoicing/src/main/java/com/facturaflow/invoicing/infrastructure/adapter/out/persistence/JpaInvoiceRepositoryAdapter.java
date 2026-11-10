@@ -42,14 +42,17 @@ class JpaInvoiceRepositoryAdapter implements InvoiceRepository {
     private final EntityManager entityManager;
     private final InvoiceEventMessages messages;
     private final Clock clock;
+    private final OutboxTraceContext traceContext;
 
     JpaInvoiceRepositoryAdapter(InvoiceJpaRepository jpaRepository, InvoicePersistenceMapper mapper,
-                                EntityManager entityManager, InvoiceEventMessages messages, Clock clock) {
+                                EntityManager entityManager, InvoiceEventMessages messages, Clock clock,
+                                OutboxTraceContext traceContext) {
         this.jpaRepository = jpaRepository;
         this.mapper = mapper;
         this.entityManager = entityManager;
         this.messages = messages;
         this.clock = clock;
+        this.traceContext = traceContext;
     }
 
     @Override
@@ -75,8 +78,12 @@ class JpaInvoiceRepositoryAdapter implements InvoiceRepository {
             InvoiceEntity entity = update(invoice);
             Instant occurredAt = clock.instant();
             // persist (no save): el id del evento ya viene asignado y save() haría un merge con SELECT previo.
+            // Con el contexto de la traza en curso (la emisión, por REST o por el consumidor): el relay lo reanuda
+            // y sales continúa la misma traza (ADR 0019).
+            OutboxTraceContext.Columns trace = traceContext.capture();
             invoice.pendingEvents().forEach(event -> entityManager.persist(JpaOutboxAdapter.entity(
-                    messages.toMessage(event, invoice, occurredAt), InvoiceEventMessages.INVOICE, invoice.id().value())));
+                    messages.toMessage(event, invoice, occurredAt), InvoiceEventMessages.INVOICE, invoice.id().value(),
+                    trace)));
             return entity;
         });
     }

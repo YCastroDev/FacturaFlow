@@ -22,8 +22,13 @@ spring:
     connection-timeout: 2s
     # Confirmación del broker al republicar en una cola de espera o en la DLQ: el original se confirma después.
     publisher-confirm-type: correlated
+    # Trazas por RabbitMQ (ADR 0019): RabbitTemplate escribe traceparent en las cabeceras de cada mensaje (también al
+    # republicar en una espera o en la DLQ) y el listener continúa la traza del productor.
+    template:
+      observation-enabled: true
     listener:
       simple:
+        observation-enabled: true
         # Un mensaje a la vez por consumidor: un mensaje lento (Factus) no retiene otros en memoria (ADR 0014).
         prefetch: 1
         # Si la cola aún no existe (RabbitMQ recién levantado), el consumidor reintenta en vez de detenerse.
@@ -151,6 +156,25 @@ server:
 # Solo lectura y nada sensible. En producción iría en un puerto de gestión aparte y
 # con autenticación; aquí el puerto solo se publica en 127.0.0.1 (docker-compose).
 management:
+  # Trazas distribuidas (ADR 0019): Micrometer Tracing + OpenTelemetry. La exportación OTLP solo se activa si se define
+  # MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT (el compose apunta al colector de grafana/otel-lgtm). Sin
+  # colector, o con el colector caído, el servicio arranca y funciona igual: los spans se descartan con un WARN y el
+  # health no cambia (mismo criterio del ADR 0010). service.name = spring.application.name.
+  tracing:
+    sampling:
+      # 100 % en local; en producción se baja (o se decide en el colector con tail sampling): ADR 0019.
+      probability: ${TRACING_SAMPLING_PROBABILITY:1.0}
+  observations:
+    enable:
+      # Sin spans internos de Spring Security (filtros, autenticación, autorización) ni de las tareas @Scheduled
+      # (el relay del outbox correría una traza por segundo). Actuator, en ObservabilityConfiguration.
+      "[spring.security]": false
+      "[tasks.scheduled]": false
+  otlp:
+    metrics:
+      export:
+        # El starter de OpenTelemetry trae el registro OTLP de métricas; las métricas se deciden en la Fase 2.
+        enabled: false
   endpoints:
     web:
       exposure:

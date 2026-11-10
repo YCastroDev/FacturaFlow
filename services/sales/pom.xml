@@ -51,6 +51,17 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
+        <!-- Trazas distribuidas: Micrometer Tracing + OpenTelemetry, exportación OTLP (ADR 0019) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-opentelemetry</artifactId>
+        </dependency>
+        <!-- RestClient.Builder de Spring Boot (en Boot 4, módulo propio), instrumentado: los clientes HTTP propagan
+             traceparent (ADR 0019) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-restclient</artifactId>
+        </dependency>
         <!-- Resiliencia de las llamadas a Factus: registros, métricas Micrometer y endpoints de Actuator (ADR 0012) -->
         <dependency>
             <groupId>io.github.resilience4j</groupId>
@@ -108,6 +119,18 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- @AutoConfigureTracing y el SDK de pruebas de OpenTelemetry (exportador en memoria, ADR 0019) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-opentelemetry-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- InMemorySpanExporter: los tests de propagación leen los spans sin el colector (ADR 0019) -->
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-sdk-testing</artifactId>
             <scope>test</scope>
         </dependency>
         <!-- jwt() de spring-security-test para los tests de la capa web (ADR 0018) -->

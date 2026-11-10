@@ -37,13 +37,15 @@ class JpaOutboxAdapter implements OutboxRepository, InvoiceEventStore {
     private final EntityManager entityManager;
     private final InvoiceEventMessages messages;
     private final Clock clock;
+    private final OutboxTraceContext traceContext;
 
     JpaOutboxAdapter(OutboxEventJpaRepository jpaRepository, EntityManager entityManager, InvoiceEventMessages messages,
-                     Clock clock) {
+                     Clock clock, OutboxTraceContext traceContext) {
         this.jpaRepository = jpaRepository;
         this.entityManager = entityManager;
         this.messages = messages;
         this.clock = clock;
+        this.traceContext = traceContext;
     }
 
     /** Una petición rechazada: no hay factura, el evento es todo lo que se guarda (su propia transacción). */
@@ -52,14 +54,16 @@ class JpaOutboxAdapter implements OutboxRepository, InvoiceEventStore {
     public void append(InvoiceEvent.InvoiceRequestRejected event) {
         OutboxMessage message = messages.toMessage(event, clock.instant());
         // persist (no save): el id ya viene asignado y save() haría un merge con SELECT previo.
-        entityManager.persist(entity(message, InvoiceEventMessages.INVOICE_REQUEST, null));
+        // Con el contexto de la traza en curso (el consumo del SaleConfirmed inválido): el relay lo reanuda (ADR 0019).
+        entityManager.persist(entity(message, InvoiceEventMessages.INVOICE_REQUEST, null, traceContext.capture()));
         entityManager.flush();
     }
 
     /** La fila de un mensaje; {@code aggregateId} nulo si el evento no es de un agregado. */
-    static OutboxEventEntity entity(OutboxMessage message, String aggregateType, UUID aggregateId) {
+    static OutboxEventEntity entity(OutboxMessage message, String aggregateType, UUID aggregateId,
+                                    OutboxTraceContext.Columns trace) {
         return new OutboxEventEntity(message.eventId(), aggregateType, aggregateId, message.eventType(),
-                message.eventVersion(), message.routingKey(), message.payload(), message.occurredAt());
+                message.eventVersion(), message.routingKey(), message.payload(), message.occurredAt(), trace);
     }
 
     @Override
@@ -93,7 +97,7 @@ class JpaOutboxAdapter implements OutboxRepository, InvoiceEventStore {
 
     private static OutboxMessage toMessage(OutboxEventEntity entity) {
         return new OutboxMessage(entity.id, entity.eventType, entity.eventVersion, entity.routingKey, entity.payload,
-                entity.occurredAt);
+                entity.occurredAt, OutboxTraceContext.headers(entity.traceParent, entity.traceState));
     }
 
     private static String truncate(String error) {

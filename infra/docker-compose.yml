@@ -122,6 +122,36 @@ services:
       start_period: 60s
     restart: unless-stopped
 
+  # Observabilidad (ADR 0019): colector OpenTelemetry + Tempo (trazas) + Prometheus + Loki + Grafana en UN contenedor
+  # (imagen de desarrollo de Grafana Labs, no para producción). Los servicios le envían sus trazas por OTLP/HTTP a
+  # lgtm:4318 (red interna, sin publicar). Ningún servicio depende de él: sin lgtm, arrancan y funcionan igual.
+  lgtm:
+    image: grafana/otel-lgtm:0.40.0
+    environment:
+      # Grafana (http://localhost:3000): anónimo de SOLO LECTURA, pero con Explore (buscar trazas) habilitado; la imagen
+      # trae por defecto anónimo con rol Admin. El administrador (datasources, usuarios) sale del .env.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_VIEWERS_CAN_EDIT: "true"
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:?Define GRAFANA_ADMIN_USER en .env}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Define GRAFANA_ADMIN_PASSWORD en .env}
+      # Sin descargar plugins de grafana.com al arrancar (la imagen preinstala uno para perfiles, que no se usan).
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+    volumes:
+      # Trazas, métricas, logs y la base de Grafana: sobreviven a un "down" (se borran con "down -v").
+      - lgtm-data:/data
+    ports:
+      # Solo Grafana, solo en la máquina local. OTLP (4317/4318) queda dentro de la red de Docker.
+      - "127.0.0.1:3000:3000"
+    healthcheck:
+      # La imagen crea /tmp/ready cuando todos sus componentes respondieron.
+      test: ["CMD", "test", "-f", "/tmp/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
+
   invoicing:
     build:
       context: ../services/invoicing
@@ -149,6 +179,9 @@ services:
       # Proveedor falso: emisiones que fallan antes de funcionar con SIMULAR_FALLA_TEMPORAL. 4 = los intentos
       # del consumidor (1 + 3 esperas): la venta llega a la DLQ y al reprocesarla se emite (README).
       INVOICING_FAKE_TEMPORARY_FAILURES: ${INVOICING_FAKE_TEMPORARY_FAILURES:-4}
+      # Trazas (ADR 0019): OTLP/HTTP al colector de lgtm. Sin depends_on: si no está, los spans se descartan con un WARN.
+      MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT: http://lgtm:4318/v1/traces
+      TRACING_SAMPLING_PROBABILITY: ${TRACING_SAMPLING_PROBABILITY:-1.0}
     ports:
       - "127.0.0.1:8081:8080"
     depends_on:
@@ -172,6 +205,9 @@ services:
       CATALOG_DB_URL: jdbc:postgresql://postgres:5432/catalog_db
       CATALOG_DB_USER: catalog_user
       CATALOG_DB_PASSWORD: ${CATALOG_DB_PASSWORD:?Define CATALOG_DB_PASSWORD en .env}
+      # Trazas (ADR 0019): OTLP/HTTP al colector de lgtm. Sin depends_on: si no está, los spans se descartan con un WARN.
+      MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT: http://lgtm:4318/v1/traces
+      TRACING_SAMPLING_PROBABILITY: ${TRACING_SAMPLING_PROBABILITY:-1.0}
     ports:
       - "127.0.0.1:8082:8080"
     depends_on:
@@ -203,6 +239,9 @@ services:
       # Identidad de sales ante catalog (ADR 0018): client credentials con sales-service, el MISMO secreto que el realm
       # recibe al importarse. El token se pide a keycloak:8080 (red interna) con la primera venta, no al arrancar.
       SALES_SERVICE_CLIENT_SECRET: ${SALES_SERVICE_CLIENT_SECRET:?Define SALES_SERVICE_CLIENT_SECRET en .env}
+      # Trazas (ADR 0019): OTLP/HTTP al colector de lgtm. Sin depends_on: si no está, los spans se descartan con un WARN.
+      MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT: http://lgtm:4318/v1/traces
+      TRACING_SAMPLING_PROBABILITY: ${TRACING_SAMPLING_PROBABILITY:-1.0}
     ports:
       - "127.0.0.1:8083:8080"
     depends_on:
@@ -229,6 +268,10 @@ services:
   gateway:
     build:
       context: ../services/gateway
+    environment:
+      # Trazas (ADR 0019): OTLP/HTTP al colector de lgtm. Sin depends_on: si no está, los spans se descartan con un WARN.
+      MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT: http://lgtm:4318/v1/traces
+      TRACING_SAMPLING_PROBABILITY: ${TRACING_SAMPLING_PROBABILITY:-1.0}
     ports:
       - "127.0.0.1:8080:8080"
     depends_on:
@@ -250,3 +293,4 @@ services:
 volumes:
   postgres-data:
   rabbitmq-data:
+  lgtm-data:

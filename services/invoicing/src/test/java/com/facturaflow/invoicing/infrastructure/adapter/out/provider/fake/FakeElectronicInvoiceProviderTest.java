@@ -21,6 +21,7 @@ import com.facturaflow.invoicing.domain.model.InvoiceId;
 import com.facturaflow.invoicing.domain.model.PaymentMethod;
 import com.facturaflow.invoicing.domain.model.PaymentTerms;
 import com.facturaflow.invoicing.domain.model.ReferenceCode;
+import io.micrometer.observation.ObservationRegistry;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
@@ -36,7 +37,8 @@ class FakeElectronicInvoiceProviderTest {
     private static final Instant NOW = Instant.parse("2026-10-20T15:30:00Z");
 
     private final FakeElectronicInvoiceProvider provider =
-            new FakeElectronicInvoiceProvider(Clock.fixed(NOW, ZoneId.of("America/Bogota")), 2);
+            new FakeElectronicInvoiceProvider(Clock.fixed(NOW, ZoneId.of("America/Bogota")), 2,
+                    ObservationRegistry.NOOP);
 
     private static Invoice invoice(String observation) {
         return Invoice.create(InvoiceId.generate(), new ReferenceCode("VENTA-7"), customer(),

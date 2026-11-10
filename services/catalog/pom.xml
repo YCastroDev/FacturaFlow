@@ -47,6 +47,11 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
+        <!-- Trazas distribuidas: Micrometer Tracing + OpenTelemetry, exportación OTLP (ADR 0019) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-opentelemetry</artifactId>
+        </dependency>
         <!-- Persistencia -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -88,6 +93,12 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- @AutoConfigureTracing y el SDK de pruebas de OpenTelemetry (exportador en memoria, ADR 0019) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-opentelemetry-test</artifactId>
             <scope>test</scope>
         </dependency>
         <!-- jwt() de spring-security-test para los tests de la capa web (ADR 0018) -->

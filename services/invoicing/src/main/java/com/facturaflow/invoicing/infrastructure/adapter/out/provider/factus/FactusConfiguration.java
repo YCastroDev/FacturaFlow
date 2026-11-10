@@ -13,6 +13,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.web.client.RestClient;
 
 /**
  * Activa el adaptador de Factus con {@code invoicing.provider=factus} (ADR 0008). Solo entonces se
@@ -54,11 +55,14 @@ class FactusConfiguration {
     /** Un solo bean para los dos puertos (facturas y notas crédito): comparten cliente HTTP y token. */
     @Bean
     FactusElectronicInvoiceProvider factusElectronicInvoiceProvider(FactusProperties properties, Clock clock,
-                                                                    FactusResilience resilience) {
+                                                                    FactusResilience resilience,
+                                                                    ObjectProvider<RestClient.Builder> builder) {
         LOG.info("Proveedor de facturación electrónica: Factus ({}), send_email={}, numbering_range_id={}, "
                         + "numbering_range_id de notas crédito={}.", properties.baseUrl(), properties.sendEmail(),
                 properties.numberingRangeId() == null ? "por defecto" : properties.numberingRangeId(),
                 properties.creditNoteNumberingRangeId());
-        return FactusElectronicInvoiceProvider.create(properties, clock, resilience);
+        // El RestClient.Builder de Spring Boot viene instrumentado (ADR 0019); sin él (contexto mínimo), uno simple.
+        return FactusElectronicInvoiceProvider.create(properties, clock, resilience,
+                builder.getIfAvailable(RestClient::builder));
     }
 }
