@@ -56,6 +56,25 @@ server:
 # consulta los servicios ni Keycloak (mismo criterio que el ADR 0010): que un servicio caiga no debe sacar al gateway
 # de servicio ni reiniciarlo.
 management:
+  # Trazas distribuidas (ADR 0019): Micrometer Tracing + OpenTelemetry. La exportación OTLP solo se activa si se define
+  # MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT (el compose apunta al colector de grafana/otel-lgtm). Sin
+  # colector, o con el colector caído, el servicio arranca y funciona igual: los spans se descartan con un WARN y el
+  # health no cambia (mismo criterio del ADR 0010). service.name = spring.application.name.
+  tracing:
+    sampling:
+      # 100 % en local; en producción se baja (o se decide en el colector con tail sampling): ADR 0019.
+      probability: ${TRACING_SAMPLING_PROBABILITY:1.0}
+  observations:
+    enable:
+      # Sin spans internos de Spring Security (filtros, autenticación, autorización) ni de las tareas @Scheduled
+      # (el relay del outbox correría una traza por segundo). Actuator, en ObservabilityConfiguration.
+      "[spring.security]": false
+      "[tasks.scheduled]": false
+  otlp:
+    metrics:
+      export:
+        # El starter de OpenTelemetry trae el registro OTLP de métricas; las métricas se deciden en la Fase 2.
+        enabled: false
   endpoints:
     web:
       exposure:

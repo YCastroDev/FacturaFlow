@@ -9,6 +9,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.web.client.RestClient;
 
 /**
  * Beans del adaptador de catalog. Vive dentro de su paquete para que nada de catalog sea visible fuera
@@ -35,16 +36,17 @@ class CatalogConfiguration {
     }
 
     @Bean
-    CatalogTokenProvider catalogTokenProvider(CatalogProperties properties, Clock clock) {
-        return new CatalogTokenProvider(properties.auth(), clock);
+    CatalogTokenProvider catalogTokenProvider(CatalogProperties properties, Clock clock, RestClient.Builder builder) {
+        return new CatalogTokenProvider(properties.auth(), clock, builder);
     }
 
     @Bean
     CatalogRestClient catalogRestClient(CatalogProperties properties, CatalogResilience resilience,
-                                        CatalogTokenProvider tokens) {
+                                        CatalogTokenProvider tokens, RestClient.Builder builder) {
         LOG.info("Catalog: {} (connect {}, read {}); token de {} en {}", properties.baseUrl(),
                 properties.connectTimeout(), properties.readTimeout(), properties.auth().clientId(),
                 properties.auth().tokenUri());
-        return new CatalogRestClient(new CatalogHttp(properties, resilience, tokens));
+        // El RestClient.Builder de Spring Boot (prototype: uno nuevo por inyección) viene instrumentado (ADR 0019).
+        return new CatalogRestClient(new CatalogHttp(properties, resilience, tokens, builder));
     }
 }

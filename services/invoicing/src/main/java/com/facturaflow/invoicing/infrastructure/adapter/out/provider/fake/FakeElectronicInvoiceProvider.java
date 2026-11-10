@@ -9,6 +9,8 @@ import com.facturaflow.invoicing.domain.model.CreditNote;
 import com.facturaflow.invoicing.domain.model.ElectronicDocument;
 import com.facturaflow.invoicing.domain.model.Invoice;
 import com.facturaflow.invoicing.domain.model.Money;
+import io.micrometer.observation.Observation;
+import io.micrometer.observation.ObservationRegistry;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -19,6 +21,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -45,6 +48,9 @@ import org.springframework.stereotype.Component;
  *
  * <p>El PDF es un documento mínimo válido, armado a mano, que dice "DOCUMENTO FALSO - SIN VALIDEZ".
  * {@value #SIMULATE_OUTAGE} también hace fallar su descarga.
+ *
+ * <p>Cada emisión es una observación ({@value #OBSERVATION}): sin llamada HTTP no habría span, y la traza de una
+ * venta no mostraría el paso por el proveedor (ADR 0019). Con Factus, los spans son los de sus llamadas HTTP.
  */
 @Component
 @ConditionalOnProperty(name = "invoicing.provider", havingValue = "fake")
@@ -59,27 +65,35 @@ class FakeElectronicInvoiceProvider implements ElectronicInvoiceProvider, Electr
     static final String CREDIT_NOTE_NUMBER_PREFIX = "FAKE-NC-";
     static final String QR_BASE_URL = "https://fake-provider.invalid/qr/";
     static final String PUBLIC_BASE_URL = "https://fake-provider.invalid/invoices/";
+    static final String OBSERVATION = "invoicing.fake.provider.issue";
 
     private static final Logger LOG = LoggerFactory.getLogger(FakeElectronicInvoiceProvider.class);
 
     private final Clock clock;
     private final int temporaryFailures;
+    private final ObservationRegistry observations;
     /** Emisiones fallidas por documento con {@value #SIMULATE_TEMPORARY_FAILURE}. */
     private final ConcurrentMap<UUID, AtomicInteger> temporaryFailuresSoFar = new ConcurrentHashMap<>();
 
     /** @param temporaryFailures cuántas emisiones fallan con {@value #SIMULATE_TEMPORARY_FAILURE} antes de funcionar */
-    FakeElectronicInvoiceProvider(Clock clock, @Value("${invoicing.fake.temporary-failures}") int temporaryFailures) {
+    FakeElectronicInvoiceProvider(Clock clock, @Value("${invoicing.fake.temporary-failures}") int temporaryFailures,
+                                  ObservationRegistry observations) {
         if (temporaryFailures < 0) {
             throw new IllegalArgumentException("invoicing.fake.temporary-failures no puede ser negativo");
         }
         this.clock = clock;
         this.temporaryFailures = temporaryFailures;
+        this.observations = observations;
         LOG.warn("Proveedor de facturación electrónica FALSO activo (invoicing.provider=fake): "
                 + "las facturas 'emitidas' no tienen validez ante la DIAN.");
     }
 
     @Override
     public IssuanceResult issue(Invoice invoice) {
+        return observe("invoice", () -> issueInvoice(invoice));
+    }
+
+    private IssuanceResult issueInvoice(Invoice invoice) {
         if (simulates(invoice.observation().orElse(""), SIMULATE_OUTAGE)) {
             throw outage(invoice.id().value(), false);
         }
@@ -102,6 +116,10 @@ class FakeElectronicInvoiceProvider implements ElectronicInvoiceProvider, Electr
 
     @Override
     public IssuanceResult issue(CreditNote creditNote, Invoice creditedInvoice) {
+        return observe("credit-note", () -> issueCreditNote(creditNote));
+    }
+
+    private IssuanceResult issueCreditNote(CreditNote creditNote) {
         if (simulates(creditNote.observation().orElse(""), SIMULATE_OUTAGE)) {
             throw outage(creditNote.id().value(), true);
         }
@@ -136,6 +154,14 @@ class FakeElectronicInvoiceProvider implements ElectronicInvoiceProvider, Electr
                 URI.create(PUBLIC_BASE_URL + number),
                 clock.instant(),
                 total));
+    }
+
+    /** Un span por emisión; una falla técnica simulada queda marcada como error del span. */
+    private IssuanceResult observe(String document, Supplier<IssuanceResult> issuance) {
+        return Observation.createNotStarted(OBSERVATION, observations)
+                .contextualName("fake-provider issue " + document)
+                .lowCardinalityKeyValue("document", document)
+                .observe(issuance);
     }
 
     private static InvoicePdf pdf(String number, String title) {

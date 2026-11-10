@@ -120,6 +120,7 @@ Todo mensaje tiene la misma forma externa:
 | `timestamp` | el `occurredAt` (en segundos) |
 | `content_type` / `content_encoding` | `application/json` / `UTF-8` |
 | cabecera `eventVersion` | el `eventVersion` |
+| cabeceras `traceparent` / `tracestate` | el contexto W3C de la traza en la que se guardó el evento (ADR 0019). Opcionales: un consumidor sin trazas las ignora. No son parte del contrato de datos |
 
 Spring AMQP agrega además la cabecera `spring_returned_message_correlation` (igual al `eventId`), que el productor usa internamente para las confirmaciones. No es parte del contrato: los consumidores la ignoran.
 

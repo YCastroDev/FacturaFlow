@@ -21,7 +21,11 @@ final class FactusHttp {
     private final RestClient restClient;
     private final FactusResilience resilience;
 
-    FactusHttp(FactusProperties properties, FactusResilience resilience) {
+    /**
+     * {@code builder} es el de Spring Boot (instrumentado, ADR 0019) o uno simple en los tests sin Spring: cada intento
+     * HTTP (también los reintentos y el token) es un span cliente con {@code traceparent}.
+     */
+    FactusHttp(FactusProperties properties, FactusResilience resilience, RestClient.Builder builder) {
         this.resilience = resilience;
         HttpClient httpClient = HttpClient.newBuilder()
                 .connectTimeout(properties.connectTimeout())
@@ -29,7 +33,7 @@ final class FactusHttp {
                 .build();
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
         requestFactory.setReadTimeout(properties.readTimeout());
-        this.restClient = RestClient.builder()
+        this.restClient = builder
                 .baseUrl(properties.baseUrl().toString())
                 .requestFactory(requestFactory)
                 .defaultHeader(HttpHeaders.USER_AGENT, properties.userAgent())

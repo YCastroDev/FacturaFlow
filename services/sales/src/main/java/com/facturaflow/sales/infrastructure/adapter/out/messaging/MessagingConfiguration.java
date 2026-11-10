@@ -1,7 +1,10 @@
 package com.facturaflow.sales.infrastructure.adapter.out.messaging;
 
+import io.micrometer.tracing.Tracer;
+import io.micrometer.tracing.propagation.Propagator;
 import org.springframework.amqp.core.TopicExchange;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -22,7 +25,10 @@ class MessagingConfiguration {
     }
 
     @Bean
-    RabbitEventPublisher rabbitEventPublisher(RabbitTemplate template, MessagingProperties properties) {
-        return new RabbitEventPublisher(template, properties);
+    RabbitEventPublisher rabbitEventPublisher(RabbitTemplate template, MessagingProperties properties,
+                                              ObjectProvider<Tracer> tracer, ObjectProvider<Propagator> propagator) {
+        // Sin tracing configurado (p. ej. un test que lo apaga), los NOOP: se publica igual, sin trazas.
+        return new RabbitEventPublisher(template, properties, tracer.getIfAvailable(() -> Tracer.NOOP),
+                propagator.getIfAvailable(() -> Propagator.NOOP));
     }
 }

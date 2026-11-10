@@ -3,12 +3,16 @@ package com.facturaflow.invoicing.infrastructure.adapter.out.messaging;
 import com.facturaflow.invoicing.application.port.out.EventPublisher;
 import com.facturaflow.invoicing.application.port.out.OutboxMessage;
 import com.facturaflow.invoicing.application.port.out.PublicationResult;
+import io.micrometer.tracing.Span;
+import io.micrometer.tracing.Tracer;
+import io.micrometer.tracing.propagation.Propagator;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
@@ -38,6 +42,11 @@ import org.springframework.amqp.rabbit.core.RabbitTemplate;
  * <p>Sin {@code mandatory}: si ninguna cola está enlazada (hoy, sin consumidores) el broker descarta el
  * mensaje y aun así lo confirma. Es lo correcto para un evento: el productor no sabe ni le importa quién
  * escucha (coreografía).
+ *
+ * <p>Trazas (ADR 0019): cada mensaje se envía DENTRO de la traza en la que se guardó el evento
+ * ({@link OutboxMessage#traceContext()}), con un span {@code outbox <evento>} hijo del span original; la
+ * observación de {@code RabbitTemplate} cuelga de él su span de envío y escribe {@code traceparent} en las
+ * cabeceras, así el consumidor continúa la misma traza. Un evento sin contexto sale con una traza nueva.
  */
 final class RabbitEventPublisher implements EventPublisher {
 
@@ -47,11 +56,15 @@ final class RabbitEventPublisher implements EventPublisher {
     private final RabbitTemplate template;
     private final String exchange;
     private final Duration confirmTimeout;
+    private final Tracer tracer;
+    private final Propagator propagator;
 
-    RabbitEventPublisher(RabbitTemplate template, PublishingProperties properties) {
+    RabbitEventPublisher(RabbitTemplate template, PublishingProperties properties, Tracer tracer, Propagator propagator) {
         this.template = template;
         this.exchange = properties.exchange();
         this.confirmTimeout = properties.confirmTimeout();
+        this.tracer = tracer;
+        this.propagator = propagator;
     }
 
     @Override
@@ -61,7 +74,7 @@ final class RabbitEventPublisher implements EventPublisher {
         for (OutboxMessage message : messages) {
             CorrelationData correlation = new CorrelationData(message.eventId().toString());
             try {
-                template.send(exchange, message.routingKey(), toAmqp(message), correlation);
+                sendInItsTrace(message, correlation);
             } catch (AmqpException e) {
                 // Broker inalcanzable, credenciales rechazadas…: se deja de enviar; lo ya enviado se espera.
                 failure = "No se pudo enviar a RabbitMQ: " + e.getClass().getSimpleName();
@@ -82,6 +95,26 @@ final class RabbitEventPublisher implements EventPublisher {
         }
         return failure == null ? PublicationResult.allConfirmed(confirmed)
                 : PublicationResult.partial(confirmed, failure);
+    }
+
+    /** Envía el mensaje reanudando la traza en la que se guardó el evento (si la tenía). */
+    private void sendInItsTrace(OutboxMessage message, CorrelationData correlation) {
+        if (message.traceContext().isEmpty()) {
+            template.send(exchange, message.routingKey(), toAmqp(message), correlation);
+            return;
+        }
+        Span span = propagator.extract(message.traceContext(), Map::get)
+                .name("outbox " + message.eventType())
+                .tag("messaging.message.id", message.eventId().toString())
+                .start();
+        try (Tracer.SpanInScope ignored = tracer.withSpan(span)) {
+            template.send(exchange, message.routingKey(), toAmqp(message), correlation);
+        } catch (AmqpException e) {
+            span.error(e);
+            throw e;
+        } finally {
+            span.end();
+        }
     }
 
     /** {@code null} si el broker hizo ack; si no, el motivo. */

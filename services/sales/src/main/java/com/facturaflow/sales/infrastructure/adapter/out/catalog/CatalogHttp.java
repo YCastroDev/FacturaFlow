@@ -31,7 +31,17 @@ final class CatalogHttp {
     private final CatalogResilience resilience;
     private final CatalogTokenProvider tokens;
 
+    /** Con un builder sin instrumentar (tests sin Spring). */
     CatalogHttp(CatalogProperties properties, CatalogResilience resilience, CatalogTokenProvider tokens) {
+        this(properties, resilience, tokens, RestClient.builder());
+    }
+
+    /**
+     * {@code builder} es el de Spring Boot (instrumentado, ADR 0019): cada llamada a catalog es un span cliente y
+     * lleva {@code traceparent}, así catalog continúa la traza de la venta.
+     */
+    CatalogHttp(CatalogProperties properties, CatalogResilience resilience, CatalogTokenProvider tokens,
+                RestClient.Builder builder) {
         this.resilience = resilience;
         this.tokens = tokens;
         HttpClient httpClient = HttpClient.newBuilder()
@@ -40,7 +50,7 @@ final class CatalogHttp {
                 .build();
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
         requestFactory.setReadTimeout(properties.readTimeout());
-        this.restClient = RestClient.builder()
+        this.restClient = builder
                 .baseUrl(properties.baseUrl().toString())
                 .requestFactory(requestFactory)
                 .defaultHeader(HttpHeaders.ACCEPT, MediaType.APPLICATION_JSON_VALUE)

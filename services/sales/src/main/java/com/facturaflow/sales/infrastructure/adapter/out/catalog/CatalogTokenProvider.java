@@ -48,7 +48,16 @@ final class CatalogTokenProvider {
     private final OAuth2AuthorizedClientService authorizedClients;
     private final OAuth2AuthorizeRequest request;
 
+    /** Con un builder sin instrumentar (tests sin Spring). */
     CatalogTokenProvider(CatalogProperties.Auth auth, Clock clock) {
+        this(auth, clock, RestClient.builder());
+    }
+
+    /**
+     * {@code builder} es el de Spring Boot (instrumentado, ADR 0019): la petición del token a Keycloak, cuando no está
+     * en memoria, aparece como span cliente dentro de la traza de la venta.
+     */
+    CatalogTokenProvider(CatalogProperties.Auth auth, Clock clock, RestClient.Builder builder) {
         ClientRegistration registration = ClientRegistration.withRegistrationId(REGISTRATION_ID)
                 .clientId(auth.clientId())
                 .clientSecret(auth.clientSecret())
@@ -60,7 +69,7 @@ final class CatalogTokenProvider {
         this.authorizedClients = new InMemoryOAuth2AuthorizedClientService(registrations);
 
         RestClientClientCredentialsTokenResponseClient tokenClient = new RestClientClientCredentialsTokenResponseClient();
-        tokenClient.setRestClient(tokenRestClient(auth));
+        tokenClient.setRestClient(tokenRestClient(auth, builder));
         ClientCredentialsOAuth2AuthorizedClientProvider provider = new ClientCredentialsOAuth2AuthorizedClientProvider();
         provider.setAccessTokenResponseClient(tokenClient);
         provider.setClockSkew(auth.renewBeforeExpiry());
@@ -126,14 +135,14 @@ final class CatalogTokenProvider {
     }
 
     /** El mismo cliente que usa Spring por defecto, con los timeouts propios ({@code sales.catalog.auth.*}). */
-    private static RestClient tokenRestClient(CatalogProperties.Auth auth) {
+    private static RestClient tokenRestClient(CatalogProperties.Auth auth, RestClient.Builder builder) {
         HttpClient httpClient = HttpClient.newBuilder()
                 .connectTimeout(auth.connectTimeout())
                 .version(HttpClient.Version.HTTP_1_1)
                 .build();
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
         requestFactory.setReadTimeout(auth.readTimeout());
-        return RestClient.builder()
+        return builder
                 .requestFactory(requestFactory)
                 .configureMessageConverters(converters -> {
                     converters.addCustomConverter(new FormHttpMessageConverter());

@@ -12,26 +12,28 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 | Pieza | Versión |
 |---|---|
 | Java | 25 (LTS) — Eclipse Temurin |
-| Spring Boot | 4.1.1 |
+| Spring Boot | 4.1.2 |
 | Maven | 3.10.0 vía Maven Wrapper (`mvnw`; la versión vive en `.mvn/wrapper/maven-wrapper.properties` y la actualiza Dependabot) |
 | PostgreSQL | 18 (`postgres:18.6-alpine`, parche fijado) |
 | Migraciones | Flyway |
 | Tests de integración | Testcontainers 2.x |
 | Tests de arquitectura | ArchUnit 1.5.1 |
-| Documentación de la API | springdoc-openapi 3.1.1 (Swagger UI) |
+| Documentación de la API | springdoc-openapi 3.2.0 (Swagger UI) |
 | Escaneo de secretos | gitleaks v8.30.1 (vía Docker) |
-| Mock HTTP (tests del adaptador de Factus) | WireMock 3.13.1 (`wiremock-standalone`) |
+| Mock HTTP (tests del adaptador de Factus) | WireMock 3.13.2 (`wiremock-standalone`) |
 | Resiliencia (llamadas a Factus) | Resilience4j 2.4.0 (`resilience4j-spring-boot4`, versión fijada en el pom) |
-| Mensajería | RabbitMQ 4.3.6 (`rabbitmq:4.3.6-management-alpine`, en compose y Testcontainers, que la lee del compose; plugins de la imagen + shovel) + `spring-boot-starter-amqp` (sales y invoicing) |
-| Validación de contratos de eventos (tests) | `com.networknt:json-schema-validator` 3.0.8 (Jackson 3; solo test) |
-| Identidad | Keycloak 26.8.1 (`quay.io/keycloak/keycloak:26.8.1`, en compose y en los tests vía `InfraImages`) |
+| Mensajería | RabbitMQ 4.4.0 (`rabbitmq:4.4.0-management-alpine`, en compose y Testcontainers, que la lee del compose; plugins de la imagen + shovel) + `spring-boot-starter-amqp` (sales y invoicing) |
+| Validación de contratos de eventos (tests) | `com.networknt:json-schema-validator` 3.0.9 (Jackson 3; solo test) |
+| Identidad | Keycloak 26.8.2 (`quay.io/keycloak/keycloak:26.8.2`, en compose y en los tests vía `InfraImages`) |
 | API Gateway | Spring Cloud 2025.1.4 (Gateway Server WebMVC 5.0.x) |
 | Seguridad | Spring Security 7.1 (de Boot): resource server en los cuatro; OAuth2 Client (client credentials) en sales |
+| Trazas | Micrometer Tracing + OpenTelemetry (`spring-boot-starter-opentelemetry`, de Boot; exportación OTLP/HTTP) en los cuatro; `spring-boot-starter-restclient` (builder instrumentado) en sales e invoicing; `opentelemetry-sdk-testing` (solo test) |
+| Backend de observabilidad | `grafana/otel-lgtm:0.40.0` (colector OTel + Tempo + Prometheus + Loki + Grafana; solo en compose) |
 
 ## Estructura
 
 - `services/<servicio>/` — un proyecto Spring Boot independiente por servicio: `invoicing` (hexagonal, ADR 0002), `catalog` (en capas, ADR 0011), `sales` (hexagonal, ADR 0012) y `gateway` (API Gateway, ADR 0017).
-- `infra/` — `docker-compose.yml`, scripts de init de PostgreSQL (`postgres/init`) y de RabbitMQ (`rabbitmq/init`), el realm de Keycloak (`keycloak/import/facturaflow-realm.json`) y el override de la prueba de humo (`smoke/compose.smoke.yml`).
+- `infra/` — `docker-compose.yml` (incluye `lgtm`: Grafana y el colector de trazas), scripts de init de PostgreSQL (`postgres/init`) y de RabbitMQ (`rabbitmq/init`), el realm de Keycloak (`keycloak/import/facturaflow-realm.json`) y el override de la prueba de humo (`smoke/compose.smoke.yml`).
 - `scripts/` — utilidades (`mvn.sh`, `check-secrets.sh`, `seed-catalog.sh`, `rabbitmq-debug-queue.sh`, `rabbitmq-dlq.sh`, `keycloak-token.sh`, `smoke-test.sh`).
 - `docs/events/` — catálogo y contratos (JSON Schema) de los eventos entre servicios (ADR 0013).
 - `.githooks/` — hook pre-commit con gitleaks.
@@ -214,6 +216,19 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
 - **Swagger:** esquema `oauth2` authorizationCode (URLs del issuer) + `springdoc.swagger-ui.oauth.client-id: facturaflow-swagger` con PKCE.
 - **Tests:** web con la configuración real (`@Import(SecurityConfiguration.class)`) y tokens de `FakeKeycloak` (WireMock con el JWKS de una clave de prueba: pasa por el decodificador REAL); tests de controlador con `@WithMockUser(roles = ...)`; integración con `TestSecurityConfiguration` (importada por `TestcontainersConfiguration`; token por defecto en el `RestTestClient`: vendedor en sales, contador en invoicing, admin en catalog y el gateway; Actuator salvo health necesita uno de admin). Keycloak real con `RealKeycloak` (copia en gateway, catalog y sales; imagen de `InfraImages.KEYCLOAK`): `GatewayKeycloakSecurityTest`, `CatalogKeycloakIntegrationTest`, `SalesKeycloakIntegrationTest`; estos NO importan `TestcontainersConfiguration` (traería el Keycloak falso).
 
+## Observabilidad: trazas distribuidas (ADR 0019, Fase 1)
+
+- Micrometer Tracing + OpenTelemetry en los cuatro; propagación W3C (`traceparent`/`tracestate`). Una venta es UNA traza: gateway → sales → catalog → outbox → RabbitMQ → invoicing → outbox → RabbitMQ → sales. Observabilidad = infraestructura: dominio y casos de uso no cambian.
+- **Exportación solo por variable** (`MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT`, en el compose → `http://lgtm:4318/v1/traces`). NUNCA un valor (ni vacío) en `application.yml`: con la propiedad presente Boot crea el exportador. Sin colector todo funciona igual (WARN y spans descartados); sin `depends_on: lgtm`; el health no depende de él (criterio del ADR 0010). La prueba de humo lo prueba.
+- Muestreo `management.tracing.sampling.probability: ${TRACING_SAMPLING_PROBABILITY:1.0}` (parent-based). Métricas OTLP apagadas hasta la Fase 2.
+- **Clientes HTTP con el `RestClient.Builder` de Boot** (instrumentado): `CatalogHttp`, `CatalogTokenProvider`, `FactusHttp`. Un cliente HTTP nuevo NUNCA usa `RestClient.builder()` estático en producción (solo en constructores para tests sin Spring). El gateway WebMVC ya usa el de Boot.
+- **Outbox con la traza:** columnas `trace_parent`/`trace_state` (sales V5, invoicing V8). El adaptador de persistencia las llena al guardar con `OutboxTraceContext` (Propagator de Micrometer; copia en cada servicio), en la MISMA transacción; vuelven en `OutboxMessage.traceContext()` (campo opaco del puerto: la aplicación no lo interpreta). `RabbitEventPublisher` reanuda el contexto (span `outbox <evento>`) antes de `template.send`. Todo evento nuevo pasa por ese camino.
+- RabbitMQ: `spring.rabbitmq.template.observation-enabled` y `listener.simple.observation-enabled` en sales e invoicing. El consumidor es span HIJO del productor (no link); `ConfirmedRepublisher` usa el mismo template, así esperas y DLQ siguen en la traza.
+- Ruido fuera: `ObservabilityConfiguration` (copia deliberada en los cuatro, con su test) no observa `/actuator/**`; `management.observations.enable."[spring.security]"` y `"[tasks.scheduled]"` en `false`. Sin spans de JDBC ni tracing interno de Keycloak (decisiones del ADR). El proveedor falso abre su propio span (`invoicing.fake.provider.issue`).
+- Grafana en `127.0.0.1:3000`: anónimo `Viewer` con Explore (`GF_USERS_VIEWERS_CAN_EDIT`), admin `GRAFANA_ADMIN_USER`/`GRAFANA_ADMIN_PASSWORD` del `.env`. OTLP no se publica.
+- **Tests:** en Boot 4 el tracing está INACTIVO en los tests salvo con `@AutoConfigureTracing`. Los de propagación usan `TracingTestConfiguration` (`InMemorySpanExporter`, copia en sales e invoicing) + `management.opentelemetry.tracing.export.schedule-delay=50ms`: `SaleTracingEndToEndTest`, `InvoiceResultTracingTest`, `SaleConfirmedTracingTest`, `GatewayTracingTest`. Nunca dependen del contenedor de Grafana.
+- Los spans no llevan cabeceras ni cuerpos (el `Authorization` nunca entra en un span).
+
 ## Integración continua (ADR 0016)
 
 - `ci.yml` SIEMPRE arranca; el job `changes` (paths-filter) decide qué servicios probar con `_service.yml`; `ci-result` es el ÚNICO check obligatorio (junto con `gitleaks`). Nunca usar `on.paths` en un workflow cuyo check sea obligatorio: quedaría "Pending" y bloquearía el PR.
@@ -316,6 +331,11 @@ curl -s http://localhost:8080/actuator/health
 
 # Prueba de humo de una imagen (la misma que la CI): arranca y espera UP en /actuator/health
 docker build -t facturaflow-catalog:local services/catalog && ./scripts/smoke-test.sh catalog facturaflow-catalog:local
+
+# Trazas: Grafana http://localhost:3000 (Explore → Tempo). Crear una venta con un trace id propio y buscarlo (README)
+TRACE_ID=$(openssl rand -hex 16)
+curl -s -X POST http://localhost:8080/api/v1/sales -H "Authorization: Bearer $TOKEN" \
+  -H "traceparent: 00-$TRACE_ID-$(openssl rand -hex 8)-01" -H 'Content-Type: application/json' -d @venta.json
 
 # Escaneo de secretos de todo el repo
 ./scripts/check-secrets.sh

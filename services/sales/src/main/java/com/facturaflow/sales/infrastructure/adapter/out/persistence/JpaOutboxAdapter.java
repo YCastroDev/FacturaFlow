@@ -69,7 +69,7 @@ class JpaOutboxAdapter implements OutboxRepository {
 
     private static OutboxMessage toMessage(OutboxEventEntity entity) {
         return new OutboxMessage(entity.id, entity.eventType, entity.eventVersion, entity.routingKey, entity.payload,
-                entity.occurredAt);
+                entity.occurredAt, OutboxTraceContext.headers(entity.traceParent, entity.traceState));
     }
 
     private static String truncate(String error) {

@@ -41,13 +41,16 @@ class JpaSaleRepositoryAdapter implements SaleRepository {
     private final SalePersistenceMapper mapper;
     private final EntityManager entityManager;
     private final SaleEventMessages messages;
+    private final OutboxTraceContext traceContext;
 
     JpaSaleRepositoryAdapter(SaleJpaRepository jpaRepository, SalePersistenceMapper mapper,
-                             EntityManager entityManager, SaleEventMessages messages) {
+                             EntityManager entityManager, SaleEventMessages messages,
+                             OutboxTraceContext traceContext) {
         this.jpaRepository = jpaRepository;
         this.mapper = mapper;
         this.entityManager = entityManager;
         this.messages = messages;
+        this.traceContext = traceContext;
     }
 
     @Override
@@ -60,11 +63,13 @@ class JpaSaleRepositoryAdapter implements SaleRepository {
             SaleEntity entity = mapper.toNewEntity(sale, requestHash);
             jpaRepository.save(entity);   // versión nula => persist; Hibernate la inicializa en 0
             // persist (no save): el id del evento ya viene asignado y save() haría un merge con SELECT previo.
+            // Con el contexto de la traza en curso (la petición que crea la venta): el relay lo reanuda (ADR 0019).
+            OutboxTraceContext.Columns trace = traceContext.capture();
             sale.pendingEvents().forEach(event -> {
                 OutboxMessage message = messages.toMessage(event, sale);
                 entityManager.persist(new OutboxEventEntity(message.eventId(), SaleEventMessages.AGGREGATE_TYPE,
                         sale.id().value(), message.eventType(), message.eventVersion(), message.routingKey(),
-                        message.payload(), message.occurredAt()));
+                        message.payload(), message.occurredAt(), trace));
             });
             // flush() DENTRO del try: si no, el UNIQUE saltaría en el commit y no podríamos traducirlo.
             jpaRepository.flush();

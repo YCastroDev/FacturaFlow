@@ -24,7 +24,8 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
   | `catalog` | Productos y clientes (datos maestros) | En capas ([ADR 0011](docs/adr/0011-servicio-catalog-en-capas.md)) | `127.0.0.1:8082` | `catalog_db` |
   | `sales` | Ventas confirmadas, con cliente y productos tomados de catalog | Hexagonal ([ADR 0012](docs/adr/0012-servicio-sales.md)) | `127.0.0.1:8083` | `sales_db` |
   | `gateway` | Punto de entrada único a la API: enruta a los tres servicios | Spring Cloud Gateway WebMVC ([ADR 0017](docs/adr/0017-seguridad-keycloak-y-gateway.md)) | `127.0.0.1:8080` | — |
-  | Keycloak | Proveedor de identidad: realm `facturaflow` como código (roles, usuarios de demostración, clientes) | Imagen oficial 26.8.1 ([ADR 0017](docs/adr/0017-seguridad-keycloak-y-gateway.md)) | `127.0.0.1:8180` | `keycloak_db` |
+  | Keycloak | Proveedor de identidad: realm `facturaflow` como código (roles, usuarios de demostración, clientes) | Imagen oficial 26.8 ([ADR 0017](docs/adr/0017-seguridad-keycloak-y-gateway.md)) | `127.0.0.1:8180` | `keycloak_db` |
+  | Grafana (`lgtm`) | Trazas distribuidas: colector OpenTelemetry, Tempo, Prometheus, Loki y Grafana en un contenedor | `grafana/otel-lgtm` ([ADR 0019](docs/adr/0019-observabilidad-trazas-distribuidas.md)) | `127.0.0.1:3000` | — |
 
 - **Cada servicio usa la arquitectura que necesita:**
   - invoicing, hexagonal: integra un proveedor externo intercambiable;
@@ -40,6 +41,7 @@ Plataforma de ventas para pymes colombianas que emite facturas electrónicas ant
   - invoicing consume ese evento: crea la factura y la emite con los mismos casos de uso de su API, reintenta las fallas técnicas con espera creciente y aparta en una DLQ lo que no puede procesar ([ADR 0014](docs/adr/0014-consumo-de-sale-confirmed.md)). Vender ya factura sola;
   - invoicing publica el resultado de cada factura en `invoicing.events` (con su propio outbox), y sales deja la venta `INVOICED` (número y CUFE) o `INVOICE_FAILED` (motivo). La Saga se cierra por coreografía ([ADR 0015](docs/adr/0015-cierre-de-la-saga-de-facturacion.md)).
 - **Seguridad:** Keycloak como proveedor de identidad (realm como código) y un API Gateway. El gateway **y** cada servicio validan el JWT y los roles (zero trust), y sales llama a catalog con su propia identidad (client credentials) ([ADR 0017](docs/adr/0017-seguridad-keycloak-y-gateway.md), [ADR 0018](docs/adr/0018-seguridad-resource-servers.md)).
+- **Observabilidad:** trazas distribuidas con OpenTelemetry. Una venta se ve como **una sola traza** en Grafana, del gateway a catalog, RabbitMQ, invoicing y de vuelta a sales; el contexto de la traza viaja guardado en el outbox ([ADR 0019](docs/adr/0019-observabilidad-trazas-distribuidas.md)).
 - **Todo corre en Docker:** no se necesita Java ni Maven instalados.
 
 Las decisiones y sus motivos están en los [ADRs](docs/adr/README.md).
@@ -57,10 +59,10 @@ Requisito: Docker Engine con Docker Compose.
    cp .env.example .env
    ```
    El `.env` está en `.gitignore`: nunca se sube al repositorio.
-3. **Levantar el entorno** (PostgreSQL, RabbitMQ, Keycloak, invoicing, catalog, sales y gateway):
+3. **Levantar el entorno** (PostgreSQL, RabbitMQ, Keycloak, Grafana con el colector de trazas, invoicing, catalog, sales y gateway):
    ```bash
    docker compose --env-file .env -f infra/docker-compose.yml up --build -d
-   docker compose --env-file .env -f infra/docker-compose.yml ps     # los siete "healthy"
+   docker compose --env-file .env -f infra/docker-compose.yml ps     # los ocho "healthy"
    ```
    `rabbitmq-init` aparece como terminado (`Exited (0)`): es un contenedor de un solo uso que crea el usuario de RabbitMQ de cada servicio.
 4. **Comprobar** que los servicios responden:
@@ -100,6 +102,10 @@ docker compose --env-file .env -f infra/docker-compose.yml up --build -d
 1. Agrega a tu `.env` las variables de la sección Keycloak de `.env.example`: `KEYCLOAK_ADMIN_USER`, `KEYCLOAK_ADMIN_PASSWORD`, `KEYCLOAK_DB_PASSWORD`, `KC_DEMO_ADMIN_PASSWORD`, `KC_DEMO_VENDEDOR_PASSWORD`, `KC_DEMO_CONTADOR_PASSWORD` y `SALES_SERVICE_CLIENT_SECRET`.
 2. Crea `keycloak_db` como en la sección anterior: recrea `postgres` y ejecuta el script de init, que es idempotente.
 3. Levanta todo con `up --build -d`. Keycloak importa el realm la primera vez.
+
+### Si ya tenías el entorno levantado antes de la observabilidad
+
+Agrega a tu `.env` `GRAFANA_ADMIN_USER` y `GRAFANA_ADMIN_PASSWORD` (ver `.env.example`; `TRACING_SAMPLING_PROBABILITY` es opcional) y vuelve a levantar todo con `up --build -d`. Las migraciones del outbox (sales V5, invoicing V8) se aplican solas; los eventos anteriores, sin contexto de traza, se publican con una traza nueva.
 
 ### Si ya tenías el entorno levantado antes de la Fase 2 de seguridad
 
@@ -437,6 +443,35 @@ docker compose --env-file .env -f infra/docker-compose.yml logs invoicing sales 
 ```
 
 Con RabbitMQ detenido, sales sigue vendiendo e invoicing sigue atendiendo su API; los eventos esperan en el outbox de cada uno. Al volver, todo se publica y la Saga continúa. El proveedor falso cuenta los fallos de `SIMULAR_FALLA_TEMPORAL` en memoria: un reinicio de invoicing los pone en cero.
+
+## Observabilidad: una venta como una sola traza
+
+Cada servicio envía sus trazas por OpenTelemetry (OTLP) al contenedor `lgtm`, y Grafana las muestra con Tempo. El contexto de la traza (`traceparent`) viaja por HTTP, en las cabeceras de RabbitMQ y **guardado en la fila del outbox**, así una venta es UNA traza: gateway → sales → catalog → outbox → RabbitMQ → invoicing (proveedor) → outbox → RabbitMQ → sales. Detalles en el [ADR 0019](docs/adr/0019-observabilidad-trazas-distribuidas.md).
+
+Grafana: **http://localhost:3000**. Sin iniciar sesión se entra como lector (con Explore); el administrador es `GRAFANA_ADMIN_USER` del `.env`.
+
+```bash
+# 1. Token de vendedor (pide la contraseña de vendedor.demo, KC_DEMO_VENDEDOR_PASSWORD de tu .env; dura 5 min)
+TOKEN=$(./scripts/keycloak-token.sh vendedor.demo)
+
+# 2. Un trace id propio, para encontrar la traza sin buscarla (la petición lo lleva en la cabecera W3C traceparent)
+TRACE_ID=$(openssl rand -hex 16); echo "trace id: $TRACE_ID"
+
+# 3. Crear la venta POR EL GATEWAY (requiere ./scripts/seed-catalog.sh)
+curl -s -o /dev/null -w "HTTP %{http_code}\n" -X POST http://localhost:8080/api/v1/sales \
+  -H "Authorization: Bearer $TOKEN" -H "traceparent: 00-$TRACE_ID-$(openssl rand -hex 8)-01" \
+  -H 'Content-Type: application/json' -d "{\"referenceCode\":\"TRAZA-$(date +%s)\",
+  \"customer\":{\"documentType\":\"NIT\",\"documentNumber\":\"890903938\"},
+  \"lines\":[{\"productCode\":\"CAFE-500\",\"quantity\":2,\"discountRate\":10}],
+  \"paymentMethod\":\"CASH\",\"paymentTerms\":{\"type\":\"CASH\"}}"      # HTTP 201
+```
+
+4. En Grafana: menú → **Explore** → datasource **Tempo** → pestaña **TraceQL** → pega el trace id → **Run query** (o abre `http://localhost:3000/explore` y elige Tempo). En unos segundos aparece la traza con los cuatro servicios: el `POST /api/v1/sales` del gateway y de sales, los dos `GET`/`POST` a catalog (y la petición del token a Keycloak, si no estaba en memoria), el span `outbox SaleConfirmed` y su envío a `sales.events`, el consumo en invoicing con `fake-provider issue invoice`, el span `outbox InvoiceIssued` y su envío a `invoicing.events`, y el consumo final en sales que deja la venta `INVOICED`.
+5. Sin trace id propio: Explore → Tempo → **Search** (`Service Name` = `gateway`, `Span Name` = `http post /api/v1/sales`), o TraceQL `{ resource.service.name = "gateway" && span.http.route =~ "/api/v1/sales.*" }`.
+
+Con `SIMULAR_FALLA_TEMPORAL` en la observación (sección anterior), la misma traza muestra los intentos fallidos de invoicing, la espera en `wait-10s`/`wait-1m`/`wait-5m` y, tras reprocesar la DLQ, el intento que emitió. Cada línea de log lleva `[traceId-spanId]`: `docker compose --env-file .env -f infra/docker-compose.yml logs | grep $TRACE_ID`.
+
+Sin el contenedor `lgtm` (o con él detenido), los servicios funcionan igual: las trazas se descartan con un WARN y el health no cambia.
 
 ## Integración continua (GitHub Actions)
 
