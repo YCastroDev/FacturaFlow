@@ -126,7 +126,7 @@ services:
   # (imagen de desarrollo de Grafana Labs, no para producción). Los servicios le envían sus trazas por OTLP/HTTP a
   # lgtm:4318 (red interna, sin publicar). Ningún servicio depende de él: sin lgtm, arrancan y funcionan igual.
   lgtm:
-    image: grafana/otel-lgtm:0.40.0
+    image: grafana/otel-lgtm:0.41.0
     environment:
       # Grafana (http://localhost:3000): anónimo de SOLO LECTURA, pero con Explore (buscar trazas) habilitado; la imagen
       # trae por defecto anónimo con rol Admin. El administrador (datasources, usuarios) sale del .env.
