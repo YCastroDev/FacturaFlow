@@ -7,7 +7,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>4.1.2</version>
+        <version>4.2.0</version>
         <relativePath/>
     </parent>
 
@@ -37,7 +37,7 @@
         <sonar.projectName>facturaflow-sales</sonar.projectName>
         <sonar.host.url>https://sonarcloud.io</sonar.host.url>
         <!-- Declarado en pluginManagement: "./mvnw sonar:sonar" lo encuentra por su prefijo y Dependabot lo actualiza -->
-        <sonar-maven-plugin.version>5.8.0.7211</sonar-maven-plugin.version>
+        <sonar-maven-plugin.version>5.9.0.7382</sonar-maven-plugin.version>
     </properties>
 
     <dependencies>
