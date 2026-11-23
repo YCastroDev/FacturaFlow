@@ -6,7 +6,7 @@ name: facturaflow
 
 services:
   postgres:
-    image: postgres:18.6-alpine
+    image: postgres:19.0-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_SUPERUSER:?Define POSTGRES_SUPERUSER en .env}
       POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?Define POSTGRES_SUPERUSER_PASSWORD en .env}
@@ -31,7 +31,7 @@ services:
 
   # Broker de eventos entre servicios (ADR 0013). Imagen oficial con la consola de administración.
   rabbitmq:
-    image: rabbitmq:4.4.0-management-alpine
+    image: rabbitmq:4.4.1-management-alpine
     # Nombre de nodo fijo (rabbit@rabbitmq): RabbitMQ guarda sus datos bajo ese nombre; si cambiara con
     # cada contenedor, el volumen quedaría huérfano y se perderían exchanges y mensajes.
     hostname: rabbitmq
@@ -61,7 +61,7 @@ services:
   # Contenedor de un solo uso: crea el vhost y el usuario de cada servicio con permisos mínimos y termina
   # (script idempotente, como el de PostgreSQL). Se repite en cada "up".
   rabbitmq-init:
-    image: rabbitmq:4.4.0-management-alpine
+    image: rabbitmq:4.4.1-management-alpine
     entrypoint: ["sh", "/init/create-service-users.sh"]
     environment:
       RABBITMQADMIN_BASE_URI: http://rabbitmq:15672/api
@@ -126,7 +126,7 @@ services:
   # (imagen de desarrollo de Grafana Labs, no para producción). Los servicios le envían sus trazas por OTLP/HTTP a
   # lgtm:4318 (red interna, sin publicar). Ningún servicio depende de él: sin lgtm, arrancan y funcionan igual.
   lgtm:
-    image: grafana/otel-lgtm:0.40.0
+    image: grafana/otel-lgtm:0.41.1
     environment:
       # Grafana (http://localhost:3000): anónimo de SOLO LECTURA, pero con Explore (buscar trazas) habilitado; la imagen
       # trae por defecto anónimo con rol Admin. El administrador (datasources, usuarios) sale del .env.
